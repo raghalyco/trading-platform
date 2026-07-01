@@ -1,0 +1,4 @@
+requests
+pyotp
+kiteconnect
+telethon

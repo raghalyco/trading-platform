@@ -26,6 +26,7 @@ KITE_ORDER_TYPE = "LIMIT"
 KITE_QUANTITY = 65
 KITE_PRICE_MATCH_TOLERANCE = 1.0
 KITE_ENTRY_ABOVE_LADDER_TOLERANCE = 5.0
+KITE_PROFIT_CAPTURE_POINTS = 15.0
 PENDING_SIGNAL_CHECK_INTERVAL_SECONDS = 5
 
 KITE_INSTRUMENTS_URL = "https://api.kite.trade/instruments/NFO"
@@ -52,6 +53,7 @@ SL_REGEX = re.compile(rf"\b(?:sl|stop\s*loss|stoploss)\b\s*(?:is|at|@|:|-)?\s*(?
 kite_client = None
 client = TelegramClient('trading_session', API_ID, API_HASH)
 pending_signals = []
+pending_entry_batches = []
 active_trades = []
 
 # ==========================================
@@ -173,6 +175,22 @@ def build_entry_payload(tradingsymbol, action, entry_price, last_price):
         }])
     }
 
+def build_exit_payload(tradingsymbol, exit_action, sl_price, target_price, last_price):
+    return {
+        "type": "two-leg",
+        "condition": json.dumps({"exchange": KITE_EXCHANGE, "tradingsymbol": tradingsymbol, "trigger_values": [sl_price, target_price], "last_price": last_price}),
+        "orders": json.dumps([
+            {"exchange": KITE_EXCHANGE, "tradingsymbol": tradingsymbol, "transaction_type": exit_action, "quantity": KITE_QUANTITY, "order_type": KITE_ORDER_TYPE, "product": KITE_PRODUCT, "price": sl_price},
+            {"exchange": KITE_EXCHANGE, "tradingsymbol": tradingsymbol, "transaction_type": exit_action, "quantity": KITE_QUANTITY, "order_type": KITE_ORDER_TYPE, "product": KITE_PRODUCT, "price": target_price}
+        ])
+    }
+
+def effective_target_price(signal, entry_price):
+    configured_target = last_price_from_range(signal["target_range"])
+    if signal["action"] == "BUY":
+        return normalize_order_price(min(configured_target, entry_price + KITE_PROFIT_CAPTURE_POINTS))
+    return normalize_order_price(max(configured_target, entry_price - KITE_PROFIT_CAPTURE_POINTS))
+
 def resolve_signal_contract(signal):
     instruments = fetch_kite_instruments()
     candidates = candidate_kite_instruments(signal, instruments)
@@ -230,6 +248,28 @@ def queue_signal_for_monitoring(signal, contract):
         f"for entry {signal['entry_range']}"
     )
 
+def register_pending_entry_batch(signal, tradingsymbol, expiry, entry_prices):
+    batch_key = (
+        tradingsymbol,
+        signal["action"],
+        signal["entry_range"],
+        signal["target_range"],
+        signal["sl"],
+    )
+    if any(item["batch_key"] == batch_key for item in pending_entry_batches):
+        print(f"Entry batch already pending fill monitoring: {tradingsymbol}")
+        return
+
+    pending_entry_batches.append({
+        "batch_key": batch_key,
+        "signal": signal,
+        "tradingsymbol": tradingsymbol,
+        "expiry": expiry,
+        "entry_prices": entry_prices,
+        "processed_order_ids": [],
+    })
+    print(f"Entry fill monitoring started for {tradingsymbol} at prices {entry_prices}")
+
 def active_trade_key(signal, tradingsymbol):
     return (
         tradingsymbol,
@@ -239,8 +279,8 @@ def active_trade_key(signal, tradingsymbol):
         signal["sl"],
     )
 
-def register_active_trade(signal, tradingsymbol, expiry, entry_prices):
-    trade_key = active_trade_key(signal, tradingsymbol)
+def register_active_trade(signal, tradingsymbol, expiry, entry_order_id, entry_price, target_price):
+    trade_key = active_trade_key(signal, tradingsymbol) + (entry_order_id,)
     if any(item["trade_key"] == trade_key for item in active_trades):
         print(f"Trade already active for monitoring: {tradingsymbol}")
         return
@@ -250,11 +290,12 @@ def register_active_trade(signal, tradingsymbol, expiry, entry_prices):
         "signal": signal,
         "tradingsymbol": tradingsymbol,
         "expiry": expiry,
-        "entry_prices": entry_prices,
+        "entry_order_id": entry_order_id,
+        "entry_price": entry_price,
         "sl_price": first_price(signal["sl"]),
-        "target_price": last_price_from_range(signal["target_range"]),
+        "target_price": target_price,
     })
-    print(f"Trade monitoring started for {tradingsymbol} with SL {signal['sl']} and TARGET {signal['target_range']}")
+    print(f"Trade monitoring started for {tradingsymbol} with SL {signal['sl']} and TARGET {target_price}")
 
 def trade_exit_reached(trade, current_price):
     action = trade["signal"]["action"]
@@ -284,7 +325,7 @@ async def send_chat_notification(message):
 def notify_trade_closed(trade, exit_reason, current_price):
     message = (
         f"Trade closed for {trade['tradingsymbol']} | Reason: {exit_reason} | "
-        f"Price: {current_price} | Entry: {trade['signal']['entry_range']} | "
+        f"Price: {current_price} | Entry: {trade['entry_price']} | "
         f"SL: {trade['signal']['sl']} | Target: {trade['signal']['target_range']}"
     )
     if client.loop.is_running():
@@ -325,6 +366,75 @@ def process_pending_signals_once():
 
     pending_signals[:] = remaining_signals
 
+def fetch_kite_orders():
+    global kite_client
+    if not kite_client:
+        kite_client = get_kite_client()
+    return kite_client.orders()
+
+def extract_filled_order_price(order):
+    for field in ("average_price", "price", "trigger_price"):
+        value = order.get(field)
+        if value not in (None, "", 0, 0.0):
+            return float(value)
+    return None
+
+def order_matches_entry_batch(order, batch):
+    if order.get("tradingsymbol") != batch["tradingsymbol"]:
+        return False
+    if (order.get("transaction_type") or "").upper() != batch["signal"]["action"]:
+        return False
+    if (order.get("status") or "").upper() != "COMPLETE":
+        return False
+    if int(order.get("quantity") or 0) != KITE_QUANTITY:
+        return False
+
+    filled_price = extract_filled_order_price(order)
+    if filled_price is None:
+        return False
+    return any(abs(filled_price - entry_price) <= KITE_PRICE_MATCH_TOLERANCE for entry_price in batch["entry_prices"])
+
+def process_pending_entry_batches_once():
+    if not pending_entry_batches:
+        return
+
+    orders = fetch_kite_orders()
+    remaining_batches = []
+
+    for batch in pending_entry_batches:
+        signal = batch["signal"]
+        tradingsymbol = batch["tradingsymbol"]
+        new_fills = []
+
+        for order in orders:
+            order_id = order.get("order_id")
+            if not order_id or order_id in batch["processed_order_ids"]:
+                continue
+            if not order_matches_entry_batch(order, batch):
+                continue
+            new_fills.append(order)
+            batch["processed_order_ids"].append(order_id)
+
+        for order in new_fills:
+            entry_price = normalize_order_price(extract_filled_order_price(order))
+            target_price = effective_target_price(signal, float(entry_price))
+            exit_action = "SELL" if signal["action"] == "BUY" else "BUY"
+            exit_payload = build_exit_payload(
+                tradingsymbol,
+                exit_action,
+                first_price(signal["sl"]),
+                target_price,
+                float(entry_price),
+            )
+            exit_id = place_gtt_order(exit_payload)
+            print(f"Exit protective leg confirmed ID: {exit_id} for filled entry order {order.get('order_id')}")
+            register_active_trade(signal, tradingsymbol, batch["expiry"], order.get("order_id"), float(entry_price), float(target_price))
+
+        if len(batch["processed_order_ids"]) < len(batch["entry_prices"]):
+            remaining_batches.append(batch)
+
+    pending_entry_batches[:] = remaining_batches
+
 def process_active_trades_once():
     if not active_trades:
         return
@@ -353,6 +463,7 @@ async def monitor_pending_signals():
     while True:
         try:
             process_pending_signals_once()
+            process_pending_entry_batches_once()
             process_active_trades_once()
         except Exception as err:
             print(f"Pending signal monitor error: {err}")
@@ -450,18 +561,6 @@ def execute_trade_pipeline(signal, contract=None, allow_monitor_queue=True):
     last_price = contract['last_price']
     entry_prices = build_entry_prices(signal["entry_range"], last_price)
 
-    target_price = last_price_from_range(signal["target_range"])
-    sl_price = first_price(signal["sl"])
-    exit_action = "SELL" if signal["action"] == "BUY" else "BUY"
-    exit_payload = {
-        "type": "two-leg",
-        "condition": json.dumps({"exchange": KITE_EXCHANGE, "tradingsymbol": tradingsymbol, "trigger_values": [sl_price, target_price], "last_price": last_price}),
-        "orders": json.dumps([
-            {"exchange": KITE_EXCHANGE, "tradingsymbol": tradingsymbol, "transaction_type": exit_action, "quantity": KITE_QUANTITY, "order_type": KITE_ORDER_TYPE, "product": KITE_PRODUCT, "price": sl_price},
-            {"exchange": KITE_EXCHANGE, "tradingsymbol": tradingsymbol, "transaction_type": exit_action, "quantity": KITE_QUANTITY, "order_type": KITE_ORDER_TYPE, "product": KITE_PRODUCT, "price": target_price}
-        ])
-    }
-
     print("Sending entry setup to exchange...")
     entry_ids = []
     for entry_price in entry_prices:
@@ -471,9 +570,7 @@ def execute_trade_pipeline(signal, contract=None, allow_monitor_queue=True):
             print(f"Entry trigger confirmed ID: {entry_id} @ {entry_price}")
 
     if entry_ids:
-        exit_id = place_gtt_order(exit_payload)
-        print(f"Exit protective leg confirmed ID: {exit_id}")
-        register_active_trade(signal, tradingsymbol, contract["expiry"], entry_prices)
+        register_pending_entry_batch(signal, tradingsymbol, contract["expiry"], entry_prices)
 
 @client.on(events.NewMessage(chats=SOURCE_CHAT))
 async def handler(event):
