@@ -1,4 +1,5 @@
 import csv
+import asyncio
 import json
 import os
 import re
@@ -23,6 +24,8 @@ KITE_PRODUCT = "NRML"
 KITE_ORDER_TYPE = "LIMIT"
 KITE_QUANTITY = 65
 KITE_PRICE_MATCH_TOLERANCE = 1.0
+KITE_ENTRY_ABOVE_LADDER_TOLERANCE = 5.0
+PENDING_SIGNAL_CHECK_INTERVAL_SECONDS = 5
 
 KITE_INSTRUMENTS_URL = "https://api.kite.trade/instruments/NFO"
 KITE_LTP_URL = "https://api.kite.trade/quote/ltp"
@@ -47,6 +50,7 @@ SL_REGEX = re.compile(rf"\b(?:sl|stop\s*loss|stoploss)\b\s*(?:is|at|@|:|-)?\s*(?
 
 kite_client = None
 client = TelegramClient('trading_session', API_ID, API_HASH)
+pending_signals = []
 
 # ==========================================
 # 2. MATCHING PARSING LOGIC & WRAPPER METHODS
@@ -130,6 +134,140 @@ def price_bounds(value):
         return price - KITE_PRICE_MATCH_TOLERANCE, price + KITE_PRICE_MATCH_TOLERANCE
     return min(prices), max(prices)
 
+def normalize_order_price(price):
+    return int(price) if float(price).is_integer() else round(price, 2)
+
+def build_entry_prices(entry_range, last_price):
+    prices = [float(part) for part in entry_range.split("-")]
+    if len(prices) == 1:
+        return [normalize_order_price(prices[0])]
+
+    low_price, high_price = min(prices), max(prices)
+    if low_price <= last_price <= high_price:
+        return [normalize_order_price(last_price)]
+
+    overshoot = last_price - high_price
+    if overshoot <= 0 or overshoot > KITE_ENTRY_ABOVE_LADDER_TOLERANCE:
+        return [normalize_order_price(low_price)]
+
+    midpoint = (last_price + high_price) / 2
+    if float(last_price).is_integer() and float(high_price).is_integer():
+        midpoint = float(int(midpoint))
+
+    entry_prices = []
+    for price in (last_price, midpoint, high_price):
+        normalized_price = normalize_order_price(price)
+        if normalized_price not in entry_prices:
+            entry_prices.append(normalized_price)
+    return entry_prices
+
+def build_entry_payload(tradingsymbol, action, entry_price, last_price):
+    return {
+        "type": "single",
+        "condition": json.dumps({"exchange": KITE_EXCHANGE, "tradingsymbol": tradingsymbol, "trigger_values": [entry_price], "last_price": last_price}),
+        "orders": json.dumps([{
+            "exchange": KITE_EXCHANGE, "tradingsymbol": tradingsymbol, "transaction_type": action,
+            "quantity": KITE_QUANTITY, "order_type": KITE_ORDER_TYPE, "product": KITE_PRODUCT, "price": entry_price
+        }])
+    }
+
+def resolve_signal_contract(signal):
+    instruments = fetch_kite_instruments()
+    candidates = candidate_kite_instruments(signal, instruments)
+    if not candidates:
+        return None
+
+    ltp_by_symbol = fetch_kite_ltp([item["tradingsymbol"] for item in candidates])
+    priced_candidates = [
+        {
+            "tradingsymbol": item["tradingsymbol"],
+            "expiry": item["expiry"].isoformat(),
+            "last_price": ltp_by_symbol[item["tradingsymbol"]],
+        }
+        for item in candidates
+        if item["tradingsymbol"] in ltp_by_symbol
+    ]
+    if not priced_candidates:
+        return None
+
+    target_price = last_price_from_range(signal["entry_range"])
+    return min(priced_candidates, key=lambda item: abs(item["last_price"] - target_price))
+
+def should_monitor_signal(entry_range, last_price):
+    _, high_price = price_bounds(entry_range)
+    return last_price > high_price + KITE_ENTRY_ABOVE_LADDER_TOLERANCE
+
+def can_activate_monitored_signal(entry_range, last_price):
+    low_price, high_price = price_bounds(entry_range)
+    return low_price <= last_price <= high_price + KITE_ENTRY_ABOVE_LADDER_TOLERANCE
+
+def contract_within_entry_window(signal, contract):
+    low_price, high_price = price_bounds(signal["entry_range"])
+    return low_price <= contract["last_price"] <= high_price + KITE_ENTRY_ABOVE_LADDER_TOLERANCE
+
+def queue_signal_for_monitoring(signal, contract):
+    signal_key = (
+        contract["tradingsymbol"],
+        signal["action"],
+        signal["entry_range"],
+        signal["target_range"],
+        signal["sl"],
+    )
+    if any(item["signal_key"] == signal_key for item in pending_signals):
+        print(f"Signal already pending for monitoring: {contract['tradingsymbol']}")
+        return
+
+    pending_signals.append({
+        "signal_key": signal_key,
+        "signal": signal,
+        "tradingsymbol": contract["tradingsymbol"],
+        "expiry": contract["expiry"],
+    })
+    print(
+        f"Signal queued for monitoring: {contract['tradingsymbol']} currently at {contract['last_price']} "
+        f"for entry {signal['entry_range']}"
+    )
+
+def process_pending_signals_once():
+    if not pending_signals:
+        return
+
+    ltp_by_symbol = fetch_kite_ltp([item["tradingsymbol"] for item in pending_signals])
+    remaining_signals = []
+
+    for pending_signal in pending_signals:
+        tradingsymbol = pending_signal["tradingsymbol"]
+        current_price = ltp_by_symbol.get(tradingsymbol)
+        if current_price is None:
+            remaining_signals.append(pending_signal)
+            continue
+
+        signal = pending_signal["signal"]
+        if can_activate_monitored_signal(signal["entry_range"], current_price):
+            print(f"Pending signal activated for {tradingsymbol} at {current_price}")
+            execute_trade_pipeline(
+                signal,
+                contract={
+                    "tradingsymbol": tradingsymbol,
+                    "expiry": pending_signal["expiry"],
+                    "last_price": current_price,
+                },
+                allow_monitor_queue=False,
+            )
+            continue
+
+        remaining_signals.append(pending_signal)
+
+    pending_signals[:] = remaining_signals
+
+async def monitor_pending_signals():
+    while True:
+        try:
+            process_pending_signals_once()
+        except Exception as err:
+            print(f"Pending signal monitor error: {err}")
+        await asyncio.sleep(PENDING_SIGNAL_CHECK_INTERVAL_SECONDS)
+
 def get_auth_headers():
     global kite_client
     if not kite_client:
@@ -181,37 +319,13 @@ def fetch_kite_ltp(tradingsymbols):
 
 def find_kite_contract_for_signal(signal):
     try:
-        instruments = fetch_kite_instruments()
-        candidates = candidate_kite_instruments(signal, instruments)
-        if not candidates:
+        contract = resolve_signal_contract(signal)
+        if not contract:
             return None
-            
-        ltp_by_symbol = fetch_kite_ltp([item["tradingsymbol"] for item in candidates])
-        low_price, high_price = price_bounds(signal["entry_range"])
-        
-        matches = [
-            {
-                "tradingsymbol": item["tradingsymbol"],
-                "expiry": item["expiry"].isoformat(),
-                "last_price": ltp_by_symbol[item["tradingsymbol"]],
-            }
-            for item in candidates if item["tradingsymbol"] in ltp_by_symbol
-            and low_price <= ltp_by_symbol[item["tradingsymbol"]] <= high_price
-        ]
-        
-        # Fallback: If current market price has moved out of bounds, prioritize matching by explicit expiry
-        if not matches and candidates:
-            fallback_item = candidates[0]
-            if fallback_item["tradingsymbol"] in ltp_by_symbol:
-                return {
-                    "tradingsymbol": fallback_item["tradingsymbol"],
-                    "expiry": fallback_item["expiry"].isoformat(),
-                    "last_price": ltp_by_symbol[fallback_item["tradingsymbol"]]
-                }
-            return None
-            
-        target_price = first_price(signal["entry_range"])
-        return min(matches, key=lambda item: abs(item["last_price"] - target_price))
+
+        if contract_within_entry_window(signal, contract):
+            return contract
+        return None
     except Exception as e:
         print(f"Error checking contracts: {e}")
         return None
@@ -227,25 +341,24 @@ def place_gtt_order(payload):
         print(f"Network error routing trade to API: {e}")
         return None
 
-def execute_trade_pipeline(signal):
+def execute_trade_pipeline(signal, contract=None, allow_monitor_queue=True):
     print(f"Executing trade parameters: {signal['action']} NIFTY {signal['strike']} {signal['option_type']}")
-    contract = find_kite_contract_for_signal(signal)
+    contract = contract or resolve_signal_contract(signal)
     if not contract:
+        print("Trade Blocked: No matching contracts found.")
+        return
+
+    if not contract_within_entry_window(signal, contract):
+        if allow_monitor_queue:
+            if should_monitor_signal(signal["entry_range"], contract["last_price"]):
+                queue_signal_for_monitoring(signal, contract)
+                return
         print("Trade Blocked: No matching contracts found.")
         return
 
     tradingsymbol = contract['tradingsymbol']
     last_price = contract['last_price']
-    
-    entry_price = first_price(signal["entry_range"])
-    entry_payload = {
-        "type": "single",
-        "condition": json.dumps({"exchange": KITE_EXCHANGE, "tradingsymbol": tradingsymbol, "trigger_values": [entry_price], "last_price": last_price}),
-        "orders": json.dumps([{
-            "exchange": KITE_EXCHANGE, "tradingsymbol": tradingsymbol, "transaction_type": signal["action"],
-            "quantity": KITE_QUANTITY, "order_type": KITE_ORDER_TYPE, "product": KITE_PRODUCT, "price": entry_price
-        }])
-    }
+    entry_prices = build_entry_prices(signal["entry_range"], last_price)
 
     target_price = last_price_from_range(signal["target_range"])
     sl_price = first_price(signal["sl"])
@@ -260,9 +373,14 @@ def execute_trade_pipeline(signal):
     }
 
     print("Sending entry setup to exchange...")
-    entry_id = place_gtt_order(entry_payload)
-    if entry_id:
-        print(f"Entry trigger confirmed ID: {entry_id}")
+    entry_ids = []
+    for entry_price in entry_prices:
+        entry_id = place_gtt_order(build_entry_payload(tradingsymbol, signal["action"], entry_price, last_price))
+        if entry_id:
+            entry_ids.append(entry_id)
+            print(f"Entry trigger confirmed ID: {entry_id} @ {entry_price}")
+
+    if entry_ids:
         exit_id = place_gtt_order(exit_payload)
         print(f"Exit protective leg confirmed ID: {exit_id}")
 
@@ -296,4 +414,5 @@ async def handler(event):
 
 if __name__ == "__main__":
     client.start()
+    client.loop.create_task(monitor_pending_signals())
     client.run_until_disconnected()
