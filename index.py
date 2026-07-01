@@ -1,0 +1,223 @@
+import csv
+import json
+import os
+import re
+import calendra
+from datetime import date, datetime
+from io import StringIO
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
+
+from telethon import TelegramClient, events
+from kite_auth import get_kite_client
+
+# ==========================================
+# 1. BOT CONFIGURATIONS
+# ==========================================
+API_ID = 35784910  # Update this with your real Telethon API ID
+API_HASH = '4a73f7632189dd4b9768b7bab06baa71'  # Update this with your real Telethon API Hash
+
+TARGET_CHAT = 't.me/testalgotradinganand' 
+KITE_EXCHANGE = "NFO"
+KITE_PRODUCT = "NRML"
+KITE_ORDER_TYPE = "LIMIT"
+KITE_QUANTITY = 65
+KITE_PRICE_MATCH_TOLERANCE = 1.0
+
+KITE_INSTRUMENTS_URL = "https://api.kite.trade/instruments/NFO"
+KITE_LTP_URL = "https://api.kite.trade/quote/ltp"
+KITE_GTT_URL = "https://api.kite.trade/gtt/triggers"
+
+PRICE_VALUE_REGEX = r"\d+(?:\.\d+)?(?:\s*-\s*\d+(?:\.\d+)?)?"
+ACTION_REGEX = re.compile(r"\b(?P<action>BUY|SELL)\b", re.IGNORECASE)
+SIGNAL_REGEX = re.compile(
+    r"\bNIFTY\s*(?P<strike>\d{4,6})\s*(?P<option_type>CE|PE)\b"
+    r"|\b(?P<strike_alt>\d{4,6})\s*(?P<option_type_alt>CE|PE)\b",
+    re.IGNORECASE,
+)
+RANGE_REGEX = re.compile(rf"\b(?:range|rng|entry)\b\s*(?:is|at|@|:|-)?\s*(?P<value>{PRICE_VALUE_REGEX})", re.IGNORECASE)
+TARGET_REGEX = re.compile(rf"\b(?:target|tgt)\b\s*(?:is|at|@|:|-)?\s*(?P<value>{PRICE_VALUE_REGEX})", re.IGNORECASE)
+SL_REGEX = re.compile(rf"\b(?:sl|stop\s*loss|stoploss)\b\s*(?:is|at|@|:|-)?\s*(?P<value>{PRICE_VALUE_REGEX})", re.IGNORECASE)
+
+kite_client = None
+client = TelegramClient('trading_session', API_ID, API_HASH)
+
+# ==========================================
+# 2. MATCHING PARSING LOGIC & WRAPPER METHODS
+# ==========================================
+def extract_signal(text):
+    text = text or ""
+    action_match = ACTION_REGEX.search(text)
+    signal_match = SIGNAL_REGEX.search(text)
+    range_match = RANGE_REGEX.search(text)
+    target_match = TARGET_REGEX.search(text)
+    sl_match = SL_REGEX.search(text)
+    
+    if not action_match or not signal_match or not range_match or not target_match or not sl_match:
+        return None
+        
+    return {
+        "action": action_match.group("action").upper(),
+        "strike": signal_match.group("strike") or signal_match.group("strike_alt"),
+        "option_type": (signal_match.group("option_type") or signal_match.group("option_type_alt")).upper(),
+        "entry_range": range_match.group("value").replace(" ", ""),
+        "target_range": target_match.group("value").replace(" ", ""),
+        "sl": sl_match.group("value").replace(" ", ""),
+    }
+
+def first_price(value):
+    return float(value.split("-", 1)[0])
+
+def last_price_from_range(value):
+    return float(value.rsplit("-", 1)[-1])
+
+def price_bounds(value):
+    prices = [float(part) for part in value.split("-")]
+    if len(prices) == 1:
+        price = prices[0]
+        return price - KITE_PRICE_MATCH_TOLERANCE, price + KITE_PRICE_MATCH_TOLERANCE
+    return min(prices), max(prices)
+
+def get_auth_headers():
+    global kite_client
+    if not kite_client:
+        kite_client = get_kite_client()
+    return {
+        "X-Kite-Version": "3",
+        "Authorization": f"token {kite_client.api_key}:{kite_client.access_token}",
+    }
+
+def fetch_kite_instruments():
+    request = Request(KITE_INSTRUMENTS_URL, headers=get_auth_headers())
+    with urlopen(request, timeout=20) as response:
+        content = response.read().decode("utf-8")
+    return list(csv.DictReader(StringIO(content)))
+
+def candidate_kite_instruments(signal, instruments):
+    strike = float(signal["strike"])
+    option_type = signal["option_type"]
+    today = date.today()
+    candidates = []
+    for instrument in instruments:
+        if instrument.get("name") != "NIFTY" or instrument.get("instrument_type") != option_type:
+            continue
+        if float(instrument.get("strike") or 0) != strike:
+            continue
+        expiry = datetime.strptime(instrument["expiry"], "%Y-%m-%d").date()
+        if expiry < today:
+            continue
+        candidates.append({"tradingsymbol": instrument["tradingsymbol"], "expiry": expiry})
+    return sorted(candidates, key=lambda item: item["expiry"])
+
+def fetch_kite_ltp(tradingsymbols):
+    query = urlencode([("i", f"{KITE_EXCHANGE}:{symbol}") for symbol in tradingsymbols])
+    request = Request(f"{KITE_LTP_URL}?{query}", headers=get_auth_headers())
+    with urlopen(request, timeout=20) as response:
+        content = response.read().decode("utf-8")
+    data = json.loads(content)["data"]
+    return {symbol: data[f"{KITE_EXCHANGE}:{symbol}"]["last_price"] for symbol in tradingsymbols if f"{KITE_EXCHANGE}:{symbol}" in data}
+
+def find_kite_contract_for_signal(signal):
+    try:
+        instruments = fetch_kite_instruments()
+        candidates = candidate_kite_instruments(signal, instruments)
+        ltp_by_symbol = fetch_kite_ltp([item["tradingsymbol"] for item in candidates])
+        low_price, high_price = price_bounds(signal["entry_range"])
+        
+        matches = [
+            {
+                "tradingsymbol": item["tradingsymbol"],
+                "expiry": item["expiry"].isoformat(),
+                "last_price": ltp_by_symbol[item["tradingsymbol"]],
+            }
+            for item in candidates if item["tradingsymbol"] in ltp_by_symbol
+            and low_price <= ltp_by_symbol[item["tradingsymbol"]] <= high_price
+        ]
+        if not matches:
+            return None
+        target_price = first_price(signal["entry_range"])
+        return min(matches, key=lambda item: abs(item["last_price"] - target_price))
+    except Exception as e:
+        print(f"Error checking contracts: {e}")
+        return None
+
+def place_gtt_order(payload):
+    try:
+        data_bytes = urlencode(payload).encode("utf-8")
+        request = Request(KITE_GTT_URL, data=data_bytes, headers=get_auth_headers(), method="POST")
+        with urlopen(request, timeout=15) as response:
+            result = json.loads(response.read().decode("utf-8"))
+            return result.get("data", {}).get("trigger_id", "SUCCESS")
+    except Exception as e:
+        print(f"Network error routing trade to API: {e}")
+        return None
+
+def execute_trade_pipeline(signal):
+    print(f"Executing trade parameters: {signal['action']} NIFTY {signal['strike']} {signal['option_type']}")
+    contract = find_kite_contract_for_signal(signal)
+    if not contract:
+        print("Trade Blocked: No matching contracts found.")
+        return
+
+    tradingsymbol = contract['tradingsymbol']
+    last_price = contract['last_price']
+    
+    entry_price = first_price(signal["entry_range"])
+    entry_payload = {
+        "type": "single",
+        "condition": json.dumps({"exchange": KITE_EXCHANGE, "tradingsymbol": tradingsymbol, "trigger_values": [entry_price], "last_price": last_price}),
+        "orders": json.dumps([{
+            "exchange": KITE_EXCHANGE, "tradingsymbol": tradingsymbol, "transaction_type": signal["action"],
+            "quantity": KITE_QUANTITY, "order_type": KITE_ORDER_TYPE, "product": KITE_PRODUCT, "price": entry_price
+        }])
+    }
+
+    target_price = last_price_from_range(signal["target_range"])
+    sl_price = first_price(signal["sl"])
+    exit_action = "SELL" if signal["action"] == "BUY" else "BUY"
+    exit_payload = {
+        "type": "two-leg",
+        "condition": json.dumps({"exchange": KITE_EXCHANGE, "tradingsymbol": tradingsymbol, "trigger_values": [sl_price, target_price], "last_price": last_price}),
+        "orders": json.dumps([
+            {"exchange": KITE_EXCHANGE, "tradingsymbol": tradingsymbol, "transaction_type": exit_action, "quantity": KITE_QUANTITY, "order_type": KITE_ORDER_TYPE, "product": KITE_PRODUCT, "price": sl_price},
+            {"exchange": KITE_EXCHANGE, "tradingsymbol": tradingsymbol, "transaction_type": exit_action, "quantity": KITE_QUANTITY, "order_type": KITE_ORDER_TYPE, "product": KITE_PRODUCT, "price": target_price}
+        ])
+    }
+
+    print("Sending entry setup to exchange...")
+    entry_id = place_gtt_order(entry_payload)
+    if entry_id:
+        print(f"Entry trigger confirmed ID: {entry_id}")
+        exit_id = place_gtt_order(exit_payload)
+        print(f"Exit protective leg confirmed ID: {exit_id}")
+
+@client.on(events.NewMessage(chats=TARGET_CHAT))
+async def handler(event):
+    try:
+# Get the current system time
+        now = datetime.now()
+        current_time = now.time()
+        
+        # Define market monitoring boundaries (09:00:00 to 15:00:00)
+        start_time = datetime.strptime("09:00:00", "%H:%M:%S").time()
+        end_time = datetime.strptime("15:00:00", "%H:%M:%S").time()
+        
+        # Boundary 1: Check if the current time falls outside 9 AM - 3 PM
+        if not (start_time <= current_time <= end_time):
+            print(f"⏰ Message ignored. Current time ({now.strftime('%H:%M:%S')}) is outside specified trading hours (09:00 - 15:00).")
+            return
+            
+        # Boundary 2: Check if today is a weekend (5 = Saturday, 6 = Sunday)
+        if now.weekday() in [5, 6]:
+            print(f"休 Message ignored. Today is a weekend ({now.strftime('%A')}). Trading pipeline is locked.")
+            return
+        signal = extract_signal(event.raw_text)
+        if not signal:
+            return
+        execute_trade_pipeline(signal)
+    except Exception as err:
+        print(f"Loop error: {err}")
+
+if __name__ == "__main__":
+    client.start()
+    client.run_until_disconnected()
