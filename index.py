@@ -2,7 +2,7 @@ import csv
 import json
 import os
 import re
-import calendra
+import calendar
 from datetime import date, datetime
 from io import StringIO
 from urllib.parse import urlencode
@@ -30,8 +30,10 @@ KITE_GTT_URL = "https://api.kite.trade/gtt/triggers"
 
 PRICE_VALUE_REGEX = r"\d+(?:\.\d+)?(?:\s*-\s*\d+(?:\.\d+)?)?"
 ACTION_REGEX = re.compile(r"\b(?P<action>BUY|SELL)\b", re.IGNORECASE)
+
+# Updated to support trailing optional expiry variations like '7th July', '14th Jul', 'July End'
 SIGNAL_REGEX = re.compile(
-    r"\bNIFTY\s*(?P<strike>\d{4,6})\s*(?P<option_type>CE|PE)\b"
+    r"\bNIFTY\s*(?P<strike>\d{4,6})\s*(?P<option_type>CE|PE)(?:\s+(?P<expiry_date>\d{1,2}(?:st|nd|rd|th)?\s*[a-zA-Z]+|[a-zA-Z]+\s*(?:monthly|end)?))?\b"
     r"|\b(?P<strike_alt>\d{4,6})\s*(?P<option_type_alt>CE|PE)\b",
     re.IGNORECASE,
 )
@@ -45,6 +47,42 @@ client = TelegramClient('trading_session', API_ID, API_HASH)
 # ==========================================
 # 2. MATCHING PARSING LOGIC & WRAPPER METHODS
 # ==========================================
+def parse_message_expiry(date_str):
+    """
+    Parses complex text variants like '7th July', '14th Jul', or 'July End'
+    into a structured date object for comparison with Kite master data.
+    """
+    if not date_str:
+        return None
+    try:
+        current_year = datetime.now().year
+        cleaned = date_str.strip().lower()
+        
+        # --- Handle Monthly Expiries (e.g., "july monthly", "july end") ---
+        if "month" in cleaned or "end" in cleaned:
+            for m_idx in range(1, 13):
+                m_name = calendar.month_name[m_idx].lower()
+                m_short = calendar.month_abbr[m_idx].lower()
+                if m_name in cleaned or m_short in cleaned:
+                    # Nifty monthly options expire on the Last Thursday of the month
+                    last_day = calendar.monthrange(current_year, m_idx)[1]
+                    for day in range(last_day, 0, -1):
+                        possible_date = date(current_year, m_idx, day)
+                        if possible_date.weekday() == 3:  # 3 is Thursday
+                            return possible_date
+                            
+        # --- Handle Standard Weekly Expiries (e.g., "7th July", "14th Jul") ---
+        cleaned_weekly = re.sub(r'(\d+)(st|nd|rd|th)', r'\1', date_str.strip(), flags=re.IGNORECASE)
+        for fmt in ("%d %B", "%d %b"):
+            try:
+                parsed_date = datetime.strptime(cleaned_weekly, fmt)
+                return parsed_date.replace(year=current_year).date()
+            except ValueError:
+                continue
+    except Exception as e:
+        print(f"⚠️ Date parser optimization exception: {e}")
+    return None
+
 def extract_signal(text):
     text = text or ""
     action_match = ACTION_REGEX.search(text)
@@ -60,6 +98,7 @@ def extract_signal(text):
         "action": action_match.group("action").upper(),
         "strike": signal_match.group("strike") or signal_match.group("strike_alt"),
         "option_type": (signal_match.group("option_type") or signal_match.group("option_type_alt")).upper(),
+        "expiry_date_str": signal_match.group("expiry_date") if signal_match.group("strike") else None,
         "entry_range": range_match.group("value").replace(" ", ""),
         "target_range": target_match.group("value").replace(" ", ""),
         "sl": sl_match.group("value").replace(" ", ""),
@@ -97,6 +136,9 @@ def candidate_kite_instruments(signal, instruments):
     strike = float(signal["strike"])
     option_type = signal["option_type"]
     today = date.today()
+    
+    target_expiry_date = parse_message_expiry(signal.get("expiry_date_str"))
+    
     candidates = []
     for instrument in instruments:
         if instrument.get("name") != "NIFTY" or instrument.get("instrument_type") != option_type:
@@ -106,10 +148,17 @@ def candidate_kite_instruments(signal, instruments):
         expiry = datetime.strptime(instrument["expiry"], "%Y-%m-%d").date()
         if expiry < today:
             continue
+            
+        # Filter down dynamically by explicit calendar target if defined
+        if target_expiry_date and expiry != target_expiry_date:
+            continue
+            
         candidates.append({"tradingsymbol": instrument["tradingsymbol"], "expiry": expiry})
     return sorted(candidates, key=lambda item: item["expiry"])
 
 def fetch_kite_ltp(tradingsymbols):
+    if not tradingsymbols:
+        return {}
     query = urlencode([("i", f"{KITE_EXCHANGE}:{symbol}") for symbol in tradingsymbols])
     request = Request(f"{KITE_LTP_URL}?{query}", headers=get_auth_headers())
     with urlopen(request, timeout=20) as response:
@@ -121,6 +170,9 @@ def find_kite_contract_for_signal(signal):
     try:
         instruments = fetch_kite_instruments()
         candidates = candidate_kite_instruments(signal, instruments)
+        if not candidates:
+            return None
+            
         ltp_by_symbol = fetch_kite_ltp([item["tradingsymbol"] for item in candidates])
         low_price, high_price = price_bounds(signal["entry_range"])
         
@@ -133,8 +185,18 @@ def find_kite_contract_for_signal(signal):
             for item in candidates if item["tradingsymbol"] in ltp_by_symbol
             and low_price <= ltp_by_symbol[item["tradingsymbol"]] <= high_price
         ]
-        if not matches:
+        
+        # Fallback: If current market price has moved out of bounds, prioritize matching by explicit expiry
+        if not matches and candidates:
+            fallback_item = candidates[0]
+            if fallback_item["tradingsymbol"] in ltp_by_symbol:
+                return {
+                    "tradingsymbol": fallback_item["tradingsymbol"],
+                    "expiry": fallback_item["expiry"].isoformat(),
+                    "last_price": ltp_by_symbol[fallback_item["tradingsymbol"]]
+                }
             return None
+            
         target_price = first_price(signal["entry_range"])
         return min(matches, key=lambda item: abs(item["last_price"] - target_price))
     except Exception as e:
@@ -194,7 +256,7 @@ def execute_trade_pipeline(signal):
 @client.on(events.NewMessage(chats=TARGET_CHAT))
 async def handler(event):
     try:
-# Get the current system time
+        # Get the current system time
         now = datetime.now()
         current_time = now.time()
         
@@ -211,6 +273,7 @@ async def handler(event):
         if now.weekday() in [5, 6]:
             print(f"休 Message ignored. Today is a weekend ({now.strftime('%A')}). Trading pipeline is locked.")
             return
+            
         signal = extract_signal(event.raw_text)
         if not signal:
             return
