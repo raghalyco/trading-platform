@@ -18,7 +18,8 @@ from kite_auth import get_kite_client
 API_ID = 35784910  # Update this with your real Telethon API ID
 API_HASH = '4a73f7632189dd4b9768b7bab06baa71'  # Update this with your real Telethon API Hash
 
-TARGET_CHAT = 't.me/testalgotradinganand' 
+SOURCE_CHAT = 't.me/testalgotradinganand'
+NOTIFICATION_CHAT = 't.me/testalgotradinganand'
 KITE_EXCHANGE = "NFO"
 KITE_PRODUCT = "NRML"
 KITE_ORDER_TYPE = "LIMIT"
@@ -275,8 +276,8 @@ def trade_exit_reached(trade, current_price):
 
 async def send_chat_notification(message):
     try:
-        await client.send_message(TARGET_CHAT, message)
-        print(f"Notification sent to {TARGET_CHAT}: {message}")
+        await client.send_message(NOTIFICATION_CHAT, message)
+        print(f"Notification sent to {NOTIFICATION_CHAT}: {message}")
     except Exception as err:
         print(f"Notification send failed: {err}")
 
@@ -474,7 +475,7 @@ def execute_trade_pipeline(signal, contract=None, allow_monitor_queue=True):
         print(f"Exit protective leg confirmed ID: {exit_id}")
         register_active_trade(signal, tradingsymbol, contract["expiry"], entry_prices)
 
-@client.on(events.NewMessage(chats=TARGET_CHAT))
+@client.on(events.NewMessage(chats=SOURCE_CHAT))
 async def handler(event):
     try:
         # Get the current system time
