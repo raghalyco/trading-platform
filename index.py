@@ -51,6 +51,7 @@ SL_REGEX = re.compile(rf"\b(?:sl|stop\s*loss|stoploss)\b\s*(?:is|at|@|:|-)?\s*(?
 kite_client = None
 client = TelegramClient('trading_session', API_ID, API_HASH)
 pending_signals = []
+active_trades = []
 
 # ==========================================
 # 2. MATCHING PARSING LOGIC & WRAPPER METHODS
@@ -228,6 +229,69 @@ def queue_signal_for_monitoring(signal, contract):
         f"for entry {signal['entry_range']}"
     )
 
+def active_trade_key(signal, tradingsymbol):
+    return (
+        tradingsymbol,
+        signal["action"],
+        signal["entry_range"],
+        signal["target_range"],
+        signal["sl"],
+    )
+
+def register_active_trade(signal, tradingsymbol, expiry, entry_prices):
+    trade_key = active_trade_key(signal, tradingsymbol)
+    if any(item["trade_key"] == trade_key for item in active_trades):
+        print(f"Trade already active for monitoring: {tradingsymbol}")
+        return
+
+    active_trades.append({
+        "trade_key": trade_key,
+        "signal": signal,
+        "tradingsymbol": tradingsymbol,
+        "expiry": expiry,
+        "entry_prices": entry_prices,
+        "sl_price": first_price(signal["sl"]),
+        "target_price": last_price_from_range(signal["target_range"]),
+    })
+    print(f"Trade monitoring started for {tradingsymbol} with SL {signal['sl']} and TARGET {signal['target_range']}")
+
+def trade_exit_reached(trade, current_price):
+    action = trade["signal"]["action"]
+    sl_price = trade["sl_price"]
+    target_price = trade["target_price"]
+
+    if action == "BUY":
+        if current_price <= sl_price:
+            return "SL"
+        if current_price >= target_price:
+            return "TARGET"
+        return None
+
+    if current_price >= sl_price:
+        return "SL"
+    if current_price <= target_price:
+        return "TARGET"
+    return None
+
+async def send_chat_notification(message):
+    try:
+        await client.send_message(TARGET_CHAT, message)
+        print(f"Notification sent to {TARGET_CHAT}: {message}")
+    except Exception as err:
+        print(f"Notification send failed: {err}")
+
+def notify_trade_closed(trade, exit_reason, current_price):
+    message = (
+        f"Trade closed for {trade['tradingsymbol']} | Reason: {exit_reason} | "
+        f"Price: {current_price} | Entry: {trade['signal']['entry_range']} | "
+        f"SL: {trade['signal']['sl']} | Target: {trade['signal']['target_range']}"
+    )
+    if client.loop.is_running():
+        client.loop.create_task(send_chat_notification(message))
+        return
+
+    print(f"Notification skipped because Telegram client loop is not running: {message}")
+
 def process_pending_signals_once():
     if not pending_signals:
         return
@@ -260,10 +324,35 @@ def process_pending_signals_once():
 
     pending_signals[:] = remaining_signals
 
+def process_active_trades_once():
+    if not active_trades:
+        return
+
+    ltp_by_symbol = fetch_kite_ltp([item["tradingsymbol"] for item in active_trades])
+    remaining_trades = []
+
+    for trade in active_trades:
+        tradingsymbol = trade["tradingsymbol"]
+        current_price = ltp_by_symbol.get(tradingsymbol)
+        if current_price is None:
+            remaining_trades.append(trade)
+            continue
+
+        exit_reason = trade_exit_reached(trade, current_price)
+        if exit_reason:
+            print(f"Trade monitoring closed for {tradingsymbol}: {exit_reason} hit at {current_price}")
+            notify_trade_closed(trade, exit_reason, current_price)
+            continue
+
+        remaining_trades.append(trade)
+
+    active_trades[:] = remaining_trades
+
 async def monitor_pending_signals():
     while True:
         try:
             process_pending_signals_once()
+            process_active_trades_once()
         except Exception as err:
             print(f"Pending signal monitor error: {err}")
         await asyncio.sleep(PENDING_SIGNAL_CHECK_INTERVAL_SECONDS)
@@ -383,6 +472,7 @@ def execute_trade_pipeline(signal, contract=None, allow_monitor_queue=True):
     if entry_ids:
         exit_id = place_gtt_order(exit_payload)
         print(f"Exit protective leg confirmed ID: {exit_id}")
+        register_active_trade(signal, tradingsymbol, contract["expiry"], entry_prices)
 
 @client.on(events.NewMessage(chats=TARGET_CHAT))
 async def handler(event):
