@@ -30,15 +30,18 @@ KITE_GTT_URL = "https://api.kite.trade/gtt/triggers"
 
 PRICE_VALUE_REGEX = r"\d+(?:\.\d+)?(?:\s*-\s*\d+(?:\.\d+)?)?"
 ACTION_REGEX = re.compile(r"\b(?P<action>BUY|SELL)\b", re.IGNORECASE)
+ENTRY_KEYWORD_REGEX = r"(?:entry|enty)"
+ENTRY_TRIGGER_REGEX = re.compile(rf"\b{ENTRY_KEYWORD_REGEX}\b\s*(?:only\s+)?(?P<direction>above|below)\s*(?P<value>{PRICE_VALUE_REGEX})", re.IGNORECASE)
 
 # Updated to support trailing optional expiry variations like '7th July', '14th Jul', 'July End'
 SIGNAL_REGEX = re.compile(
-    r"\bNIFTY\s*(?P<strike>\d{4,6})\s*(?P<option_type>CE|PE)(?:\s+(?P<expiry_date>\d{1,2}(?:st|nd|rd|th)?\s*[a-zA-Z]+|[a-zA-Z]+\s*(?:monthly|end)?))?\b"
+    r"\bNIFTY\s*(?P<strike>\d{4,6})\s*(?P<option_type>CE|PE)(?:[ \t]+(?P<expiry_date>\d{1,2}(?:st|nd|rd|th)?[ \t]*[a-zA-Z]+|[a-zA-Z]+[ \t]*(?:monthly|end)?))?\b"
     r"|\b(?P<strike_alt>\d{4,6})\s*(?P<option_type_alt>CE|PE)\b",
     re.IGNORECASE,
 )
-RANGE_REGEX = re.compile(rf"\b(?:range|rng|entry)\b\s*(?:is|at|@|:|-)?\s*(?P<value>{PRICE_VALUE_REGEX})", re.IGNORECASE)
-TARGET_REGEX = re.compile(rf"\b(?:target|tgt)\b\s*(?:is|at|@|:|-)?\s*(?P<value>{PRICE_VALUE_REGEX})", re.IGNORECASE)
+RANGE_REGEX = re.compile(rf"\b(?:range|rng|{ENTRY_KEYWORD_REGEX})\b\s*(?:is|at|@|:|-)?\s*(?P<value>{PRICE_VALUE_REGEX})", re.IGNORECASE)
+TARGET_ONE_REGEX = re.compile(rf"\b(?:target|tgt)\s*1\b\s*(?:is|at|@|:|-)?\s*(?P<value>{PRICE_VALUE_REGEX})", re.IGNORECASE)
+TARGET_REGEX = re.compile(rf"\b(?:target|tgt)\b(?!\s*\d)\s*(?:is|at|@|:|-)?\s*(?P<value>{PRICE_VALUE_REGEX})", re.IGNORECASE)
 SL_REGEX = re.compile(rf"\b(?:sl|stop\s*loss|stoploss)\b\s*(?:is|at|@|:|-)?\s*(?P<value>{PRICE_VALUE_REGEX})", re.IGNORECASE)
 
 kite_client = None
@@ -73,10 +76,10 @@ def parse_message_expiry(date_str):
                             
         # --- Handle Standard Weekly Expiries (e.g., "7th July", "14th Jul") ---
         cleaned_weekly = re.sub(r'(\d+)(st|nd|rd|th)', r'\1', date_str.strip(), flags=re.IGNORECASE)
-        for fmt in ("%d %B", "%d %b"):
+        dated_weekly = f"{cleaned_weekly} {current_year}"
+        for fmt in ("%d %B %Y", "%d %b %Y"):
             try:
-                parsed_date = datetime.strptime(cleaned_weekly, fmt)
-                return parsed_date.replace(year=current_year).date()
+                return datetime.strptime(dated_weekly, fmt).date()
             except ValueError:
                 continue
     except Exception as e:
@@ -88,18 +91,27 @@ def extract_signal(text):
     action_match = ACTION_REGEX.search(text)
     signal_match = SIGNAL_REGEX.search(text)
     range_match = RANGE_REGEX.search(text)
-    target_match = TARGET_REGEX.search(text)
+    entry_trigger_match = ENTRY_TRIGGER_REGEX.search(text)
+    target_match = TARGET_ONE_REGEX.search(text) or TARGET_REGEX.search(text)
     sl_match = SL_REGEX.search(text)
+    action = action_match.group("action").upper() if action_match else None
+    entry_value = None
+
+    if range_match:
+        entry_value = range_match.group("value").replace(" ", "")
+    elif entry_trigger_match:
+        action = action or "BUY"
+        entry_value = entry_trigger_match.group("value").replace(" ", "")
     
-    if not action_match or not signal_match or not range_match or not target_match or not sl_match:
+    if not action or not signal_match or not entry_value or not target_match or not sl_match:
         return None
         
     return {
-        "action": action_match.group("action").upper(),
+        "action": action,
         "strike": signal_match.group("strike") or signal_match.group("strike_alt"),
         "option_type": (signal_match.group("option_type") or signal_match.group("option_type_alt")).upper(),
         "expiry_date_str": signal_match.group("expiry_date") if signal_match.group("strike") else None,
-        "entry_range": range_match.group("value").replace(" ", ""),
+        "entry_range": entry_value,
         "target_range": target_match.group("value").replace(" ", ""),
         "sl": sl_match.group("value").replace(" ", ""),
     }
