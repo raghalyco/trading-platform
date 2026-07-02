@@ -30,7 +30,7 @@ PENDING_SIGNAL_CHECK_INTERVAL_SECONDS = 5
 
 KITE_LTP_URL = "https://api.kite.trade/quote/ltp"
 KITE_GTT_URL = "https://api.kite.trade/gtt/triggers"
-TELEGRAM_LOG_FILE = "telegram_messages.log"
+TELEGRAM_LOG_FILE = os.getenv("BOT_LOG_FILE", "bot_output.log")
 
 UNDERLYING_CONFIG = {
     "NIFTY": {
@@ -753,6 +753,7 @@ async def handler(event):
         telegram_logger.exception("Loop error")
 
 if __name__ == "__main__":
+    telegram_logger.info("Starting bot with source chat %s and log file %s", SOURCE_CHAT, TELEGRAM_LOG_FILE)
     client.start()
     client.loop.create_task(monitor_pending_signals())
     client.run_until_disconnected()
