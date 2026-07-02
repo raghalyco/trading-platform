@@ -174,6 +174,28 @@ def normalize_order_price(price):
 def normalize_order_quantity(quantity):
     return int(float(quantity))
 
+def normalize_chat_identifier(value):
+    if not value:
+        return None
+
+    normalized = value.strip().lower()
+    normalized = re.sub(r"^https?://", "", normalized)
+    normalized = normalized.removeprefix("t.me/")
+    normalized = normalized.removeprefix("telegram.me/")
+    normalized = normalized.removeprefix("@")
+    return normalized.strip("/") or None
+
+def event_matches_source_chat(chat, source_chat):
+    expected_chat = normalize_chat_identifier(source_chat)
+    if not expected_chat:
+        return True
+
+    chat_candidates = {
+        normalize_chat_identifier(getattr(chat, "username", None)),
+        normalize_chat_identifier(getattr(chat, "title", None)),
+    }
+    return expected_chat in chat_candidates
+
 def build_entry_prices(entry_range, last_price):
     prices = [float(part) for part in entry_range.split("-")]
     if len(prices) == 1:
@@ -679,7 +701,7 @@ def execute_trade_pipeline(signal, contract=None, allow_monitor_queue=True):
     if entry_ids:
         register_pending_entry_batch(signal, exchange, quantity, tradingsymbol, contract["expiry"], entry_prices)
 
-@client.on(events.NewMessage(chats=SOURCE_CHAT))
+@client.on(events.NewMessage)
 async def handler(event):
     try:
         # Get the current system time
@@ -696,6 +718,11 @@ async def handler(event):
             sender_name,
             message_text or "<empty>",
         )
+
+        if not event_matches_source_chat(chat, SOURCE_CHAT):
+            telegram_logger.info("Message ignored. Source chat %s does not match configured source %s.", chat_name, SOURCE_CHAT)
+            return
+
         current_time = now.time()
         
         # Define market monitoring boundaries (09:00:00 to 15:00:00)
