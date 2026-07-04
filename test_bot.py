@@ -1,14 +1,34 @@
 import json
 # Import the structural components directly from your active bot script
-from index import extract_signal, find_kite_contract_for_signal, get_kite_client
+from index import (
+    DAILY_PROFIT_TARGET_RUPEES,
+    UNDERLYING_CONFIG,
+    extract_signal,
+    find_kite_contract_for_signal,
+    get_kite_client,
+    required_profit_capture_points,
+)
+
+def print_target_point_preview():
+    print("[STEP 0/4] Previewing Dynamic Target Points...")
+    print(f"Daily profit target: Rs. {DAILY_PROFIT_TARGET_RUPEES}")
+    for underlying in ("NIFTY", "BANKNIFTY", "SENSEX"):
+        target_points, lot_size = required_profit_capture_points(underlying, 0)
+        print(
+            f"   {underlying:<10} | Configured lot size: {UNDERLYING_CONFIG[underlying]['profit_target_lot_size']:<3} | "
+            f"Required target points: {target_points:.2f}"
+        )
+    print()
 
 def run_dry_run_test():
     print("==================================================")
     print("           STARTING BOT VALIDATION TEST           ")
     print("==================================================\n")
 
+    print_target_point_preview()
+
     # 1. Verify Connectivity to Zerodha Auth Layer
-    print("[STEP 1/3] Testing Zerodha Automated Authentication...")
+    print("[STEP 1/4] Testing Zerodha Automated Authentication...")
     try:
         client = get_kite_client()
         profile = client.profile()
@@ -19,7 +39,7 @@ def run_dry_run_test():
         return
 
     # 2. Verify Your Telegram Pattern-Matching Regex
-    print("[STEP 2/3] Testing Signal Parsing Engine...")
+    print("[STEP 2/4] Testing Signal Parsing Engine...")
     # This matches the formatting pattern used by 't.me/dhanvitta'
     sample_telegram_message = """BUY NIFTY 23500 CE
 ENTRY RANGE : 10 - 500
@@ -35,7 +55,7 @@ SL : 5 """
         return
 
     # 3. Verify Active Contract Lookup & Live LTP Data Retrieval
-    print("[STEP 3/3] Testing Active Contract Matching & Live Market Data...")
+    print("[STEP 3/4] Testing Active Contract Matching & Live Market Data...")
     print("Searching for live instruments matching your parameters on Zerodha...")
     
     contract_match = find_kite_contract_for_signal(parsed_signal)

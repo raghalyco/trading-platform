@@ -7,6 +7,7 @@ import re
 import calendar
 from datetime import date, datetime
 from io import StringIO
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
@@ -19,31 +20,67 @@ from kite_auth import get_kite_client
 API_ID = 35784910  # Update this with your real Telethon API ID
 API_HASH = '4a73f7632189dd4b9768b7bab06baa71'  # Update this with your real Telethon API Hash
 
+CONFIG_WARNINGS = []
+
+def get_env_float(name, default):
+    raw_value = os.getenv(name)
+    if raw_value in (None, ""):
+        return default
+    try:
+        parsed_value = float(raw_value)
+    except ValueError:
+        CONFIG_WARNINGS.append(f"Invalid float for {name}: {raw_value!r}. Using default {default}.")
+        return default
+
+    if parsed_value <= 0:
+        CONFIG_WARNINGS.append(f"Non-positive float for {name}: {raw_value!r}. Using default {default}.")
+        return default
+    return parsed_value
+
+def get_env_int(name, default):
+    raw_value = os.getenv(name)
+    if raw_value in (None, ""):
+        return default
+    try:
+        parsed_value = int(raw_value)
+    except ValueError:
+        CONFIG_WARNINGS.append(f"Invalid integer for {name}: {raw_value!r}. Using default {default}.")
+        return default
+
+    if parsed_value <= 0:
+        CONFIG_WARNINGS.append(f"Non-positive integer for {name}: {raw_value!r}. Using default {default}.")
+        return default
+    return parsed_value
+
 SOURCE_CHAT = 't.me/testalgotradinganand'
 NOTIFICATION_CHAT = 't.me/testalgotradinganand'
 KITE_PRODUCT = "NRML"
 KITE_ORDER_TYPE = "LIMIT"
 KITE_PRICE_MATCH_TOLERANCE = 1.0
 KITE_ENTRY_ABOVE_LADDER_TOLERANCE = 5.0
-KITE_PROFIT_CAPTURE_POINTS = 15.0
+DAILY_PROFIT_TARGET_RUPEES = get_env_float("DAILY_PROFIT_TARGET_RUPEES", 500.0)
 PENDING_SIGNAL_CHECK_INTERVAL_SECONDS = 5
 
 KITE_LTP_URL = "https://api.kite.trade/quote/ltp"
 KITE_GTT_URL = "https://api.kite.trade/gtt/triggers"
 TELEGRAM_LOG_FILE = os.getenv("BOT_LOG_FILE", "bot_output.log")
+LOG_ONLY_MODE = os.getenv("LOG_ONLY_MODE", "false").strip().lower() in {"1", "true", "yes", "on"}
 
 UNDERLYING_CONFIG = {
     "NIFTY": {
         "exchange": "NFO",
         "instruments_url": "https://api.kite.trade/instruments/NFO",
+        "profit_target_lot_size": get_env_int("NIFTY_PROFIT_TARGET_LOT_SIZE", 65),
     },
     "BANKNIFTY": {
         "exchange": "NFO",
         "instruments_url": "https://api.kite.trade/instruments/NFO",
+        "profit_target_lot_size": get_env_int("BANKNIFTY_PROFIT_TARGET_LOT_SIZE", 30),
     },
     "SENSEX": {
         "exchange": "BFO",
         "instruments_url": "https://api.kite.trade/instruments/BFO",
+        "profit_target_lot_size": get_env_int("SENSEX_PROFIT_TARGET_LOT_SIZE", 20),
     },
 }
 
@@ -185,6 +222,17 @@ def normalize_chat_identifier(value):
     normalized = normalized.removeprefix("@")
     return normalized.strip("/") or None
 
+def build_event_id(chat, event):
+    chat_id = getattr(chat, "id", "unknown-chat")
+    message_id = getattr(event, "id", "unknown-message")
+    return f"{chat_id}:{message_id}"
+
+def signal_summary(signal):
+    return (
+        f"{signal['action']} {signal['underlying']} {signal['strike']}{signal['option_type']} "
+        f"entry={signal['entry_range']} target={signal['target_range']} sl={signal['sl']}"
+    )
+
 def event_matches_source_chat(chat, source_chat):
     expected_chat = normalize_chat_identifier(source_chat)
     if not expected_chat:
@@ -240,11 +288,34 @@ def build_exit_payload(exchange, tradingsymbol, exit_action, quantity, sl_price,
         ])
     }
 
-def effective_target_price(signal, entry_price):
+def target_lot_size_for_underlying(underlying, fallback_quantity):
+    configured_lot_size = normalize_order_quantity(
+        UNDERLYING_CONFIG.get(underlying, {}).get("profit_target_lot_size") or 0
+    )
+    if configured_lot_size > 0:
+        return configured_lot_size
+
+    normalized_quantity = normalize_order_quantity(fallback_quantity)
+    if normalized_quantity <= 0:
+        raise ValueError("Lot size must be greater than zero to derive target points")
+    return normalized_quantity
+
+def required_profit_capture_points(underlying, fallback_quantity):
+    lot_size = target_lot_size_for_underlying(underlying, fallback_quantity)
+    return DAILY_PROFIT_TARGET_RUPEES / lot_size, lot_size
+
+def profit_target_config_summary():
+    return {
+        underlying: config["profit_target_lot_size"]
+        for underlying, config in UNDERLYING_CONFIG.items()
+    }
+
+def effective_target_price(signal, entry_price, quantity):
     configured_target = last_price_from_range(signal["target_range"])
+    target_points, _ = required_profit_capture_points(signal["underlying"], quantity)
     if signal["action"] == "BUY":
-        return normalize_order_price(min(configured_target, entry_price + KITE_PROFIT_CAPTURE_POINTS))
-    return normalize_order_price(max(configured_target, entry_price - KITE_PROFIT_CAPTURE_POINTS))
+        return normalize_order_price(min(configured_target, entry_price + target_points))
+    return normalize_order_price(max(configured_target, entry_price - target_points))
 
 def resolve_signal_contract(signal):
     instruments = fetch_kite_instruments(signal["underlying"])
@@ -282,7 +353,7 @@ def contract_within_entry_window(signal, contract):
     low_price, high_price = price_bounds(signal["entry_range"])
     return low_price <= contract["last_price"] <= high_price + KITE_ENTRY_ABOVE_LADDER_TOLERANCE
 
-def queue_signal_for_monitoring(signal, contract):
+def queue_signal_for_monitoring(signal, contract, event_id="system"):
     signal_key = (
         contract["exchange"],
         contract["tradingsymbol"],
@@ -293,10 +364,11 @@ def queue_signal_for_monitoring(signal, contract):
         signal["sl"],
     )
     if any(item["signal_key"] == signal_key for item in pending_signals):
-        telegram_logger.info("Signal already pending for monitoring: %s", contract["tradingsymbol"])
+        telegram_logger.info("[%s] Signal already pending for monitoring: %s", event_id, contract["tradingsymbol"])
         return
 
     pending_signals.append({
+        "event_id": event_id,
         "signal_key": signal_key,
         "signal": signal,
         "exchange": contract["exchange"],
@@ -305,13 +377,14 @@ def queue_signal_for_monitoring(signal, contract):
         "expiry": contract["expiry"],
     })
     telegram_logger.info(
-        "Signal queued for monitoring: %s currently at %s for entry %s",
+        "[%s] Signal queued for monitoring: %s currently at %s for entry %s",
+        event_id,
         contract["tradingsymbol"],
         contract["last_price"],
         signal["entry_range"],
     )
 
-def register_pending_entry_batch(signal, exchange, quantity, tradingsymbol, expiry, entry_prices):
+def register_pending_entry_batch(signal, exchange, quantity, tradingsymbol, expiry, entry_prices, event_id="system"):
     batch_key = (
         exchange,
         quantity,
@@ -322,10 +395,11 @@ def register_pending_entry_batch(signal, exchange, quantity, tradingsymbol, expi
         signal["sl"],
     )
     if any(item["batch_key"] == batch_key for item in pending_entry_batches):
-        telegram_logger.info("Entry batch already pending fill monitoring: %s", tradingsymbol)
+        telegram_logger.info("[%s] Entry batch already pending fill monitoring: %s", event_id, tradingsymbol)
         return
 
     pending_entry_batches.append({
+        "event_id": event_id,
         "batch_key": batch_key,
         "signal": signal,
         "exchange": exchange,
@@ -335,7 +409,7 @@ def register_pending_entry_batch(signal, exchange, quantity, tradingsymbol, expi
         "entry_prices": entry_prices,
         "processed_order_ids": [],
     })
-    telegram_logger.info("Entry fill monitoring started for %s at prices %s", tradingsymbol, entry_prices)
+    telegram_logger.info("[%s] Entry fill monitoring started for %s at prices %s", event_id, tradingsymbol, entry_prices)
 
 def active_trade_key(signal, tradingsymbol):
     return (
@@ -347,13 +421,14 @@ def active_trade_key(signal, tradingsymbol):
         signal["sl"],
     )
 
-def register_active_trade(signal, exchange, quantity, tradingsymbol, expiry, entry_order_id, entry_price, target_price):
+def register_active_trade(signal, exchange, quantity, tradingsymbol, expiry, entry_order_id, entry_price, target_price, event_id="system"):
     trade_key = active_trade_key(signal, tradingsymbol) + (entry_order_id,)
     if any(item["trade_key"] == trade_key for item in active_trades):
-        telegram_logger.info("Trade already active for monitoring: %s", tradingsymbol)
+        telegram_logger.info("[%s] Trade already active for monitoring: %s", event_id, tradingsymbol)
         return
 
     active_trades.append({
+        "event_id": event_id,
         "trade_key": trade_key,
         "signal": signal,
         "exchange": exchange,
@@ -366,7 +441,8 @@ def register_active_trade(signal, exchange, quantity, tradingsymbol, expiry, ent
         "target_price": target_price,
     })
     telegram_logger.info(
-        "Trade monitoring started for %s with SL %s and TARGET %s",
+        "[%s] Trade monitoring started for %s with SL %s and TARGET %s",
+        event_id,
         tradingsymbol,
         signal["sl"],
         target_price,
@@ -417,6 +493,7 @@ def process_pending_signals_once():
     remaining_signals = []
 
     for pending_signal in pending_signals:
+        event_id = pending_signal.get("event_id", "system")
         exchange = pending_signal["exchange"]
         tradingsymbol = pending_signal["tradingsymbol"]
         current_price = ltp_by_symbol.get((exchange, tradingsymbol))
@@ -426,7 +503,7 @@ def process_pending_signals_once():
 
         signal = pending_signal["signal"]
         if can_activate_monitored_signal(signal["entry_range"], current_price):
-            telegram_logger.info("Pending signal activated for %s at %s", tradingsymbol, current_price)
+            telegram_logger.info("[%s] Pending signal activated for %s at %s", event_id, tradingsymbol, current_price)
             execute_trade_pipeline(
                 signal,
                 contract={
@@ -437,6 +514,7 @@ def process_pending_signals_once():
                     "last_price": current_price,
                 },
                 allow_monitor_queue=False,
+                event_id=event_id,
             )
             continue
 
@@ -480,6 +558,7 @@ def process_pending_entry_batches_once():
     remaining_batches = []
 
     for batch in pending_entry_batches:
+        event_id = batch.get("event_id", "system")
         signal = batch["signal"]
         tradingsymbol = batch["tradingsymbol"]
         new_fills = []
@@ -491,12 +570,30 @@ def process_pending_entry_batches_once():
             if not order_matches_entry_batch(order, batch):
                 continue
             new_fills.append(order)
-            batch["processed_order_ids"].append(order_id)
 
         for order in new_fills:
+            order_id = order.get("order_id")
             entry_price = normalize_order_price(extract_filled_order_price(order))
-            target_price = effective_target_price(signal, float(entry_price))
+            target_points, calculation_lot_size = required_profit_capture_points(signal["underlying"], batch["quantity"])
+            target_price = effective_target_price(signal, float(entry_price), batch["quantity"])
             exit_action = "SELL" if signal["action"] == "BUY" else "BUY"
+            telegram_logger.info(
+                "[%s] Entry order fill detected for %s. order_id=%s entry_price=%s",
+                event_id,
+                tradingsymbol,
+                order_id,
+                entry_price,
+            )
+            telegram_logger.info(
+                "[%s] Derived target points for %s using daily profit target %s and configured lot size %s (order quantity %s): %s points -> exit target %s",
+                event_id,
+                signal["underlying"],
+                DAILY_PROFIT_TARGET_RUPEES,
+                calculation_lot_size,
+                batch["quantity"],
+                round(target_points, 2),
+                target_price,
+            )
             exit_payload = build_exit_payload(
                 batch["exchange"],
                 tradingsymbol,
@@ -506,21 +603,27 @@ def process_pending_entry_batches_once():
                 target_price,
                 float(entry_price),
             )
-            exit_id = place_gtt_order(exit_payload)
-            telegram_logger.info(
-                "Exit protective leg confirmed ID: %s for filled entry order %s",
-                exit_id,
-                order.get("order_id"),
-            )
+            exit_id = place_gtt_order(exit_payload, event_id=event_id, stage="EXIT", tradingsymbol=tradingsymbol)
+            if not exit_id:
+                telegram_logger.warning(
+                    "[%s] Exit protective GTT placement failed for filled entry order %s on %s. Will retry on next monitor cycle.",
+                    event_id,
+                    order_id,
+                    tradingsymbol,
+                )
+                continue
+
+            batch["processed_order_ids"].append(order_id)
             register_active_trade(
                 signal,
                 batch["exchange"],
                 batch["quantity"],
                 tradingsymbol,
                 batch["expiry"],
-                order.get("order_id"),
+                order_id,
                 float(entry_price),
                 float(target_price),
+                event_id=event_id,
             )
 
         if len(batch["processed_order_ids"]) < len(batch["entry_prices"]):
@@ -536,6 +639,7 @@ def process_active_trades_once():
     remaining_trades = []
 
     for trade in active_trades:
+        event_id = trade.get("event_id", "system")
         exchange = trade["exchange"]
         tradingsymbol = trade["tradingsymbol"]
         current_price = ltp_by_symbol.get((exchange, tradingsymbol))
@@ -545,7 +649,7 @@ def process_active_trades_once():
 
         exit_reason = trade_exit_reached(trade, current_price)
         if exit_reason:
-            telegram_logger.info("Trade monitoring closed for %s: %s hit at %s", tradingsymbol, exit_reason, current_price)
+            telegram_logger.info("[%s] Trade monitoring closed for %s: %s hit at %s", event_id, tradingsymbol, exit_reason, current_price)
             notify_trade_closed(trade, exit_reason, current_price)
             continue
 
@@ -652,36 +756,77 @@ def find_kite_contract_for_signal(signal):
         telegram_logger.exception("Error checking contracts")
         return None
 
-def place_gtt_order(payload):
+def place_gtt_order(payload, event_id="system", stage="GTT", tradingsymbol="unknown"):
     try:
         data_bytes = urlencode(payload).encode("utf-8")
         request = Request(KITE_GTT_URL, data=data_bytes, headers=get_auth_headers(), method="POST")
         with urlopen(request, timeout=15) as response:
             result = json.loads(response.read().decode("utf-8"))
-            return result.get("data", {}).get("trigger_id", "SUCCESS")
+            trigger_id = result.get("data", {}).get("trigger_id")
+            if trigger_id:
+                telegram_logger.info("[%s] %s GTT created for %s with trigger_id=%s", event_id, stage, tradingsymbol, trigger_id)
+                return trigger_id
+
+            telegram_logger.warning("[%s] %s GTT request returned no trigger_id for %s. Response: %s", event_id, stage, tradingsymbol, result)
+            return None
+    except HTTPError as exc:
+        error_body = exc.read().decode("utf-8", errors="replace")
+        telegram_logger.error(
+            "[%s] %s GTT request failed for %s with HTTP %s. Response: %s | Payload: %s",
+            event_id,
+            stage,
+            tradingsymbol,
+            exc.code,
+            error_body,
+            payload,
+        )
+        return None
+    except URLError as exc:
+        telegram_logger.error(
+            "[%s] %s GTT network failure for %s: %s | Payload: %s",
+            event_id,
+            stage,
+            tradingsymbol,
+            exc,
+            payload,
+        )
+        return None
     except Exception:
-        telegram_logger.exception("Network error routing trade to API")
+        telegram_logger.exception("[%s] %s GTT unexpected failure for %s. Payload: %s", event_id, stage, tradingsymbol, payload)
         return None
 
-def execute_trade_pipeline(signal, contract=None, allow_monitor_queue=True):
+def execute_trade_pipeline(signal, contract=None, allow_monitor_queue=True, event_id="system"):
     telegram_logger.info(
-        "Executing trade parameters: %s %s %s %s",
-        signal["action"],
-        signal["underlying"],
-        signal["strike"],
-        signal["option_type"],
+        "[%s] Executing trade pipeline for %s",
+        event_id,
+        signal_summary(signal),
     )
     contract = contract or resolve_signal_contract(signal)
     if not contract:
-        telegram_logger.warning("Trade blocked: no matching contracts found.")
+        telegram_logger.warning("[%s] Trade blocked: no matching contracts found for %s", event_id, signal_summary(signal))
         return
+
+    telegram_logger.info(
+        "[%s] Resolved contract %s expiry=%s ltp=%s quantity=%s",
+        event_id,
+        contract["tradingsymbol"],
+        contract["expiry"],
+        contract["last_price"],
+        contract["quantity"],
+    )
 
     if not contract_within_entry_window(signal, contract):
         if allow_monitor_queue:
             if should_monitor_signal(signal["entry_range"], contract["last_price"]):
-                queue_signal_for_monitoring(signal, contract)
+                queue_signal_for_monitoring(signal, contract, event_id=event_id)
                 return
-        telegram_logger.warning("Trade blocked: no matching contracts found.")
+        telegram_logger.warning(
+            "[%s] Trade blocked: contract %s price %s is outside entry window %s",
+            event_id,
+            contract["tradingsymbol"],
+            contract["last_price"],
+            signal["entry_range"],
+        )
         return
 
     exchange = contract["exchange"]
@@ -690,16 +835,21 @@ def execute_trade_pipeline(signal, contract=None, allow_monitor_queue=True):
     last_price = contract['last_price']
     entry_prices = build_entry_prices(signal["entry_range"], last_price)
 
-    telegram_logger.info("Sending entry setup to exchange with quantity %s...", quantity)
+    telegram_logger.info("[%s] Sending entry setup to exchange for %s with quantity %s and prices %s", event_id, tradingsymbol, quantity, entry_prices)
     entry_ids = []
     for entry_price in entry_prices:
-        entry_id = place_gtt_order(build_entry_payload(exchange, tradingsymbol, signal["action"], quantity, entry_price, last_price))
+        entry_payload = build_entry_payload(exchange, tradingsymbol, signal["action"], quantity, entry_price, last_price)
+        entry_id = place_gtt_order(entry_payload, event_id=event_id, stage="ENTRY", tradingsymbol=tradingsymbol)
         if entry_id:
             entry_ids.append(entry_id)
-            telegram_logger.info("Entry trigger confirmed ID: %s @ %s", entry_id, entry_price)
+        else:
+            telegram_logger.warning("[%s] Entry GTT placement failed for %s at price %s", event_id, tradingsymbol, entry_price)
 
     if entry_ids:
-        register_pending_entry_batch(signal, exchange, quantity, tradingsymbol, contract["expiry"], entry_prices)
+        register_pending_entry_batch(signal, exchange, quantity, tradingsymbol, contract["expiry"], entry_prices, event_id=event_id)
+        return
+
+    telegram_logger.warning("[%s] No entry GTT orders were created for %s", event_id, tradingsymbol)
 
 @client.on(events.NewMessage)
 async def handler(event):
@@ -708,19 +858,30 @@ async def handler(event):
         now = datetime.now()
         message_text = (event.raw_text or "").strip()
         chat = await event.get_chat()
+        event_id = build_event_id(chat, event)
         chat_name = getattr(chat, "title", None) or getattr(chat, "username", None) or SOURCE_CHAT
         sender = await event.get_sender()
         sender_name = getattr(sender, "username", None) or getattr(sender, "first_name", None) or "unknown"
 
         telegram_logger.info(
-            "Telegram message received from %s by %s: %s",
+            "[%s] Telegram message received from %s by %s: %s",
+            event_id,
             chat_name,
             sender_name,
             message_text or "<empty>",
         )
 
         if not event_matches_source_chat(chat, SOURCE_CHAT):
-            telegram_logger.info("Message ignored. Source chat %s does not match configured source %s.", chat_name, SOURCE_CHAT)
+            telegram_logger.info("[%s] Message ignored. Source chat %s does not match configured source %s.", event_id, chat_name, SOURCE_CHAT)
+            return
+
+        if LOG_ONLY_MODE:
+            signal = extract_signal(message_text)
+            telegram_logger.info(
+                "[%s] LOG_ONLY_MODE enabled. Trading pipeline skipped for source chat message. Signal detected: %s",
+                event_id,
+                "yes" if signal else "no",
+            )
             return
 
         current_time = now.time()
@@ -732,7 +893,8 @@ async def handler(event):
         # Boundary 1: Check if the current time falls outside 9 AM - 3 PM
         if not (start_time <= current_time <= end_time):
             telegram_logger.info(
-                "Message ignored. Current time (%s) is outside specified trading hours (09:00 - 15:00).",
+                "[%s] Message ignored. Current time (%s) is outside specified trading hours (09:00 - 15:00).",
+                event_id,
                 now.strftime("%H:%M:%S"),
             )
             return
@@ -740,20 +902,36 @@ async def handler(event):
         # Boundary 2: Check if today is a weekend (5 = Saturday, 6 = Sunday)
         if now.weekday() in [5, 6]:
             telegram_logger.info(
-                "Message ignored. Today is a weekend (%s). Trading pipeline is locked.",
+                "[%s] Message ignored. Today is a weekend (%s). Trading pipeline is locked.",
+                event_id,
                 now.strftime("%A"),
             )
             return
             
-        signal = extract_signal(event.raw_text)
+        signal = extract_signal(message_text)
         if not signal:
+            telegram_logger.info("[%s] Message did not match signal format. No trade pipeline executed.", event_id)
             return
-        execute_trade_pipeline(signal)
+        telegram_logger.info("[%s] Parsed signal: %s", event_id, signal_summary(signal))
+        execute_trade_pipeline(signal, event_id=event_id)
     except Exception:
         telegram_logger.exception("Loop error")
 
 if __name__ == "__main__":
-    telegram_logger.info("Starting bot with source chat %s and log file %s", SOURCE_CHAT, TELEGRAM_LOG_FILE)
-    client.start()
-    client.loop.create_task(monitor_pending_signals())
-    client.run_until_disconnected()
+    telegram_logger.info(
+        "Starting bot with source chat %s, log file %s, log-only mode %s, daily profit target %s, target lot sizes %s",
+        SOURCE_CHAT,
+        TELEGRAM_LOG_FILE,
+        LOG_ONLY_MODE,
+        DAILY_PROFIT_TARGET_RUPEES,
+        profit_target_config_summary(),
+    )
+    for warning_message in CONFIG_WARNINGS:
+        telegram_logger.warning("Configuration fallback applied: %s", warning_message)
+    try:
+        client.start()
+        client.loop.create_task(monitor_pending_signals())
+        client.run_until_disconnected()
+    except Exception:
+        telegram_logger.exception("Bot startup failed")
+        raise
