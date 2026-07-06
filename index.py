@@ -12,6 +12,7 @@ from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 from telethon import TelegramClient, events
+from telethon.errors.rpcerrorlist import AuthKeyDuplicatedError
 from kite_auth import get_kite_client
 
 # ==========================================
@@ -52,7 +53,15 @@ def get_env_int(name, default):
         return default
     return parsed_value
 
-SOURCE_CHAT = 't.me/testalgotradinganand'
+def log_telegram_session_reset_required(logger, session_name):
+    logger.exception(
+        "Telegram session '%s' is no longer usable because the auth key was duplicated across multiple IPs. "
+        "Stop any other bot instance using this login and recreate %s.session before running again.",
+        session_name,
+        session_name,
+    )
+
+SOURCE_CHAT = 'Option Playbook by SK'
 NOTIFICATION_CHAT = 't.me/testalgotradinganand'
 KITE_PRODUCT = "NRML"
 KITE_ORDER_TYPE = "LIMIT"
@@ -221,6 +230,56 @@ def normalize_chat_identifier(value):
     normalized = normalized.removeprefix("telegram.me/")
     normalized = normalized.removeprefix("@")
     return normalized.strip("/") or None
+
+def describe_chat_entity(entity):
+    if entity is None:
+        return {"id": None, "title": None, "username": None, "entity_type": None}
+
+    entity_id = getattr(entity, "id", None)
+    if entity_id is None:
+        for attribute_name in ("channel_id", "chat_id", "user_id"):
+            entity_id = getattr(entity, attribute_name, None)
+            if entity_id is not None:
+                break
+
+    return {
+        "id": entity_id,
+        "title": getattr(entity, "title", None),
+        "username": getattr(entity, "username", None),
+        "entity_type": entity.__class__.__name__,
+    }
+
+async def resolve_chat_reference(client, chat_reference):
+    try:
+        return await client.get_input_entity(chat_reference)
+    except ValueError:
+        expected_chat = normalize_chat_identifier(chat_reference)
+        async for dialog in client.iter_dialogs():
+            dialog_entity = dialog.entity
+            chat_candidates = {
+                normalize_chat_identifier(getattr(dialog_entity, "username", None)),
+                normalize_chat_identifier(getattr(dialog_entity, "title", None)),
+                normalize_chat_identifier(getattr(dialog, "name", None)),
+            }
+            if expected_chat in chat_candidates:
+                return dialog_entity
+
+    raise ValueError(
+        f"Cannot find any Telegram entity corresponding to {chat_reference!r}. Use a dialog title, public username, or chat id."
+    )
+
+async def log_resolved_source_chat(client, source_chat):
+    try:
+        resolved_reference = await resolve_chat_reference(client, source_chat)
+        resolved_entity = await client.get_entity(resolved_reference)
+        telegram_logger.info(
+            "Resolved source chat %s to entity %s using reference %s",
+            source_chat,
+            describe_chat_entity(resolved_entity),
+            describe_chat_entity(resolved_reference),
+        )
+    except Exception:
+        telegram_logger.exception("Unable to resolve configured source chat at startup: %s", source_chat)
 
 def build_event_id(chat, event):
     chat_id = getattr(chat, "id", "unknown-chat")
@@ -930,8 +989,12 @@ if __name__ == "__main__":
         telegram_logger.warning("Configuration fallback applied: %s", warning_message)
     try:
         client.start()
+        client.loop.run_until_complete(log_resolved_source_chat(client, SOURCE_CHAT))
         client.loop.create_task(monitor_pending_signals())
         client.run_until_disconnected()
+    except AuthKeyDuplicatedError:
+        log_telegram_session_reset_required(telegram_logger, "trading_session")
+        raise
     except Exception:
         telegram_logger.exception("Bot startup failed")
         raise

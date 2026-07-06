@@ -1,1 +1,5 @@
 *.pyc
+*.log
+*.session
+*.session-journal
+*.session.invalid_*
