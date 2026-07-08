@@ -1,0 +1,236 @@
+EC2 RUN STEPS FOR NIFTY ALGO TRADING BOT
+=========================================
+
+Use this as a quick server runbook when setting up or restarting the bot on EC2.
+
+
+1. SSH INTO EC2
+---------------
+
+ssh ubuntu@YOUR_EC2_PUBLIC_IP
+
+
+2. GO TO PROJECT FOLDER
+-----------------------
+
+cd /home/ubuntu/kite_bot
+
+Use your actual project path if it is different.
+
+
+3. UPDATE CODE
+--------------
+
+git pull origin main
+
+
+4. CREATE OR UPDATE PYTHON VIRTUAL ENV
+--------------------------------------
+
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+
+
+5. CREATE CONFIG FILE
+---------------------
+
+Create config.txt in the project folder:
+
+nano config.txt
+
+Example format:
+
+[ZERODHA]
+user_id=YOUR_ZERODHA_USER_ID
+password=YOUR_ZERODHA_PASSWORD
+totp_secret=YOUR_TOTP_SECRET
+api_key=7g6jn8cbel1pybuv
+api_secret=6gz7qpuuc93nbtleaz10g4yne2gjz8og
+
+///https://kite.trade/connect/login?v=3&api_key=7g6jn8cbel1pybuv
+
+Save and exit:
+
+Ctrl+O
+Enter
+Ctrl+X
+
+
+6. ADD OR REFRESH ACCESS TOKEN
+------------------------------
+
+Option A: Let the bot generate access_token.txt automatically.
+
+Run:
+
+source .venv/bin/activate
+python test_bot.py
+
+If Zerodha login succeeds, access_token.txt should be created or refreshed.
+
+Option B: Manually add access token.
+
+nano access_token.txt
+
+Paste only the raw access token value, with no extra labels.
+
+Save and exit:
+
+Ctrl+O
+Enter
+Ctrl+X
+
+
+7. RUN LOCAL VALIDATION
+-----------------------
+
+source .venv/bin/activate
+python test_bot.py
+
+This checks authentication, parsing, contract lookup, and target point calculation.
+
+
+8. RUN BOT MANUALLY
+-------------------
+
+source .venv/bin/activate
+python -u index.py
+
+Watch logs in another SSH window:
+
+tail -f bot_output.log
+
+
+9. OPTIONAL: RUN WITH LOG-ONLY MODE
+-----------------------------------
+
+Use this when you want to verify Telegram parsing without placing trades:
+
+LOG_ONLY_MODE=true python -u index.py
+
+
+10. SYSTEMD SERVICE SETUP
+-------------------------
+
+Create service file:
+
+sudo nano /etc/systemd/system/nifty-bot.service
+
+Example:
+
+[Unit]
+Description=Nifty Algo Trading Bot
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/kite_bot
+ExecStart=/home/ubuntu/kite_bot/.venv/bin/python -u index.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+
+Save and exit.
+
+Reload systemd:
+
+sudo systemctl daemon-reload
+
+Enable service:
+
+sudo systemctl enable nifty-bot
+
+Start service:
+
+sudo systemctl start nifty-bot
+
+Check status:
+
+sudo systemctl status nifty-bot
+
+Watch live logs:
+
+journalctl -u nifty-bot -f
+
+
+11. RESTART BOT AFTER CODE OR TOKEN CHANGE
+------------------------------------------
+
+sudo systemctl restart nifty-bot
+
+
+12. STOP BOT
+------------
+
+sudo systemctl stop nifty-bot
+
+
+13. IMPORTANT RUNTIME FILES
+---------------------------
+
+Keep these files on EC2. Do not delete them unless intentionally resetting auth/session state.
+
+config.txt
+access_token.txt
+trading_session.session
+pending_trades.json
+
+Notes:
+
+- access_token.txt is used by kite_auth.py.
+- If access_token.txt expires or is invalid, test_bot.py or index.py can try to refresh it using config.txt.
+- trading_session.session is the Telegram login session.
+- pending_trades.json stores untriggered pending trades for restart recovery.
+- Do not run the same Telegram session from multiple machines at the same time.
+
+
+14. QUICK DAILY START CHECK
+---------------------------
+
+cd /home/ubuntu/kite_bot
+source .venv/bin/activate
+python test_bot.py
+sudo systemctl restart nifty-bot
+journalctl -u nifty-bot -f
+
+
+Use below steps to kill existing bot and run network
+
+Go to cd folder path 
+
+step 1 - source venv/bin/activate
+
+type python
+
+run below cmd
+
+import configparser
+from kiteconnect import KiteConnect
+
+# Read configuration settings
+config = configparser.ConfigParser()
+config.read("config.txt")
+z = config["ZERODHA"]
+
+# Initialize configuration and request exchange
+kite = KiteConnect(api_key=z["api_key"].strip())
+data = kite.generate_session("yupRKgBoFOXxEadFfPdrQXSS9GPpciUW", api_secret=z["api_secret"].strip())
+
+# Save the live access token to disk
+with open("access_token.txt", "w") as f:
+    f.write(data["access_token"])
+
+print("🚀 Access token updated successfully!")
+
+exit() or ctrl+D
+
+pkill -f index.py
+git fetch --all
+git reset --hard origin/main
+
+nohup python index.py > bot_output.log 2>&1 &
+
