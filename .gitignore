@@ -3,3 +3,5 @@
 *.session
 *.session-journal
 *.session.invalid_*
+pending_trades.json
+pending_trades.json.tmp

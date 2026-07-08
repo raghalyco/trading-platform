@@ -5,12 +5,14 @@ import logging
 import os
 import re
 import calendar
-from datetime import date, datetime
+import threading
+from datetime import date, datetime, timedelta
 from io import StringIO
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
+from kiteconnect import KiteTicker
 from telethon import TelegramClient, events
 from telethon.errors.rpcerrorlist import AuthKeyDuplicatedError
 from kite_auth import get_kite_client
@@ -69,10 +71,12 @@ KITE_PRICE_MATCH_TOLERANCE = 1.0
 KITE_ENTRY_ABOVE_LADDER_TOLERANCE = 5.0
 DAILY_PROFIT_TARGET_RUPEES = get_env_float("DAILY_PROFIT_TARGET_RUPEES", 500.0)
 PENDING_SIGNAL_CHECK_INTERVAL_SECONDS = 5
+PENDING_TRADE_EXPIRY_MINUTES = get_env_int("PENDING_TRADE_EXPIRY_MINUTES", 15)
 
 KITE_LTP_URL = "https://api.kite.trade/quote/ltp"
 KITE_GTT_URL = "https://api.kite.trade/gtt/triggers"
 TELEGRAM_LOG_FILE = os.getenv("BOT_LOG_FILE", "bot_output.log")
+PENDING_TRADES_FILE = os.getenv("PENDING_TRADES_FILE", "pending_trades.json")
 LOG_ONLY_MODE = os.getenv("LOG_ONLY_MODE", "false").strip().lower() in {"1", "true", "yes", "on"}
 
 UNDERLYING_CONFIG = {
@@ -104,7 +108,7 @@ SIGNAL_REGEX = re.compile(
     r"|\b(?P<strike_alt>\d{4,6})\s*(?P<option_type_alt>CE|PE)\b",
     re.IGNORECASE,
 )
-RANGE_REGEX = re.compile(rf"\b(?:range|rng|{ENTRY_KEYWORD_REGEX})\b\s*(?:is|at|@|:|-)?\s*(?P<value>{PRICE_VALUE_REGEX})", re.IGNORECASE)
+RANGE_REGEX = re.compile(rf"\b(?:range|rng|{ENTRY_KEYWORD_REGEX})\b\s*(?:only\s+)?(?:is|at|@|:|-)?\s*(?P<value>{PRICE_VALUE_REGEX})", re.IGNORECASE)
 TARGET_KEYWORD_REGEX = r"(?:target|taget|tgt)"
 TARGET_ONE_REGEX = re.compile(rf"\b{TARGET_KEYWORD_REGEX}\s*1\b\s*(?:is|at|@|:|-)?\s*(?P<value>{PRICE_VALUE_REGEX})", re.IGNORECASE)
 TARGET_REGEX = re.compile(rf"\b{TARGET_KEYWORD_REGEX}\b(?!\s*\d)\s*(?:is|at|@|:|-)?\s*(?P<value>{PRICE_VALUE_REGEX})", re.IGNORECASE)
@@ -126,10 +130,17 @@ if not telegram_logger.handlers:
     telegram_logger.propagate = False
 
 kite_client = None
+kite_ticker = None
+ticker_connected = False
 client = TelegramClient('trading_session', API_ID, API_HASH)
-pending_signals = []
-pending_entry_batches = []
+pending_trades = []
 active_trades = []
+state_lock = threading.RLock()
+
+WAITING_FOR_ENTRY = "WAITING_FOR_ENTRY"
+ENTRY_TRIGGERED = "ENTRY_TRIGGERED"
+BUY_EXECUTED = "BUY_EXECUTED"
+EXPIRED = "EXPIRED"
 
 # ==========================================
 # 2. MATCHING PARSING LOGIC & WRAPPER METHODS
@@ -182,6 +193,8 @@ def extract_signal(text):
     entry_value = None
 
     if range_match:
+        if not action and re.search(rf"\b{ENTRY_KEYWORD_REGEX}\b", text, re.IGNORECASE):
+            action = "BUY"
         entry_value = range_match.group("value").replace(" ", "")
     elif entry_trigger_match:
         action = action or "BUY"
@@ -376,6 +389,405 @@ def effective_target_price(signal, entry_price, quantity):
         return normalize_order_price(min(configured_target, entry_price + target_points))
     return normalize_order_price(max(configured_target, entry_price - target_points))
 
+def parse_iso_datetime(value):
+    if isinstance(value, datetime):
+        return value
+    return datetime.fromisoformat(value)
+
+def pending_trade_expiry_time(trade):
+    return parse_iso_datetime(trade["created_time"]) + timedelta(minutes=PENDING_TRADE_EXPIRY_MINUTES)
+
+def pending_trade_is_expired(trade, now=None):
+    return (now or datetime.now()) >= pending_trade_expiry_time(trade)
+
+def serialize_trade_for_storage(trade):
+    stored_trade = dict(trade)
+    stored_trade["created_time"] = parse_iso_datetime(stored_trade["created_time"]).isoformat()
+    return stored_trade
+
+def persist_pending_trades():
+    with state_lock:
+        serializable_trades = [
+            serialize_trade_for_storage(trade)
+            for trade in pending_trades
+            if trade.get("status") in {WAITING_FOR_ENTRY, ENTRY_TRIGGERED}
+        ]
+
+    temp_path = f"{PENDING_TRADES_FILE}.tmp"
+    with open(temp_path, "w", encoding="utf-8") as file:
+        json.dump(serializable_trades, file, indent=2, sort_keys=True)
+    os.replace(temp_path, PENDING_TRADES_FILE)
+
+def pending_trade_key(signal, contract, entry_price, telegram_message_id):
+    return (
+        contract["exchange"],
+        contract["tradingsymbol"],
+        contract["instrument_token"],
+        signal["action"],
+        entry_price,
+        signal["sl"],
+        signal["target_range"],
+        telegram_message_id,
+    )
+
+def active_streaming_tokens():
+    with state_lock:
+        return sorted({
+            int(trade["instrument_token"])
+            for trade in pending_trades
+            if trade.get("status") == WAITING_FOR_ENTRY
+        } | {
+            int(trade["instrument_token"])
+            for trade in active_trades
+            if trade.get("instrument_token")
+        })
+
+def subscribe_pending_trade_tokens(tokens=None):
+    global kite_ticker
+    tokens = tokens or active_streaming_tokens()
+    if not tokens or not kite_ticker or not ticker_connected:
+        return
+
+    try:
+        kite_ticker.subscribe(tokens)
+        kite_ticker.set_mode(kite_ticker.MODE_LTP, tokens)
+        telegram_logger.info("Subscribed KiteTicker LTP stream for instrument tokens: %s", tokens)
+    except Exception:
+        telegram_logger.exception("KiteTicker subscription failed for instrument tokens: %s", tokens)
+
+def unsubscribe_inactive_pending_tokens(tokens):
+    global kite_ticker
+    if not tokens or not kite_ticker or not ticker_connected:
+        return
+
+    active_tokens = set(active_streaming_tokens())
+    stale_tokens = sorted({int(token) for token in tokens if int(token) not in active_tokens})
+    if not stale_tokens:
+        return
+
+    try:
+        kite_ticker.unsubscribe(stale_tokens)
+        telegram_logger.info("Unsubscribed KiteTicker stream for inactive tokens: %s", stale_tokens)
+    except Exception:
+        telegram_logger.exception("KiteTicker unsubscribe failed for tokens: %s", stale_tokens)
+
+def register_pending_trade(signal, contract, entry_price, event_id="system", telegram_message_id=None):
+    trade_key = pending_trade_key(signal, contract, entry_price, telegram_message_id)
+    created_time = datetime.now()
+
+    with state_lock:
+        if any(item.get("trade_key") == trade_key and item.get("status") == WAITING_FOR_ENTRY for item in pending_trades):
+            telegram_logger.info("[%s] Pending trade already exists for %s at entry %s", event_id, contract["tradingsymbol"], entry_price)
+            return None
+
+        pending_trade = {
+            "event_id": event_id,
+            "trade_key": trade_key,
+            "signal": signal,
+            "symbol": contract["tradingsymbol"],
+            "tradingsymbol": contract["tradingsymbol"],
+            "exchange": contract["exchange"],
+            "instrument_token": int(contract["instrument_token"]),
+            "entry_price": float(entry_price),
+            "stop_loss": first_price(signal["sl"]),
+            "targets": signal["target_range"],
+            "target_range": signal["target_range"],
+            "quantity": contract["quantity"],
+            "telegram_message_id": telegram_message_id,
+            "created_time": created_time.isoformat(),
+            "status": WAITING_FOR_ENTRY,
+            "expiry": contract["expiry"],
+            "entry_order_id": None,
+            "entry_fill_price": None,
+            "exit_gtt_id": None,
+        }
+        pending_trades.append(pending_trade)
+
+    persist_pending_trades()
+    subscribe_pending_trade_tokens([pending_trade["instrument_token"]])
+    telegram_logger.info(
+        "[%s] Pending trade created: symbol=%s instrument_token=%s entry=%s stop_loss=%s targets=%s quantity=%s telegram_message_id=%s created_time=%s status=%s",
+        event_id,
+        pending_trade["symbol"],
+        pending_trade["instrument_token"],
+        pending_trade["entry_price"],
+        pending_trade["stop_loss"],
+        pending_trade["targets"],
+        pending_trade["quantity"],
+        telegram_message_id,
+        pending_trade["created_time"],
+        pending_trade["status"],
+    )
+    return pending_trade
+
+def load_pending_trades():
+    if not os.path.exists(PENDING_TRADES_FILE):
+        return
+
+    try:
+        with open(PENDING_TRADES_FILE, "r", encoding="utf-8") as file:
+            stored_trades = json.load(file)
+    except Exception:
+        telegram_logger.exception("Unable to load pending trades from %s", PENDING_TRADES_FILE)
+        return
+
+    now = datetime.now()
+    recovered_count = 0
+    for trade in stored_trades:
+        if trade.get("status") != WAITING_FOR_ENTRY:
+            continue
+        if pending_trade_is_expired(trade, now=now):
+            trade["status"] = EXPIRED
+            telegram_logger.info(
+                "[%s] Trade expired during recovery: %s entry=%s created_time=%s",
+                trade.get("event_id", "system"),
+                trade.get("symbol") or trade.get("tradingsymbol"),
+                trade.get("entry_price"),
+                trade.get("created_time"),
+            )
+            continue
+
+        trade["instrument_token"] = int(trade["instrument_token"])
+        trade["entry_price"] = float(trade["entry_price"])
+        trade["quantity"] = normalize_order_quantity(trade["quantity"])
+        if isinstance(trade.get("trade_key"), list):
+            trade["trade_key"] = tuple(trade["trade_key"])
+        with state_lock:
+            pending_trades.append(trade)
+        recovered_count += 1
+        telegram_logger.info(
+            "[%s] Trade recovered after restart: symbol=%s instrument_token=%s entry=%s expires_at=%s",
+            trade.get("event_id", "system"),
+            trade.get("symbol") or trade.get("tradingsymbol"),
+            trade["instrument_token"],
+            trade["entry_price"],
+            pending_trade_expiry_time(trade).isoformat(),
+        )
+
+    persist_pending_trades()
+    if recovered_count:
+        subscribe_pending_trade_tokens()
+
+def place_market_entry_order(trade):
+    global kite_client
+    if not kite_client:
+        kite_client = get_kite_client()
+
+    order_id = kite_client.place_order(
+        variety=kite_client.VARIETY_REGULAR,
+        exchange=trade["exchange"],
+        tradingsymbol=trade["tradingsymbol"],
+        transaction_type=kite_client.TRANSACTION_TYPE_BUY,
+        quantity=trade["quantity"],
+        product=KITE_PRODUCT,
+        order_type=kite_client.ORDER_TYPE_MARKET,
+        validity=kite_client.VALIDITY_DAY,
+    )
+    telegram_logger.info("[%s] BUY placed for %s. order_id=%s quantity=%s", trade.get("event_id", "system"), trade["tradingsymbol"], order_id, trade["quantity"])
+    return order_id
+
+def finalize_executed_entry(trade, order):
+    signal = trade["signal"]
+    order_id = order.get("order_id") or trade.get("entry_order_id")
+    entry_price = normalize_order_price(extract_filled_order_price(order) or trade.get("entry_price"))
+    target_points, calculation_lot_size = required_profit_capture_points(signal["underlying"], trade["quantity"])
+    target_price = effective_target_price(signal, float(entry_price), trade["quantity"])
+    exit_action = "SELL"
+    event_id = trade.get("event_id", "system")
+
+    telegram_logger.info(
+        "[%s] BUY executed for %s. order_id=%s entry_price=%s",
+        event_id,
+        trade["tradingsymbol"],
+        order_id,
+        entry_price,
+    )
+    telegram_logger.info(
+        "[%s] Derived target points for %s using daily profit target %s and configured lot size %s (order quantity %s): %s points -> exit target %s",
+        event_id,
+        signal["underlying"],
+        DAILY_PROFIT_TARGET_RUPEES,
+        calculation_lot_size,
+        trade["quantity"],
+        round(target_points, 2),
+        target_price,
+    )
+
+    exit_payload = build_exit_payload(
+        trade["exchange"],
+        trade["tradingsymbol"],
+        exit_action,
+        trade["quantity"],
+        first_price(signal["sl"]),
+        target_price,
+        float(entry_price),
+    )
+    exit_id = place_gtt_order(exit_payload, event_id=event_id, stage="EXIT", tradingsymbol=trade["tradingsymbol"])
+    if not exit_id:
+        telegram_logger.warning(
+            "[%s] Exit protective GTT placement failed for filled BUY order %s on %s. Will retry on next monitor cycle.",
+            event_id,
+            order_id,
+            trade["tradingsymbol"],
+        )
+        return False
+
+    trade["status"] = BUY_EXECUTED
+    trade["entry_fill_price"] = float(entry_price)
+    trade["exit_gtt_id"] = exit_id
+    register_active_trade(
+        signal,
+        trade["exchange"],
+        trade["quantity"],
+        trade["tradingsymbol"],
+        trade["expiry"],
+        order_id,
+        float(entry_price),
+        float(target_price),
+        instrument_token=trade["instrument_token"],
+        event_id=event_id,
+    )
+    return True
+
+def process_pending_trade_tick(trade, ltp):
+    event_id = trade.get("event_id", "system")
+    with state_lock:
+        if trade.get("status") != WAITING_FOR_ENTRY:
+            return
+
+        if ltp < float(trade["entry_price"]):
+            return
+
+        trade["status"] = ENTRY_TRIGGERED
+
+    telegram_logger.info(
+        "[%s] Entry crossed for %s. ltp=%s entry=%s status=%s",
+        event_id,
+        trade["tradingsymbol"],
+        ltp,
+        trade["entry_price"],
+        trade["status"],
+    )
+    persist_pending_trades()
+
+    try:
+        trade["entry_order_id"] = place_market_entry_order(trade)
+        persist_pending_trades()
+    except Exception:
+        telegram_logger.exception("[%s] BUY placement failed for %s", event_id, trade["tradingsymbol"])
+        trade["status"] = WAITING_FOR_ENTRY
+        persist_pending_trades()
+
+def process_ticker_ticks(ticks):
+    expired_tokens = set()
+    closed_tokens = set()
+    for tick in ticks:
+        instrument_token = int(tick.get("instrument_token") or 0)
+        ltp = tick.get("last_price")
+        if not instrument_token or ltp is None:
+            continue
+
+        with state_lock:
+            matching_trades = [
+                trade
+                for trade in pending_trades
+                if int(trade["instrument_token"]) == instrument_token and trade.get("status") == WAITING_FOR_ENTRY
+            ]
+            matching_active_trades = [
+                trade
+                for trade in active_trades
+                if int(trade.get("instrument_token") or 0) == instrument_token
+            ]
+
+        telegram_logger.info(
+            "Tick received: instrument_token=%s ltp=%s pending_trades=%s active_trades=%s",
+            instrument_token,
+            ltp,
+            len(matching_trades),
+            len(matching_active_trades),
+        )
+
+        for trade in matching_trades:
+            if pending_trade_is_expired(trade):
+                trade["status"] = EXPIRED
+                expired_tokens.add(instrument_token)
+                telegram_logger.info(
+                    "[%s] Trade expired: %s entry=%s created_time=%s expiry_minutes=%s",
+                    trade.get("event_id", "system"),
+                    trade["tradingsymbol"],
+                    trade["entry_price"],
+                    trade["created_time"],
+                    PENDING_TRADE_EXPIRY_MINUTES,
+                )
+                persist_pending_trades()
+                continue
+
+            process_pending_trade_tick(trade, float(ltp))
+
+        for trade in matching_active_trades:
+            exit_reason = trade_exit_reached(trade, float(ltp))
+            if not exit_reason:
+                continue
+
+            telegram_logger.info(
+                "[%s] Trade monitoring closed for %s: %s hit at %s",
+                trade.get("event_id", "system"),
+                trade["tradingsymbol"],
+                exit_reason,
+                ltp,
+            )
+            notify_trade_closed(trade, exit_reason, float(ltp))
+            with state_lock:
+                if trade in active_trades:
+                    active_trades.remove(trade)
+            closed_tokens.add(instrument_token)
+
+    if expired_tokens:
+        unsubscribe_inactive_pending_tokens(expired_tokens)
+    if closed_tokens:
+        unsubscribe_inactive_pending_tokens(closed_tokens)
+
+def start_kite_ticker():
+    global kite_client, kite_ticker
+    if not kite_client:
+        kite_client = get_kite_client()
+
+    kite_ticker = KiteTicker(kite_client.api_key, kite_client.access_token)
+
+    def on_connect(ws, response):
+        global ticker_connected
+        ticker_connected = True
+        telegram_logger.info("KiteTicker connected: %s", response)
+        subscribe_pending_trade_tokens()
+
+    def on_ticks(ws, ticks):
+        try:
+            process_ticker_ticks(ticks)
+        except Exception:
+            telegram_logger.exception("KiteTicker tick processing failed")
+
+    def on_close(ws, code, reason):
+        global ticker_connected
+        ticker_connected = False
+        telegram_logger.warning("KiteTicker closed: code=%s reason=%s", code, reason)
+
+    def on_error(ws, code, reason):
+        telegram_logger.error("KiteTicker error: code=%s reason=%s", code, reason)
+
+    def on_reconnect(ws, attempts_count):
+        telegram_logger.warning("KiteTicker reconnect attempt: %s", attempts_count)
+
+    def on_noreconnect(ws):
+        telegram_logger.error("KiteTicker reconnect attempts exhausted")
+
+    kite_ticker.on_connect = on_connect
+    kite_ticker.on_ticks = on_ticks
+    kite_ticker.on_close = on_close
+    kite_ticker.on_error = on_error
+    kite_ticker.on_reconnect = on_reconnect
+    kite_ticker.on_noreconnect = on_noreconnect
+    kite_ticker.connect(threaded=True)
+
 def resolve_signal_contract(signal):
     instruments = fetch_kite_instruments(signal["underlying"])
     candidates = candidate_kite_instruments(signal, instruments)
@@ -386,6 +798,7 @@ def resolve_signal_contract(signal):
     priced_candidates = [
         {
             "exchange": item["exchange"],
+            "instrument_token": item["instrument_token"],
             "quantity": item["quantity"],
             "tradingsymbol": item["tradingsymbol"],
             "expiry": item["expiry"].isoformat(),
@@ -412,64 +825,6 @@ def contract_within_entry_window(signal, contract):
     low_price, high_price = price_bounds(signal["entry_range"])
     return low_price <= contract["last_price"] <= high_price + KITE_ENTRY_ABOVE_LADDER_TOLERANCE
 
-def queue_signal_for_monitoring(signal, contract, event_id="system"):
-    signal_key = (
-        contract["exchange"],
-        contract["tradingsymbol"],
-        contract["quantity"],
-        signal["action"],
-        signal["entry_range"],
-        signal["target_range"],
-        signal["sl"],
-    )
-    if any(item["signal_key"] == signal_key for item in pending_signals):
-        telegram_logger.info("[%s] Signal already pending for monitoring: %s", event_id, contract["tradingsymbol"])
-        return
-
-    pending_signals.append({
-        "event_id": event_id,
-        "signal_key": signal_key,
-        "signal": signal,
-        "exchange": contract["exchange"],
-        "quantity": contract["quantity"],
-        "tradingsymbol": contract["tradingsymbol"],
-        "expiry": contract["expiry"],
-    })
-    telegram_logger.info(
-        "[%s] Signal queued for monitoring: %s currently at %s for entry %s",
-        event_id,
-        contract["tradingsymbol"],
-        contract["last_price"],
-        signal["entry_range"],
-    )
-
-def register_pending_entry_batch(signal, exchange, quantity, tradingsymbol, expiry, entry_prices, event_id="system"):
-    batch_key = (
-        exchange,
-        quantity,
-        tradingsymbol,
-        signal["action"],
-        signal["entry_range"],
-        signal["target_range"],
-        signal["sl"],
-    )
-    if any(item["batch_key"] == batch_key for item in pending_entry_batches):
-        telegram_logger.info("[%s] Entry batch already pending fill monitoring: %s", event_id, tradingsymbol)
-        return
-
-    pending_entry_batches.append({
-        "event_id": event_id,
-        "batch_key": batch_key,
-        "signal": signal,
-        "exchange": exchange,
-        "quantity": quantity,
-        "tradingsymbol": tradingsymbol,
-        "expiry": expiry,
-        "entry_prices": entry_prices,
-        "processed_order_ids": [],
-    })
-    telegram_logger.info("[%s] Entry fill monitoring started for %s at prices %s", event_id, tradingsymbol, entry_prices)
-
 def active_trade_key(signal, tradingsymbol):
     return (
         signal["underlying"],
@@ -480,7 +835,7 @@ def active_trade_key(signal, tradingsymbol):
         signal["sl"],
     )
 
-def register_active_trade(signal, exchange, quantity, tradingsymbol, expiry, entry_order_id, entry_price, target_price, event_id="system"):
+def register_active_trade(signal, exchange, quantity, tradingsymbol, expiry, entry_order_id, entry_price, target_price, instrument_token=None, event_id="system"):
     trade_key = active_trade_key(signal, tradingsymbol) + (entry_order_id,)
     if any(item["trade_key"] == trade_key for item in active_trades):
         telegram_logger.info("[%s] Trade already active for monitoring: %s", event_id, tradingsymbol)
@@ -491,6 +846,7 @@ def register_active_trade(signal, exchange, quantity, tradingsymbol, expiry, ent
         "trade_key": trade_key,
         "signal": signal,
         "exchange": exchange,
+        "instrument_token": instrument_token,
         "quantity": quantity,
         "tradingsymbol": tradingsymbol,
         "expiry": expiry,
@@ -544,43 +900,6 @@ def notify_trade_closed(trade, exit_reason, current_price):
 
     telegram_logger.warning("Notification skipped because Telegram client loop is not running: %s", message)
 
-def process_pending_signals_once():
-    if not pending_signals:
-        return
-
-    ltp_by_symbol = fetch_kite_ltp(pending_signals)
-    remaining_signals = []
-
-    for pending_signal in pending_signals:
-        event_id = pending_signal.get("event_id", "system")
-        exchange = pending_signal["exchange"]
-        tradingsymbol = pending_signal["tradingsymbol"]
-        current_price = ltp_by_symbol.get((exchange, tradingsymbol))
-        if current_price is None:
-            remaining_signals.append(pending_signal)
-            continue
-
-        signal = pending_signal["signal"]
-        if can_activate_monitored_signal(signal["entry_range"], current_price):
-            telegram_logger.info("[%s] Pending signal activated for %s at %s", event_id, tradingsymbol, current_price)
-            execute_trade_pipeline(
-                signal,
-                contract={
-                    "exchange": exchange,
-                    "quantity": pending_signal["quantity"],
-                    "tradingsymbol": tradingsymbol,
-                    "expiry": pending_signal["expiry"],
-                    "last_price": current_price,
-                },
-                allow_monitor_queue=False,
-                event_id=event_id,
-            )
-            continue
-
-        remaining_signals.append(pending_signal)
-
-    pending_signals[:] = remaining_signals
-
 def fetch_kite_orders():
     global kite_client
     if not kite_client:
@@ -594,134 +913,106 @@ def extract_filled_order_price(order):
             return float(value)
     return None
 
-def order_matches_entry_batch(order, batch):
-    if order.get("tradingsymbol") != batch["tradingsymbol"]:
+def order_matches_pending_trade(order, trade):
+    if order.get("order_id") != trade.get("entry_order_id"):
         return False
-    if (order.get("transaction_type") or "").upper() != batch["signal"]["action"]:
+    if order.get("tradingsymbol") != trade["tradingsymbol"]:
         return False
-    if (order.get("status") or "").upper() != "COMPLETE":
+    if (order.get("transaction_type") or "").upper() != "BUY":
         return False
-    if int(order.get("quantity") or 0) != batch["quantity"]:
+    if int(order.get("quantity") or 0) != trade["quantity"]:
         return False
+    return True
 
-    filled_price = extract_filled_order_price(order)
-    if filled_price is None:
-        return False
-    return any(abs(filled_price - entry_price) <= KITE_PRICE_MATCH_TOLERANCE for entry_price in batch["entry_prices"])
+def process_triggered_pending_trades_once():
+    with state_lock:
+        triggered_trades = [
+            trade
+            for trade in pending_trades
+            if trade.get("status") == ENTRY_TRIGGERED and trade.get("entry_order_id")
+        ]
 
-def process_pending_entry_batches_once():
-    if not pending_entry_batches:
+    if not triggered_trades:
         return
 
     orders = fetch_kite_orders()
-    remaining_batches = []
+    changed = False
+    completed_trades = []
 
-    for batch in pending_entry_batches:
-        event_id = batch.get("event_id", "system")
-        signal = batch["signal"]
-        tradingsymbol = batch["tradingsymbol"]
-        new_fills = []
+    for trade in triggered_trades:
+        event_id = trade.get("event_id", "system")
+        matching_order = next((order for order in orders if order_matches_pending_trade(order, trade)), None)
+        if not matching_order:
+            continue
 
-        for order in orders:
-            order_id = order.get("order_id")
-            if not order_id or order_id in batch["processed_order_ids"]:
-                continue
-            if not order_matches_entry_batch(order, batch):
-                continue
-            new_fills.append(order)
+        status = (matching_order.get("status") or "").upper()
+        if status == "COMPLETE":
+            if finalize_executed_entry(trade, matching_order):
+                completed_trades.append(trade)
+                changed = True
+            continue
 
-        for order in new_fills:
-            order_id = order.get("order_id")
-            entry_price = normalize_order_price(extract_filled_order_price(order))
-            target_points, calculation_lot_size = required_profit_capture_points(signal["underlying"], batch["quantity"])
-            target_price = effective_target_price(signal, float(entry_price), batch["quantity"])
-            exit_action = "SELL" if signal["action"] == "BUY" else "BUY"
-            telegram_logger.info(
-                "[%s] Entry order fill detected for %s. order_id=%s entry_price=%s",
+        if status in {"REJECTED", "CANCELLED"}:
+            telegram_logger.warning(
+                "[%s] BUY order did not execute for %s. order_id=%s status=%s",
                 event_id,
-                tradingsymbol,
-                order_id,
-                entry_price,
+                trade["tradingsymbol"],
+                trade.get("entry_order_id"),
+                status,
             )
-            telegram_logger.info(
-                "[%s] Derived target points for %s using daily profit target %s and configured lot size %s (order quantity %s): %s points -> exit target %s",
-                event_id,
-                signal["underlying"],
-                DAILY_PROFIT_TARGET_RUPEES,
-                calculation_lot_size,
-                batch["quantity"],
-                round(target_points, 2),
-                target_price,
-            )
-            exit_payload = build_exit_payload(
-                batch["exchange"],
-                tradingsymbol,
-                exit_action,
-                batch["quantity"],
-                first_price(signal["sl"]),
-                target_price,
-                float(entry_price),
-            )
-            exit_id = place_gtt_order(exit_payload, event_id=event_id, stage="EXIT", tradingsymbol=tradingsymbol)
-            if not exit_id:
-                telegram_logger.warning(
-                    "[%s] Exit protective GTT placement failed for filled entry order %s on %s. Will retry on next monitor cycle.",
-                    event_id,
-                    order_id,
-                    tradingsymbol,
-                )
+            trade["status"] = EXPIRED
+            completed_trades.append(trade)
+            changed = True
+
+    if completed_trades:
+        completed_tokens = {trade["instrument_token"] for trade in completed_trades}
+        with state_lock:
+            for trade in completed_trades:
+                if trade in pending_trades:
+                    pending_trades.remove(trade)
+        unsubscribe_inactive_pending_tokens(completed_tokens)
+
+    if changed:
+        persist_pending_trades()
+
+def expire_pending_trades_once():
+    now = datetime.now()
+    expired_trades = []
+    with state_lock:
+        for trade in pending_trades:
+            if trade.get("status") != WAITING_FOR_ENTRY:
                 continue
+            if not pending_trade_is_expired(trade, now=now):
+                continue
+            trade["status"] = EXPIRED
+            expired_trades.append(trade)
 
-            batch["processed_order_ids"].append(order_id)
-            register_active_trade(
-                signal,
-                batch["exchange"],
-                batch["quantity"],
-                tradingsymbol,
-                batch["expiry"],
-                order_id,
-                float(entry_price),
-                float(target_price),
-                event_id=event_id,
-            )
-
-        if len(batch["processed_order_ids"]) < len(batch["entry_prices"]):
-            remaining_batches.append(batch)
-
-    pending_entry_batches[:] = remaining_batches
-
-def process_active_trades_once():
-    if not active_trades:
+    if not expired_trades:
         return
 
-    ltp_by_symbol = fetch_kite_ltp(active_trades)
-    remaining_trades = []
+    for trade in expired_trades:
+        telegram_logger.info(
+            "[%s] Trade expired: %s entry=%s created_time=%s expiry_minutes=%s",
+            trade.get("event_id", "system"),
+            trade["tradingsymbol"],
+            trade["entry_price"],
+            trade["created_time"],
+            PENDING_TRADE_EXPIRY_MINUTES,
+        )
 
-    for trade in active_trades:
-        event_id = trade.get("event_id", "system")
-        exchange = trade["exchange"]
-        tradingsymbol = trade["tradingsymbol"]
-        current_price = ltp_by_symbol.get((exchange, tradingsymbol))
-        if current_price is None:
-            remaining_trades.append(trade)
-            continue
+    with state_lock:
+        for trade in expired_trades:
+            if trade in pending_trades:
+                pending_trades.remove(trade)
 
-        exit_reason = trade_exit_reached(trade, current_price)
-        if exit_reason:
-            telegram_logger.info("[%s] Trade monitoring closed for %s: %s hit at %s", event_id, tradingsymbol, exit_reason, current_price)
-            notify_trade_closed(trade, exit_reason, current_price)
-            continue
-
-        remaining_trades.append(trade)
-
-    active_trades[:] = remaining_trades
+    persist_pending_trades()
+    unsubscribe_inactive_pending_tokens([trade["instrument_token"] for trade in expired_trades])
 
 async def monitor_pending_signals():
     while True:
         try:
-            process_pending_signals_once()
-            process_pending_entry_batches_once()
-            process_active_trades_once()
+            expire_pending_trades_once()
+            process_triggered_pending_trades_once()
         except Exception:
             telegram_logger.exception("Pending signal monitor error")
         await asyncio.sleep(PENDING_SIGNAL_CHECK_INTERVAL_SECONDS)
@@ -771,6 +1062,7 @@ def candidate_kite_instruments(signal, instruments):
 
         candidates.append({
             "exchange": exchange,
+            "instrument_token": int(instrument["instrument_token"]),
             "quantity": quantity,
             "tradingsymbol": instrument["tradingsymbol"],
             "expiry": expiry,
@@ -854,7 +1146,7 @@ def place_gtt_order(payload, event_id="system", stage="GTT", tradingsymbol="unkn
         telegram_logger.exception("[%s] %s GTT unexpected failure for %s. Payload: %s", event_id, stage, tradingsymbol, payload)
         return None
 
-def execute_trade_pipeline(signal, contract=None, allow_monitor_queue=True, event_id="system"):
+def execute_trade_pipeline(signal, contract=None, allow_monitor_queue=True, event_id="system", telegram_message_id=None):
     telegram_logger.info(
         "[%s] Executing trade pipeline for %s",
         event_id,
@@ -866,49 +1158,23 @@ def execute_trade_pipeline(signal, contract=None, allow_monitor_queue=True, even
         return
 
     telegram_logger.info(
-        "[%s] Resolved contract %s expiry=%s ltp=%s quantity=%s",
+        "[%s] Resolved contract %s expiry=%s ltp=%s quantity=%s instrument_token=%s",
         event_id,
         contract["tradingsymbol"],
         contract["expiry"],
         contract["last_price"],
         contract["quantity"],
+        contract["instrument_token"],
     )
 
-    if not contract_within_entry_window(signal, contract):
-        if allow_monitor_queue:
-            if should_monitor_signal(signal["entry_range"], contract["last_price"]):
-                queue_signal_for_monitoring(signal, contract, event_id=event_id)
-                return
-        telegram_logger.warning(
-            "[%s] Trade blocked: contract %s price %s is outside entry window %s",
-            event_id,
-            contract["tradingsymbol"],
-            contract["last_price"],
-            signal["entry_range"],
-        )
-        return
-
-    exchange = contract["exchange"]
-    quantity = contract["quantity"]
-    tradingsymbol = contract['tradingsymbol']
-    last_price = contract['last_price']
-    entry_prices = build_entry_prices(signal["entry_range"], last_price)
-
-    telegram_logger.info("[%s] Sending entry setup to exchange for %s with quantity %s and prices %s", event_id, tradingsymbol, quantity, entry_prices)
-    entry_ids = []
-    for entry_price in entry_prices:
-        entry_payload = build_entry_payload(exchange, tradingsymbol, signal["action"], quantity, entry_price, last_price)
-        entry_id = place_gtt_order(entry_payload, event_id=event_id, stage="ENTRY", tradingsymbol=tradingsymbol)
-        if entry_id:
-            entry_ids.append(entry_id)
-        else:
-            telegram_logger.warning("[%s] Entry GTT placement failed for %s at price %s", event_id, tradingsymbol, entry_price)
-
-    if entry_ids:
-        register_pending_entry_batch(signal, exchange, quantity, tradingsymbol, contract["expiry"], entry_prices, event_id=event_id)
-        return
-
-    telegram_logger.warning("[%s] No entry GTT orders were created for %s", event_id, tradingsymbol)
+    entry_price = normalize_order_price(last_price_from_range(signal["entry_range"]))
+    register_pending_trade(
+        signal,
+        contract,
+        entry_price,
+        event_id=event_id,
+        telegram_message_id=telegram_message_id,
+    )
 
 @client.on(events.NewMessage)
 async def handler(event):
@@ -972,22 +1238,27 @@ async def handler(event):
             telegram_logger.info("[%s] Message did not match signal format. No trade pipeline executed.", event_id)
             return
         telegram_logger.info("[%s] Parsed signal: %s", event_id, signal_summary(signal))
-        execute_trade_pipeline(signal, event_id=event_id)
+        execute_trade_pipeline(signal, event_id=event_id, telegram_message_id=getattr(event, "id", None))
     except Exception:
         telegram_logger.exception("Loop error")
 
 if __name__ == "__main__":
     telegram_logger.info(
-        "Starting bot with source chat %s, log file %s, log-only mode %s, daily profit target %s, target lot sizes %s",
+        "Starting bot with source chat %s, log file %s, log-only mode %s, daily profit target %s, target lot sizes %s, pending trade expiry minutes %s, pending trades file %s",
         SOURCE_CHAT,
         TELEGRAM_LOG_FILE,
         LOG_ONLY_MODE,
         DAILY_PROFIT_TARGET_RUPEES,
         profit_target_config_summary(),
+        PENDING_TRADE_EXPIRY_MINUTES,
+        PENDING_TRADES_FILE,
     )
     for warning_message in CONFIG_WARNINGS:
         telegram_logger.warning("Configuration fallback applied: %s", warning_message)
     try:
+        load_pending_trades()
+        if not LOG_ONLY_MODE:
+            start_kite_ticker()
         client.start()
         client.loop.run_until_complete(log_resolved_source_chat(client, SOURCE_CHAT))
         client.loop.create_task(monitor_pending_signals())
