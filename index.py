@@ -5,7 +5,9 @@ import logging
 import os
 import re
 import calendar
+import sqlite3
 import threading
+import time
 from datetime import date, datetime, timedelta
 from io import StringIO
 from urllib.error import HTTPError, URLError
@@ -62,6 +64,23 @@ def log_telegram_session_reset_required(logger, session_name):
         session_name,
         session_name,
     )
+
+def start_telegram_client_with_retry(client, logger, session_name, attempts=3, delay_seconds=2):
+    for attempt in range(1, attempts + 1):
+        try:
+            client.start()
+            return
+        except sqlite3.OperationalError as exc:
+            if "database is locked" not in str(exc).lower() or attempt == attempts:
+                raise
+            logger.warning(
+                "Telegram session '%s' is temporarily locked. Retrying client startup in %s seconds (%s/%s).",
+                session_name,
+                delay_seconds,
+                attempt,
+                attempts,
+            )
+            time.sleep(delay_seconds)
 
 SOURCE_CHAT = 'Option Playbook by SK'
 NOTIFICATION_CHAT = 't.me/testalgotradinganand'
@@ -1259,7 +1278,7 @@ if __name__ == "__main__":
         load_pending_trades()
         if not LOG_ONLY_MODE:
             start_kite_ticker()
-        client.start()
+        start_telegram_client_with_retry(client, telegram_logger, "trading_session")
         client.loop.run_until_complete(log_resolved_source_chat(client, SOURCE_CHAT))
         client.loop.create_task(monitor_pending_signals())
         client.run_until_disconnected()

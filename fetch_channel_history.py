@@ -10,7 +10,7 @@ from index import API_HASH, API_ID, SOURCE_CHAT, TELEGRAM_LOG_FILE, extract_sign
 
 HISTORY_CHAT = os.getenv("HISTORY_CHAT", SOURCE_CHAT)
 HISTORY_LIMIT = int(os.getenv("HISTORY_LIMIT", "50"))
-HISTORY_SESSION = os.getenv("HISTORY_SESSION", "trading_session")
+HISTORY_SESSION = os.getenv("HISTORY_SESSION", "trading_history_session")
 HISTORY_SIGNALS_ONLY = os.getenv("HISTORY_SIGNALS_ONLY", "true").strip().lower() in {"1", "true", "yes", "on"}
 
 

@@ -234,3 +234,19 @@ git reset --hard origin/main
 
 nohup python index.py > bot_output.log 2>&1 &
 
+
+Run below steps to start telegram session
+python index.py
+
+
+https://ap-south-1.console.aws.amazon.com/ec2-instance-connect/ssh?region=ap-south-1&connType=standard&instanceId=i-08b2716290a45a0a0&osUser=ubuntu&sshPort=22&addressFamily=ipv4
+
+if sql locked error
+run this inside kite_bot
+mv trading_session.session trading_session.session.locked_$(date +%Y%m%d_%H%M%S)
+mv trading_session.session-journal trading_session.session-journal.locked_$(date +%Y%m%d_%H%M%S) 2>/dev/null
+mv trading_session.session-wal trading_session.session-wal.locked_$(date +%Y%m%d_%H%M%S) 2>/dev/null
+mv trading_session.session-shm trading_session.session-shm.locked_$(date +%Y%m%d_%H%M%S) 2>/dev/null
+python index.py
+
+enter telegram number and Option
