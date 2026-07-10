@@ -152,6 +152,12 @@ kite_client = None
 kite_ticker = None
 ticker_connected = False
 client = TelegramClient('trading_session', API_ID, API_HASH)
+try:
+    _session_conn = sqlite3.connect('trading_session.session')
+    _session_conn.execute('PRAGMA journal_mode=WAL')
+    _session_conn.close()
+except Exception:
+    pass
 pending_trades = []
 active_trades = []
 state_lock = threading.RLock()
@@ -1232,7 +1238,7 @@ async def handler(event):
         
         # Define market monitoring boundaries (09:00:00 to 15:00:00)
         start_time = datetime.strptime("09:00:00", "%H:%M:%S").time()
-        end_time = datetime.strptime("15:00:00", "%H:%M:%S").time()
+        end_time = datetime.strptime("15:30:00", "%H:%M:%S").time()
         
         # Boundary 1: Check if the current time falls outside 9 AM - 3 PM
         if not (start_time <= current_time <= end_time):
