@@ -188,14 +188,82 @@ Notes:
 - Do not run the same Telegram session from multiple machines at the same time.
 
 
-14. QUICK DAILY START CHECK
----------------------------
+14. DAILY START STEPS (DO EVERY TRADING MORNING BEFORE 9 AM)
+-------------------------------------------------------------
 
-cd /home/ubuntu/kite_bot
-source .venv/bin/activate
-python test_bot.py
-sudo systemctl restart nifty-bot
-journalctl -u nifty-bot -f
+Step 1 — SSH into EC2:
+
+    ssh ubuntu@YOUR_EC2_PUBLIC_IP
+
+Step 2 — Go to project folder and activate venv:
+
+    cd /home/ubuntu/kite_bot
+    source venv/bin/activate
+
+Step 3 — Refresh Zerodha access token (REQUIRED every day, token expires at 6 AM IST):
+
+    a) Get the login URL:
+       python -c "from kite_auth import get_manual_login_url; print(get_manual_login_url())"
+
+    b) Open the printed URL in your browser and complete Zerodha login.
+
+    c) Copy the request_token from the browser redirect URL:
+       URL looks like: https://yourapp.com/?request_token=XXXXXXXX&action=login&status=success
+
+    d) Pass it to kite_auth.py (you can paste the full URL or just the token):
+       python kite_auth.py "PASTE_REQUEST_TOKEN_OR_FULL_REDIRECT_URL_HERE"
+
+    You should see: "Access token updated successfully."
+
+Step 4 — Stop the old bot process (if running):
+
+    kill $(pgrep -f index.py)
+
+    Verify it stopped:
+    pgrep -a -f index.py   (should return nothing)
+
+Step 5 — Start the bot in background:
+
+    nohup python index.py > /dev/null 2>&1 &
+    echo $! > bot.pid
+
+Step 6 — Verify bot started correctly:
+
+    tail -f bot_output.log
+
+    You should see within a few seconds:
+    - "Starting bot with source chat Option Playbook by SK..."
+    - "KiteTicker connected: ..."
+    - "Resolved source chat Option Playbook by SK to entity..."
+
+    If all three lines appear, the bot is live. Press Ctrl+C to exit the log view.
+
+
+15. STOPPING THE BOT
+--------------------
+
+    kill $(cat bot.pid)
+    # or
+    kill $(pgrep -f index.py)
+
+
+16. CHECKING IF BOT IS RUNNING
+-------------------------------
+
+    pgrep -a -f index.py
+
+    One line = bot is running.
+    No output = bot is not running.
+
+
+17. NOTES
+---------
+
+- Zerodha access token MUST be refreshed every trading day morning (expires at 6 AM IST daily).
+- Do NOT run multiple instances of index.py — it will cause "database is locked" errors.
+- Do NOT delete trading_session.session — it stores your Telegram login. Deleting it requires re-authentication with phone + OTP.
+- Logs go to bot_output.log. Messages outside 9:00–15:30 IST or on weekends are logged but not traded.
+- The bot auto-recovers pending trades from pending_trades.json on restart.
 
 
 Use below steps to kill existing bot and run network
@@ -250,3 +318,8 @@ mv trading_session.session-shm trading_session.session-shm.locked_$(date +%Y%m%d
 python index.py
 
 enter telegram number and Option
+
+Daily task
+python kite_auth.py "<request_token_from_zerodha_login>"
+kill $(pgrep -f index.py)
+nohup python index.py > /dev/null 2>&1 &

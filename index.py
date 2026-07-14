@@ -151,9 +151,9 @@ if not telegram_logger.handlers:
 kite_client = None
 kite_ticker = None
 ticker_connected = False
-client = TelegramClient('trading_session', API_ID, API_HASH)
+client = TelegramClient('trading_session_new', API_ID, API_HASH)
 try:
-    _session_conn = sqlite3.connect('trading_session.session')
+    _session_conn = sqlite3.connect('trading_session_new.session')
     _session_conn.execute('PRAGMA journal_mode=WAL')
     _session_conn.close()
 except Exception:
