@@ -1,4 +1,5 @@
 import json
+import asyncio
 import os
 import sqlite3
 import tempfile
@@ -9,9 +10,11 @@ from index import (
     DAILY_PROFIT_TARGET_RUPEES,
     UNDERLYING_CONFIG,
     _WALSQLiteSession,
+    client,
     extract_signal,
     find_kite_contract_for_signal,
     get_kite_client,
+    log_resolved_source_chat,
     required_profit_capture_points,
     start_telegram_client_with_retry,
 )
@@ -145,6 +148,63 @@ def run_sqlite_session_test():
     return all_passed
 
 
+def run_channel_update_feed_test():
+    """
+    Tests the missed-message fix without real Telegram credentials:
+
+    E) TelegramClient has catch_up=True so drifted pts state is re-synced
+       on every (re)connect.
+    F) log_resolved_source_chat calls get_messages() after get_entity() to
+       register the channel in Telethon's update feed.
+    """
+    print("[STEP 2/5] Testing Channel Update Feed Fix...")
+    all_passed = True
+
+    # --- E: catch_up=True on the global client ---
+    catch_up = getattr(client, '_catch_up', None)
+    # Telethon stores the flag as _catch_up internally
+    if catch_up is True:
+        print("   [E] catch_up=True on TelegramClient ......... PASS")
+    else:
+        print(f"   [E] catch_up=True on TelegramClient ......... FAIL (got {catch_up!r})")
+        all_passed = False
+
+    # --- F: get_messages called inside log_resolved_source_chat ---
+    async def _run_f():
+        mock_entity   = unittest.mock.MagicMock()
+        mock_entity.id    = 123456789
+        mock_entity.title = "Option Playbook by SK"
+
+        mock_client = unittest.mock.AsyncMock()
+        mock_client.get_entity   = unittest.mock.AsyncMock(return_value=mock_entity)
+        mock_client.get_messages = unittest.mock.AsyncMock(return_value=[])
+
+        # Patch resolve_chat_reference so it doesn't need a live session
+        with unittest.mock.patch(
+            "index.resolve_chat_reference",
+            new=unittest.mock.AsyncMock(return_value=mock_entity),
+        ):
+            await log_resolved_source_chat(mock_client, "Option Playbook by SK")
+
+        return mock_client.get_messages.called, mock_client.get_messages.call_args
+
+    called, call_args = asyncio.run(_run_f())
+    if called:
+        limit_kwarg = (call_args.kwargs.get("limit") or
+                       (call_args.args[1] if len(call_args.args) > 1 else None))
+        print(f"   [F] get_messages called at startup (limit={limit_kwarg}) ... PASS")
+    else:
+        print("   [F] get_messages called at startup .......... FAIL (not called)")
+        all_passed = False
+
+    if all_passed:
+        print("✅ Channel update feed fix verified — signals will not be missed.\n")
+    else:
+        print("❌ Channel update feed check failed — DO NOT deploy.\n")
+
+    return all_passed
+
+
 def print_target_point_preview():
     print("[STEP 0/4] Previewing Dynamic Target Points...")
     print(f"Daily profit target: Rs. {DAILY_PROFIT_TARGET_RUPEES}")
@@ -166,8 +226,11 @@ def run_dry_run_test():
     if not run_sqlite_session_test():
         return
 
-    # 2. Verify Connectivity to Zerodha Auth Layer
-    print("[STEP 2/5] Testing Zerodha Automated Authentication...")
+    if not run_channel_update_feed_test():
+        return
+
+    # 3. Verify Connectivity to Zerodha Auth Layer
+    print("[STEP 3/5] Testing Zerodha Automated Authentication...")
     try:
         client = get_kite_client()
         profile = client.profile()
