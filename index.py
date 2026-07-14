@@ -17,6 +17,7 @@ from urllib.request import Request, urlopen
 from kiteconnect import KiteTicker
 from telethon import TelegramClient, events
 from telethon.errors.rpcerrorlist import AuthKeyDuplicatedError
+from telethon.sessions import SQLiteSession
 from kite_auth import get_kite_client
 
 # ==========================================
@@ -148,16 +149,27 @@ if not telegram_logger.handlers:
     telegram_logger.addHandler(stream_handler)
     telegram_logger.propagate = False
 
+class _WALSQLiteSession(SQLiteSession):
+    """SQLiteSession that enables WAL mode and a 30-second busy timeout on every
+    connection so concurrent readers/writers don't immediately raise
+    'database is locked'."""
+
+    def _cursor(self):
+        if self._conn is None:
+            self._conn = sqlite3.connect(
+                self.filename,
+                check_same_thread=False,
+                timeout=30,
+            )
+            self._conn.execute("PRAGMA journal_mode=WAL")
+            self._conn.execute("PRAGMA busy_timeout=30000")
+        return self._conn.cursor()
+
+
 kite_client = None
 kite_ticker = None
 ticker_connected = False
-client = TelegramClient('trading_session_new', API_ID, API_HASH)
-try:
-    _session_conn = sqlite3.connect('trading_session_new.session')
-    _session_conn.execute('PRAGMA journal_mode=WAL')
-    _session_conn.close()
-except Exception:
-    pass
+client = TelegramClient(_WALSQLiteSession('trading_session_new'), API_ID, API_HASH)
 pending_trades = []
 active_trades = []
 state_lock = threading.RLock()
