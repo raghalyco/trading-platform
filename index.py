@@ -169,7 +169,7 @@ class _WALSQLiteSession(SQLiteSession):
 kite_client = None
 kite_ticker = None
 ticker_connected = False
-client = TelegramClient(_WALSQLiteSession('trading_session_new'), API_ID, API_HASH)
+client = TelegramClient(_WALSQLiteSession('trading_session_new'), API_ID, API_HASH, catch_up=True)
 pending_trades = []
 active_trades = []
 state_lock = threading.RLock()
@@ -327,6 +327,15 @@ async def log_resolved_source_chat(client, source_chat):
             source_chat,
             describe_chat_entity(resolved_entity),
             describe_chat_entity(resolved_reference),
+        )
+        # Fetch the latest message to register the channel in Telethon's update
+        # tracking feed.  For private/unnamed channels Telethon only starts
+        # delivering UpdateNewChannelMessage events after the channel has been
+        # queried at least once in the current session.
+        await client.get_messages(resolved_reference, limit=1)
+        telegram_logger.info(
+            "Source chat %s registered in update feed — new messages will be received.",
+            source_chat,
         )
     except Exception:
         telegram_logger.exception("Unable to resolve configured source chat at startup: %s", source_chat)
@@ -1296,7 +1305,7 @@ if __name__ == "__main__":
         load_pending_trades()
         if not LOG_ONLY_MODE:
             start_kite_ticker()
-        start_telegram_client_with_retry(client, telegram_logger, "trading_session")
+        start_telegram_client_with_retry(client, telegram_logger, "trading_session_new")
         client.loop.run_until_complete(log_resolved_source_chat(client, SOURCE_CHAT))
         client.loop.create_task(monitor_pending_signals())
         client.run_until_disconnected()
