@@ -91,7 +91,7 @@ KITE_PRICE_MATCH_TOLERANCE = 1.0
 KITE_ENTRY_ABOVE_LADDER_TOLERANCE = 5.0
 DAILY_PROFIT_TARGET_RUPEES = get_env_float("DAILY_PROFIT_TARGET_RUPEES", 500.0)
 PENDING_SIGNAL_CHECK_INTERVAL_SECONDS = 5
-PENDING_TRADE_EXPIRY_MINUTES = get_env_int("PENDING_TRADE_EXPIRY_MINUTES", 15)
+PENDING_TRADE_EXPIRY_MINUTES = get_env_int("PENDING_TRADE_EXPIRY_MINUTES", 120)
 
 KITE_LTP_URL = "https://api.kite.trade/quote/ltp"
 KITE_GTT_URL = "https://api.kite.trade/gtt/triggers"
@@ -428,6 +428,19 @@ def profit_target_config_summary():
         for underlying, config in UNDERLYING_CONFIG.items()
     }
 
+def summarize_trade_for_log(trade):
+    return {
+        "event_id": trade.get("event_id", "system"),
+        "exchange": trade.get("exchange"),
+        "tradingsymbol": trade.get("tradingsymbol"),
+        "instrument_token": trade.get("instrument_token"),
+        "quantity": trade.get("quantity"),
+        "entry_price": trade.get("entry_price"),
+        "stop_loss": trade.get("stop_loss"),
+        "target_range": trade.get("target_range") or trade.get("targets"),
+        "status": trade.get("status"),
+    }
+
 def effective_target_price(signal, entry_price, quantity):
     configured_target = last_price_from_range(signal["target_range"])
     target_points, _ = required_profit_capture_points(signal["underlying"], quantity)
@@ -619,16 +632,30 @@ def place_market_entry_order(trade):
     if not kite_client:
         kite_client = get_kite_client()
 
-    order_id = kite_client.place_order(
-        variety=kite_client.VARIETY_REGULAR,
-        exchange=trade["exchange"],
-        tradingsymbol=trade["tradingsymbol"],
-        transaction_type=kite_client.TRANSACTION_TYPE_BUY,
-        quantity=trade["quantity"],
-        product=KITE_PRODUCT,
-        order_type=kite_client.ORDER_TYPE_MARKET,
-        validity=kite_client.VALIDITY_DAY,
-    )
+    order_request = {
+        "variety": kite_client.VARIETY_REGULAR,
+        "exchange": trade["exchange"],
+        "tradingsymbol": trade["tradingsymbol"],
+        "transaction_type": kite_client.TRANSACTION_TYPE_BUY,
+        "quantity": trade["quantity"],
+        "product": KITE_PRODUCT,
+        "order_type": kite_client.ORDER_TYPE_MARKET,
+        "validity": kite_client.VALIDITY_DAY,
+    }
+
+    try:
+        order_id = kite_client.place_order(**order_request)
+    except Exception as exc:
+        telegram_logger.exception(
+            "[%s] BUY placement API error for %s: %s | order_request=%s | trade=%s",
+            trade.get("event_id", "system"),
+            trade["tradingsymbol"],
+            exc,
+            order_request,
+            summarize_trade_for_log(trade),
+        )
+        raise
+
     telegram_logger.info("[%s] BUY placed for %s. order_id=%s quantity=%s", trade.get("event_id", "system"), trade["tradingsymbol"], order_id, trade["quantity"])
     return order_id
 
@@ -719,8 +746,15 @@ def process_pending_trade_tick(trade, ltp):
     try:
         trade["entry_order_id"] = place_market_entry_order(trade)
         persist_pending_trades()
-    except Exception:
-        telegram_logger.exception("[%s] BUY placement failed for %s", event_id, trade["tradingsymbol"])
+    except Exception as exc:
+        telegram_logger.warning(
+            "[%s] BUY placement failed for %s. Resetting status to %s for retry. ltp=%s error=%s",
+            event_id,
+            trade["tradingsymbol"],
+            WAITING_FOR_ENTRY,
+            ltp,
+            exc,
+        )
         trade["status"] = WAITING_FOR_ENTRY
         persist_pending_trades()
 
