@@ -641,6 +641,7 @@ def place_market_entry_order(trade):
         "product": KITE_PRODUCT,
         "order_type": kite_client.ORDER_TYPE_MARKET,
         "validity": kite_client.VALIDITY_DAY,
+        "market_protection": -1,
     }
 
     try:
