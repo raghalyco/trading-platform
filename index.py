@@ -280,7 +280,9 @@ def price_bounds(value):
     return min(prices), max(prices)
 
 def normalize_order_price(price):
-    return int(price) if float(price).is_integer() else round(price, 2)
+    price = round(round(float(price) / 0.05) * 0.05, 2)
+
+    return int(price) if price.is_integer() else price
 
 def normalize_order_quantity(quantity):
     return int(float(quantity))
@@ -459,9 +461,15 @@ def summarize_trade_for_log(trade):
 def effective_target_price(signal, entry_price, quantity):
     configured_target = last_price_from_range(signal["target_range"])
     target_points, _ = required_profit_capture_points(signal["underlying"], quantity)
+
     if signal["action"] == "BUY":
-        return normalize_order_price(min(configured_target, entry_price + target_points))
-    return normalize_order_price(max(configured_target, entry_price - target_points))
+        return normalize_order_price(
+            min(configured_target, entry_price + target_points)
+        )
+
+    return normalize_order_price(
+        max(configured_target, entry_price - target_points)
+    )
 
 def parse_iso_datetime(value):
     if isinstance(value, datetime):
@@ -560,7 +568,9 @@ def pending_trade_key(signal, contract, entry_price, telegram_message_id):
         signal["target_range"],
         telegram_message_id,
     )
-
+def round_to_tick(price: float, tick_size: float = 0.05) -> float:
+    return round(round(price / tick_size) * tick_size, 2)
+    
 def active_streaming_tokens():
     with state_lock:
         return sorted({

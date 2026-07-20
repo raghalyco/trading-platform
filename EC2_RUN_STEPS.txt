@@ -354,3 +354,8 @@ Daily task
 python kite_auth.py "<request_token_from_zerodha_login>"
 kill $(pgrep -f index.py)
 nohup python index.py > bot_output.log 2>&1 &
+
+
+sudo systemctl stop kitebot
+sudo systemctl status kitebot
+
