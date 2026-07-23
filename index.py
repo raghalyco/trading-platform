@@ -102,6 +102,8 @@ KITE_GTT_URL = "https://api.kite.trade/gtt/triggers"
 TELEGRAM_LOG_FILE = os.getenv("BOT_LOG_FILE", "bot_output.log")
 PENDING_TRADES_FILE = os.getenv("PENDING_TRADES_FILE", "pending_trades.json")
 ACTIVE_TRADES_FILE = os.getenv("ACTIVE_TRADES_FILE", "active_trades.json")
+DAILY_TRADE_COUNTER_FILE = os.getenv("DAILY_TRADE_COUNTER_FILE", "daily_trade_counter.json")
+MAX_TRADES_PER_DAY = get_env_int("MAX_TRADES_PER_DAY", 2)
 LOG_ONLY_MODE = os.getenv("LOG_ONLY_MODE", "false").strip().lower() in {"1", "true", "yes", "on"}
 
 UNDERLYING_CONFIG = {
@@ -124,8 +126,9 @@ UNDERLYING_CONFIG = {
 
 PRICE_VALUE_REGEX = r"\d+(?:\.\d+)?(?:\s*-\s*\d+(?:\.\d+)?)?"
 ACTION_REGEX = re.compile(r"\b(?P<action>BUY|SELL)\b", re.IGNORECASE)
-ENTRY_KEYWORD_REGEX = r"(?:entry|enty)"
+ENTRY_KEYWORD_REGEX = r"(?:entry|entryy|entri|entery|entey|enty|enrty|etrny)"
 ENTRY_TRIGGER_REGEX = re.compile(rf"\b{ENTRY_KEYWORD_REGEX}\b\s*(?:only\s+)?(?P<direction>above|below)\s*(?:is|at|@|:|-)?\s*(?P<value>{PRICE_VALUE_REGEX})", re.IGNORECASE)
+TARGET_KEYWORD_REGEX = r"(?:target|taget|taregt|targt|traget|tgt|tp)"
 
 # Updated to support trailing optional expiry variations like '7th July', '14th Jul', 'July End'
 SIGNAL_REGEX = re.compile(
@@ -133,11 +136,30 @@ SIGNAL_REGEX = re.compile(
     r"|\b(?P<strike_alt>\d{4,6})\s*(?P<option_type_alt>CE|PE)\b",
     re.IGNORECASE,
 )
-RANGE_REGEX = re.compile(rf"\b(?:range|rng|{ENTRY_KEYWORD_REGEX})\b\s*(?:only\s+)?(?:is|at|@|:|-)?\s*(?P<value>{PRICE_VALUE_REGEX})", re.IGNORECASE)
-TARGET_KEYWORD_REGEX = r"(?:target|taget|tgt)"
-TARGET_ONE_REGEX = re.compile(rf"\b{TARGET_KEYWORD_REGEX}\s*1\b\s*(?:is|at|@|:|-)?\s*(?P<value>{PRICE_VALUE_REGEX})", re.IGNORECASE)
-TARGET_REGEX = re.compile(rf"\b{TARGET_KEYWORD_REGEX}\b(?!\s*\d)\s*(?:is|at|@|:|-)?\s*(?P<value>{PRICE_VALUE_REGEX})", re.IGNORECASE)
-SL_REGEX = re.compile(rf"\b(?:sl|stop\s*loss|stoploss)\b\s*(?:is|at|@|:|-)?\s*(?P<value>{PRICE_VALUE_REGEX})", re.IGNORECASE)
+RANGE_REGEX = re.compile(
+    rf"\b(?:range|rng|{ENTRY_KEYWORD_REGEX})\b"
+    rf"\s*(?:only\s+)?"
+    rf"(?:is|at|@|:|-)?"
+    rf"\s*(?P<value>{PRICE_VALUE_REGEX})",
+    re.IGNORECASE,
+)
+TARGET_ONE_REGEX = re.compile(
+    rf"\b(?:target\s*1|target1|tgt\s*1|tgt1|tp\s*1|tp1|"
+    rf"taget\s*1|taget1|taregt\s*1|taregt1|"
+    rf"targt\s*1|targt1|traget\s*1|traget1)\b"
+    rf"\s*(?:is|at|@|:|-)?"
+    rf"\s*(?P<value>{PRICE_VALUE_REGEX})",
+    re.IGNORECASE,
+)
+TARGET_REGEX = re.compile(
+    rf"\b{TARGET_KEYWORD_REGEX}\b"
+    rf"(?!\s*\d)"
+    rf"\s*(?:is|at|@|:|-)?"
+    rf"\s*(?P<value>{PRICE_VALUE_REGEX})",
+    re.IGNORECASE,
+)
+SL_REGEX = re.compile(rf"\b(?:sl|sl|stop\s*loss|stoploss|stop-loss)\b\s*(?:is|at|@|:|-)?\s*(?P<value>{PRICE_VALUE_REGEX})", re.IGNORECASE)
+
 
 telegram_logger = logging.getLogger("telegram_messages")
 if not telegram_logger.handlers:
@@ -178,6 +200,7 @@ client = TelegramClient(_WALSQLiteSession('trading_session_new'), API_ID, API_HA
 pending_trades = []
 active_trades = []
 state_lock = threading.RLock()
+daily_trade_counter = {"date": None, "count": 0}
 
 WAITING_FOR_ENTRY = "WAITING_FOR_ENTRY"
 WAITING_FOR_REENTRY = "WAITING_FOR_REENTRY"
@@ -459,17 +482,10 @@ def summarize_trade_for_log(trade):
     }
 
 def effective_target_price(signal, entry_price, quantity):
+    # Chase the signal's target 1 (top of the target range) directly instead of
+    # capping at the DAILY_PROFIT_TARGET_RUPEES-derived exit point.
     configured_target = last_price_from_range(signal["target_range"])
-    target_points, _ = required_profit_capture_points(signal["underlying"], quantity)
-
-    if signal["action"] == "BUY":
-        return normalize_order_price(
-            min(configured_target, entry_price + target_points)
-        )
-
-    return normalize_order_price(
-        max(configured_target, entry_price - target_points)
-    )
+    return normalize_order_price(configured_target)
 
 def parse_iso_datetime(value):
     if isinstance(value, datetime):
@@ -556,6 +572,65 @@ def persist_active_trades():
     with open(temp_path, "w", encoding="utf-8") as file:
         json.dump(serializable_trades, file, indent=2, sort_keys=True)
     os.replace(temp_path, ACTIVE_TRADES_FILE)
+
+def _today_str():
+    return date.today().isoformat()
+
+def load_daily_trade_counter():
+    global daily_trade_counter
+    today = _today_str()
+    if not os.path.exists(DAILY_TRADE_COUNTER_FILE):
+        with state_lock:
+            daily_trade_counter = {"date": today, "count": 0}
+        return
+
+    try:
+        with open(DAILY_TRADE_COUNTER_FILE, "r", encoding="utf-8") as file:
+            stored = json.load(file)
+    except Exception:
+        telegram_logger.exception("Unable to load daily trade counter from %s", DAILY_TRADE_COUNTER_FILE)
+        with state_lock:
+            daily_trade_counter = {"date": today, "count": 0}
+        return
+
+    stored_date = stored.get("date")
+    stored_count = int(stored.get("count") or 0)
+    with state_lock:
+        if stored_date == today:
+            daily_trade_counter = {"date": today, "count": stored_count}
+        else:
+            daily_trade_counter = {"date": today, "count": 0}
+
+def persist_daily_trade_counter():
+    with state_lock:
+        snapshot = dict(daily_trade_counter)
+
+    temp_path = f"{DAILY_TRADE_COUNTER_FILE}.tmp"
+    with open(temp_path, "w", encoding="utf-8") as file:
+        json.dump(snapshot, file, indent=2, sort_keys=True)
+    os.replace(temp_path, DAILY_TRADE_COUNTER_FILE)
+
+def get_today_trade_count():
+    today = _today_str()
+    with state_lock:
+        if daily_trade_counter.get("date") != today:
+            daily_trade_counter["date"] = today
+            daily_trade_counter["count"] = 0
+        return int(daily_trade_counter.get("count") or 0)
+
+def increment_today_trade_count():
+    today = _today_str()
+    with state_lock:
+        if daily_trade_counter.get("date") != today:
+            daily_trade_counter["date"] = today
+            daily_trade_counter["count"] = 0
+        daily_trade_counter["count"] = int(daily_trade_counter.get("count") or 0) + 1
+        new_count = daily_trade_counter["count"]
+    persist_daily_trade_counter()
+    return new_count
+
+def daily_trade_limit_reached():
+    return get_today_trade_count() >= MAX_TRADES_PER_DAY
 
 def pending_trade_key(signal, contract, entry_price, telegram_message_id):
     return (
@@ -800,7 +875,6 @@ def finalize_executed_entry(trade, order):
     signal = trade["signal"]
     order_id = order.get("order_id") or trade.get("entry_order_id")
     entry_price = normalize_order_price(extract_filled_order_price(order) or trade.get("entry_price"))
-    target_points, calculation_lot_size = required_profit_capture_points(signal["underlying"], trade["quantity"])
     target_price = effective_target_price(signal, float(entry_price), trade["quantity"])
     exit_action = "SELL"
     event_id = trade.get("event_id", "system")
@@ -813,13 +887,11 @@ def finalize_executed_entry(trade, order):
         entry_price,
     )
     telegram_logger.info(
-        "[%s] Derived target points for %s using daily profit target %s and configured lot size %s (order quantity %s): %s points -> exit target %s",
+        "[%s] Chasing signal target 1 for %s (target_range=%s, order quantity=%s): exit target %s",
         event_id,
         signal["underlying"],
-        DAILY_PROFIT_TARGET_RUPEES,
-        calculation_lot_size,
+        signal["target_range"],
         trade["quantity"],
-        round(target_points, 2),
         target_price,
     )
 
@@ -1621,6 +1693,14 @@ def execute_trade_pipeline(signal, contract=None, event_id="system", telegram_me
         event_id,
         signal_summary(signal),
     )
+    if daily_trade_limit_reached():
+        telegram_logger.info(
+            "[%s] Trade blocked: daily trade limit reached (%s/%s trades already taken today).",
+            event_id,
+            get_today_trade_count(),
+            MAX_TRADES_PER_DAY,
+        )
+        return
     contract = contract or resolve_signal_contract(signal)
     if not contract:
         telegram_logger.warning("[%s] Trade blocked: no matching contracts found for %s", event_id, signal_summary(signal))
@@ -1637,13 +1717,21 @@ def execute_trade_pipeline(signal, contract=None, event_id="system", telegram_me
     )
 
     entry_price = normalize_order_price(last_price_from_range(signal["entry_range"]))
-    register_pending_trade(
+    pending_trade = register_pending_trade(
         signal,
         contract,
         entry_price,
         event_id=event_id,
         telegram_message_id=telegram_message_id,
     )
+    if pending_trade is not None:
+        new_count = increment_today_trade_count()
+        telegram_logger.info(
+            "[%s] Daily trade counter incremented: %s/%s trades taken today.",
+            event_id,
+            new_count,
+            MAX_TRADES_PER_DAY,
+        )
 
 @client.on(events.NewMessage)
 async def handler(event):
@@ -1713,7 +1801,7 @@ async def handler(event):
 
 if __name__ == "__main__":
     telegram_logger.info(
-        "Starting bot with source chat %s, log file %s, log-only mode %s, daily profit target %s, target lot sizes %s, pending trade expiry minutes %s, pending trades file %s",
+        "Starting bot with source chat %s, log file %s, log-only mode %s, daily profit target %s, target lot sizes %s, pending trade expiry minutes %s, pending trades file %s, max trades per day %s",
         SOURCE_CHAT,
         TELEGRAM_LOG_FILE,
         LOG_ONLY_MODE,
@@ -1721,12 +1809,19 @@ if __name__ == "__main__":
         profit_target_config_summary(),
         PENDING_TRADE_EXPIRY_MINUTES,
         PENDING_TRADES_FILE,
+        MAX_TRADES_PER_DAY,
     )
     for warning_message in CONFIG_WARNINGS:
         telegram_logger.warning("Configuration fallback applied: %s", warning_message)
     try:
         load_pending_trades()
         load_active_trades()
+        load_daily_trade_counter()
+        telegram_logger.info(
+            "Daily trade counter loaded: %s/%s trades already taken today.",
+            get_today_trade_count(),
+            MAX_TRADES_PER_DAY,
+        )
         if not LOG_ONLY_MODE:
             start_kite_ticker()
         start_telegram_client_with_retry(client, telegram_logger, "trading_session_new")

@@ -359,3 +359,18 @@ nohup python index.py > bot_output.log 2>&1 &
 sudo systemctl stop kitebot
 sudo systemctl status kitebot
 
+
+
+sudo systemctl stop kitebot
+
+cd ~/kite_bot
+
+git fetch origin
+
+git pull origin main
+
+sudo systemctl restart kitebot
+
+sudo systemctl status kitebot
+
+sudo journalctl -u kitebot -f
