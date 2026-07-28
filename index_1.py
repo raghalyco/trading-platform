@@ -804,48 +804,39 @@ def load_pending_trades():
 def load_active_trades():
     if not os.path.exists(ACTIVE_TRADES_FILE):
         return
+
     try:
-        with open(ACTIVE_TRADES_FILE,"r",encoding="utf-8") as file:
-            stored_trades=json.load(file)
+        with open(ACTIVE_TRADES_FILE, "r", encoding="utf-8") as file:
+            stored_trades = json.load(file)
     except Exception:
-        telegram_logger.exception("Unable to load active trades from %s",ACTIVE_TRADES_FILE)
+        telegram_logger.exception("Unable to load active trades from %s", ACTIVE_TRADES_FILE)
         return
-    today=date.today()
-    try:
-        open_positions=build_open_positions_by_key(fetch_kite_positions())
-    except Exception:
-        telegram_logger.exception("Unable to fetch positions during recovery.")
-        open_positions={}
-    with state_lock:
-        active_trades.clear()
-    recovered_count=0
-    skipped_count=0
+
+    recovered_count = 0
     for trade in stored_trades:
-        try:
-            ct=trade.get("created_time")
-            if ct and datetime.fromisoformat(ct).date()!=today:
-                skipped_count+=1
-                continue
-            exp=trade.get("expiry")
-            if exp and datetime.fromisoformat(exp).date()<today:
-                skipped_count+=1
-                continue
-            trade["quantity"]=normalize_order_quantity(trade["quantity"])
-            trade["entry_price"]=float(trade["entry_price"])
-            trade["sl_price"]=float(trade["sl_price"])
-            trade["target_price"]=float(trade["target_price"])
-            if trade.get("instrument_token") is not None:
-                trade["instrument_token"]=int(trade["instrument_token"])
-            if isinstance(trade.get("trade_key"),list):
-                trade["trade_key"]=tuple(trade["trade_key"])
-            with state_lock:
-                active_trades.append(trade)
-            reconcile_active_trade(trade,open_positions)
-            recovered_count+=1
-        except Exception:
-            telegram_logger.exception("Skipping invalid active trade.")
-    persist_active_trades()
-    telegram_logger.info("Recovered %s active trade(s). Skipped %s stale trade(s).",recovered_count,skipped_count)
+        trade["quantity"] = normalize_order_quantity(trade["quantity"])
+        trade["entry_price"] = float(trade["entry_price"])
+        trade["sl_price"] = float(trade["sl_price"])
+        trade["target_price"] = float(trade["target_price"])
+        if trade.get("instrument_token") is not None:
+            trade["instrument_token"] = int(trade["instrument_token"])
+        if isinstance(trade.get("trade_key"), list):
+            trade["trade_key"] = tuple(trade["trade_key"])
+        with state_lock:
+            active_trades.append(trade)
+        recovered_count += 1
+        telegram_logger.info(
+            "[%s] Active trade recovered after restart: symbol=%s instrument_token=%s entry=%s target=%s exit_gtt_id=%s",
+            trade.get("event_id", "system"),
+            trade.get("tradingsymbol"),
+            trade.get("instrument_token"),
+            trade.get("entry_price"),
+            trade.get("target_price"),
+            trade.get("exit_gtt_id"),
+        )
+
+    if recovered_count:
+        persist_active_trades()
 
 def place_market_entry_order(trade):
     global kite_client
@@ -1438,7 +1429,6 @@ def register_active_trade(signal, exchange, quantity, tradingsymbol, expiry, ent
         "sl_price": first_price(signal["sl"]),
         "target_price": target_price,
         "exit_gtt_id": exit_gtt_id,
-        "created_time": datetime.now().isoformat(),
         "created_time": datetime.now().isoformat()
     }
     active_trades.append(active_trade)
