@@ -130,6 +130,16 @@ ENTRY_KEYWORD_REGEX = r"(?:entry|entryy|entri|entery|entey|enty|enrty|etrny)"
 ENTRY_TRIGGER_REGEX = re.compile(rf"\b{ENTRY_KEYWORD_REGEX}\b\s*(?:only\s+)?(?P<direction>above|below)\s*(?:is|at|@|:|-)?\s*(?P<value>{PRICE_VALUE_REGEX})", re.IGNORECASE)
 TARGET_KEYWORD_REGEX = r"(?:target|taget|taregt|targt|traget|tgt|tp)"
 
+EXIT_SIGNAL_REGEX = re.compile(
+    r"(exit\s*(?:@|at)?\s*(?:cost|cmp|market|mkt|current)|"
+    r"exit\s*now|"
+    r"book\s*(?:at\s*)?cost|"
+    r"close\s*(?:the\s*)?position|"
+    r"square\s*off)",
+    re.IGNORECASE,
+)
+
+
 # Updated to support trailing optional expiry variations like '7th July', '14th Jul', 'July End'
 SIGNAL_REGEX = re.compile(
     r"\b(?P<underlying>NIFTY|BANKNIFTY|SENSEX)\s*(?P<strike>\d{4,6})\s*(?P<option_type>CE|PE)(?:[ \t]+(?P<expiry_date>\d{1,2}(?:st|nd|rd|th)?[ \t]*[a-zA-Z]+|[a-zA-Z]+[ \t]*(?:monthly|end)?))?\b"
@@ -256,6 +266,76 @@ def parse_message_expiry(date_str):
         telegram_logger.warning("Date parser optimization exception: %s", e)
     return None
 
+def is_exit_signal(message):
+    return bool(EXIT_SIGNAL_REGEX.search(message or ""))
+def process_telegram_exit_signal(message):
+    telegram_logger.info("Telegram Exit Signal: %s", message)
+
+    with state_lock:
+        trades = list(active_trades)
+
+    if not trades:
+        telegram_logger.info("No active trades to exit.")
+        return
+
+    for trade in trades:
+        exit_trade_at_market(trade, "TELEGRAM_EXIT_SIGNAL")
+
+def exit_trade_at_market(trade, reason):
+    global kite_client
+
+    if not kite_client:
+        kite_client = get_kite_client()
+
+    try:
+
+        # Cancel Exit GTT
+        if trade.get("exit_gtt_id"):
+            try:
+                kite_client.delete_gtt(trigger_id=trade["exit_gtt_id"])
+                telegram_logger.info(
+                    "[%s] Exit GTT cancelled %s",
+                    trade["event_id"],
+                    trade["exit_gtt_id"],
+                )
+            except Exception:
+                telegram_logger.exception(
+                    "Unable to cancel GTT %s",
+                    trade["exit_gtt_id"],
+                )
+
+        # Market Sell
+        order_id = kite_client.place_order(
+            variety=kite_client.VARIETY_REGULAR,
+            exchange=trade["exchange"],
+            tradingsymbol=trade["tradingsymbol"],
+            transaction_type=kite_client.TRANSACTION_TYPE_SELL,
+            quantity=trade["quantity"],
+            product=KITE_PRODUCT,
+            order_type=kite_client.ORDER_TYPE_MARKET,
+            validity=kite_client.VALIDITY_DAY,
+            market_protection=-1,
+        )
+
+        telegram_logger.info(
+            "[%s] Manual Telegram Exit executed. Order=%s",
+            trade["event_id"],
+            order_id,
+        )
+
+        notify_trade_closed(
+            trade,
+            reason,
+            trade.get("entry_price"),
+        )
+
+        remove_active_trade(trade)
+
+    except Exception:
+        telegram_logger.exception(
+            "[%s] Telegram exit failed.",
+            trade.get("event_id"),
+        )
 def extract_signal(text):
     text = text or ""
     action_match = ACTION_REGEX.search(text)
@@ -1763,6 +1843,15 @@ async def handler(event):
             sender_name,
             message_text or "<empty>",
         )
+
+        
+        if is_exit_signal(message_text):
+            telegram_logger.info(
+                "Telegram exit signal received: %s",
+                message_text,
+            )
+            process_telegram_exit_signal(message_text)
+            return
 
         if not event_matches_source_chat(chat, SOURCE_CHAT):
             telegram_logger.info("[%s] Message ignored. Source chat %s does not match configured source %s.", event_id, chat_name, SOURCE_CHAT)
