@@ -125,16 +125,9 @@ UNDERLYING_CONFIG = {
 }
 
 PRICE_VALUE_REGEX = r"\d+(?:\.\d+)?(?:\s*-\s*\d+(?:\.\d+)?)?"
-# Optional filler that can appear between a keyword (entry/target/sl/buy) and the
-# actual numeric value: a separator (":" "-" "@" "is" "at"), filler words like
-# "buy around" / "approx", and an optional currency symbol (e.g. "₹94", "Rs.94").
-PRICE_PREFIX_REGEX = r"(?:is|at|@|:|-)?\s*(?:buy\s+)?(?:around|approx\.?|approximately)?\s*(?:₹|rs\.?)?\s*"
 ACTION_REGEX = re.compile(r"\b(?P<action>BUY|SELL)\b", re.IGNORECASE)
 ENTRY_KEYWORD_REGEX = r"(?:entry|entryy|entri|entery|entey|enty|enrty|etrny)"
-ENTRY_TRIGGER_REGEX = re.compile(rf"\b{ENTRY_KEYWORD_REGEX}\b\s*(?:only\s+)?(?P<direction>above|below)\s*(?:is|at|@|:|-)?\s*(?:₹|rs\.?)?\s*(?P<value>{PRICE_VALUE_REGEX})", re.IGNORECASE)
-# Fallback for signals that give the entry price directly next to the BUY/SELL
-# action instead of using an explicit "entry"/"range" keyword, e.g. "Buy - ₹75".
-ACTION_PRICE_REGEX = re.compile(rf"\b(?:buy|sell)\b\s*{PRICE_PREFIX_REGEX}(?P<value>{PRICE_VALUE_REGEX})", re.IGNORECASE)
+ENTRY_TRIGGER_REGEX = re.compile(rf"\b{ENTRY_KEYWORD_REGEX}\b\s*(?:only\s+)?(?P<direction>above|below)\s*(?:is|at|@|:|-)?\s*(?P<value>{PRICE_VALUE_REGEX})", re.IGNORECASE)
 TARGET_KEYWORD_REGEX = r"(?:target|taget|taregt|targt|traget|tgt|tp)"
 
 EXIT_SIGNAL_REGEX = re.compile(
@@ -147,19 +140,17 @@ EXIT_SIGNAL_REGEX = re.compile(
 )
 
 
-# Updated to support trailing optional expiry variations like '7th July', '14th Jul',
-# 'July End', and parenthesized forms like '(04 AUG)'.
+# Updated to support trailing optional expiry variations like '7th July', '14th Jul', 'July End'
 SIGNAL_REGEX = re.compile(
-    r"\b(?P<underlying>NIFTY|BANKNIFTY|SENSEX)\s*(?P<strike>\d{4,6})\s*(?P<option_type>CE|PE)\b"
-    r"(?:[ \t]+\(?(?P<expiry_date>\d{1,2}(?:st|nd|rd|th)?[ \t]*[a-zA-Z]+|[a-zA-Z]+[ \t]*(?:monthly|end)?)\)?)?"
+    r"\b(?P<underlying>NIFTY|BANKNIFTY|SENSEX)\s*(?P<strike>\d{4,6})\s*(?P<option_type>CE|PE)(?:[ \t]+(?P<expiry_date>\d{1,2}(?:st|nd|rd|th)?[ \t]*[a-zA-Z]+|[a-zA-Z]+[ \t]*(?:monthly|end)?))?\b"
     r"|\b(?P<strike_alt>\d{4,6})\s*(?P<option_type_alt>CE|PE)\b",
     re.IGNORECASE,
 )
 RANGE_REGEX = re.compile(
     rf"\b(?:range|rng|{ENTRY_KEYWORD_REGEX})\b"
     rf"\s*(?:only\s+)?"
-    rf"{PRICE_PREFIX_REGEX}"
-    rf"(?P<value>{PRICE_VALUE_REGEX})",
+    rf"(?:is|at|@|:|-)?"
+    rf"\s*(?P<value>{PRICE_VALUE_REGEX})",
     re.IGNORECASE,
 )
 TARGET_ONE_REGEX = re.compile(
@@ -167,17 +158,17 @@ TARGET_ONE_REGEX = re.compile(
     rf"taget\s*1|taget1|taregt\s*1|taregt1|"
     rf"targt\s*1|targt1|traget\s*1|traget1)\b"
     rf"\s*(?:is|at|@|:|-)?"
-    rf"\s*(?:₹|rs\.?)?\s*(?P<value>{PRICE_VALUE_REGEX})",
+    rf"\s*(?P<value>{PRICE_VALUE_REGEX})",
     re.IGNORECASE,
 )
 TARGET_REGEX = re.compile(
     rf"\b{TARGET_KEYWORD_REGEX}\b"
     rf"(?!\s*\d)"
     rf"\s*(?:is|at|@|:|-)?"
-    rf"\s*(?:₹|rs\.?)?\s*(?P<value>{PRICE_VALUE_REGEX})",
+    rf"\s*(?P<value>{PRICE_VALUE_REGEX})",
     re.IGNORECASE,
 )
-SL_REGEX = re.compile(rf"\b(?:sl|sl|stop\s*loss|stoploss|stop-loss)\b\s*(?:is|at|@|:|-)?\s*(?:₹|rs\.?)?\s*(?P<value>{PRICE_VALUE_REGEX})", re.IGNORECASE)
+SL_REGEX = re.compile(rf"\b(?:sl|sl|stop\s*loss|stoploss|stop-loss)\b\s*(?:is|at|@|:|-)?\s*(?P<value>{PRICE_VALUE_REGEX})", re.IGNORECASE)
 
 
 telegram_logger = logging.getLogger("telegram_messages")
@@ -351,7 +342,6 @@ def extract_signal(text):
     signal_match = SIGNAL_REGEX.search(text)
     range_match = RANGE_REGEX.search(text)
     entry_trigger_match = ENTRY_TRIGGER_REGEX.search(text)
-    action_price_match = ACTION_PRICE_REGEX.search(text)
     target_match = TARGET_ONE_REGEX.search(text) or TARGET_REGEX.search(text)
     sl_match = SL_REGEX.search(text)
     action = action_match.group("action").upper() if action_match else None
@@ -364,11 +354,6 @@ def extract_signal(text):
     elif entry_trigger_match:
         action = action or "BUY"
         entry_value = entry_trigger_match.group("value").replace(" ", "")
-    elif action_price_match:
-        # Covers formats that give the entry price directly next to the action
-        # instead of an explicit "entry"/"range" keyword, e.g. "Buy - ₹75".
-        action = action or "BUY"
-        entry_value = action_price_match.group("value").replace(" ", "")
     
     if not action or not signal_match or not entry_value or not target_match or not sl_match:
         return None
