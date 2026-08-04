@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Scanner backtest report</title>
+<style>
+  :root {
+    --bg: #f7f7f5; --surface: #ffffff; --border: #e3e2dc; --text: #171715;
+    --text-secondary: #6b6a64; --text-muted: #9a998f; --green: #0f6e56;
+    --green-bg: #e1f5ee; --gray: #6b6a64; --gray-bg: #f0efea; --red: #a32d2d;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #171715; --surface: #201f1d; --border: #35342f; --text: #f2f1ec;
+      --text-secondary: #b8b7ae; --text-muted: #8a8980; --green: #5dcaa5;
+      --green-bg: #0b3329; --gray-bg: #2a2a26; --red: #f09595;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg); color: var(--text); margin: 0; padding: 2rem;
+  }
+  .wrap { max-width: 1000px; margin: 0 auto; }
+  h1 { font-size: 20px; font-weight: 600; margin: 0 0 4px; }
+  .subtitle { color: var(--text-secondary); font-size: 14px; margin: 0 0 1.5rem; }
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-bottom: 1.5rem; }
+  .kpi { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 1rem; }
+  .kpi .label { font-size: 13px; color: var(--text-secondary); margin: 0 0 4px; }
+  .kpi .value { font-size: 24px; font-weight: 600; margin: 0; }
+  .kpi .value.pos { color: var(--green); }
+  .kpi .value.neg { color: var(--red); }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 1.25rem; margin-bottom: 1.5rem; }
+  .legend { display: flex; gap: 16px; font-size: 12px; color: var(--text-secondary); margin-bottom: 8px; }
+  .legend span { display: inline-flex; align-items: center; gap: 5px; }
+  .dot { width: 9px; height: 9px; border-radius: 2px; display: inline-block; }
+  .controls { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+  .controls select, .controls input {
+    background: var(--surface); color: var(--text); border: 1px solid var(--border);
+    border-radius: 6px; padding: 6px 10px; font-size: 13px;
+  }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--border); }
+  th { color: var(--text-muted); font-weight: 500; cursor: pointer; user-select: none; white-space: nowrap; }
+  th:hover { color: var(--text); }
+  td.num, th.num { text-align: right; }
+  .pill { font-size: 12px; padding: 3px 9px; border-radius: 6px; white-space: nowrap; }
+  .pill.target_hit { background: var(--green-bg); color: var(--green); }
+  .pill.time_stop { background: var(--gray-bg); color: var(--text-secondary); }
+  .pill.stop_loss { background: var(--gray-bg); color: var(--red); }
+  .pos { color: var(--green); }
+  .neg { color: var(--red); }
+  .empty { color: var(--text-muted); font-size: 14px; padding: 2rem 0; text-align: center; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Scanner backtest report</h1>
+  <p class="subtitle">Generated 2026-08-01 18:24 &middot; window 2025-04-03 to 2026-07-27 &middot; 57 trades</p>
+
+  <div class="kpis" id="kpis"></div>
+
+  <div class="card">
+    <div class="legend">
+      <span><span class="dot" style="background:#199e70"></span>Target hit (15.0%)</span>
+      <span><span class="dot" style="background:#898781"></span>Time stop (60 trading days)</span>
+      <span><span class="dot" style="background:#e24b4a"></span>Stop loss</span>
+    </div>
+    <div style="position: relative; height: 280px;">
+      <canvas id="pnlChart" role="img" aria-label="Bar chart of profit and loss percent for every trade in the backtest"></canvas>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="controls">
+      <select id="filterReason">
+        <option value="">All outcomes</option>
+        <option value="target_hit">Target hit</option>
+        <option value="time_stop">Time stop</option>
+        <option value="stop_loss">Stop loss</option>
+      </select>
+      <input id="filterSymbol" type="text" placeholder="Filter by symbol...">
+    </div>
+    <div id="tableWrap"></div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script>
+const trades = [{"symbol": "ADOR", "signal_date": "2026-07-15", "entry_date": "2026-07-16", "entry_price": 1344.9, "exit_date": "2026-07-21", "exit_price": 1546.64, "pnl_pct": 15.0, "duration_days": 5, "exit_reason": "target_hit", "hit_min_target": true}, {"symbol": "APCOTEXIND", "signal_date": "2026-07-27", "entry_date": "2026-07-28", "entry_price": 591.0, "exit_date": "2026-07-29", "exit_price": 679.65, "pnl_pct": 15.0, "duration_days": 1, "exit_reason": "target_hit", "hit_min_target": true}, {"symbol": "ASHOKLEY", "signal_date": "2025-08-18", "entry_date": "2025-08-19", "entry_price": 131.76, "exit_date": "2025-11-14", "exit_price": 151.52, "pnl_pct": 15.0, "duration_days": 87, "exit_reason": "target_hit", "hit_min_target": true}, {"symbol": "ASHOKLEY", "signal_date": "2025-11-27", "entry_date": "2025-11-28", "entry_price": 158.0, "exit_date": "2026-01-01", "exit_price": 181.7, "pnl_pct": 15.0, "duration_days": 34, "exit_reason": "target_hit", "hit_min_target": true}, {"symbol": "AUTOAXLES", "signal_date": "2026-01-02", "entry_date": "2026-01-05", "entry_price": 1969.2, "exit_date": "2026-04-06", "exit_price": 1665.7, "pnl_pct": -15.41, "duration_days": 91, "exit_reason": "time_stop", "hit_min_target": false}, {"symbol": "NAM-INDIA", "signal_date": "2025-06-06", "entry_date": "2025-06-09", "entry_price": 802.0, "exit_date": "2025-09-03", "exit_price": 816.15, "pnl_pct": 1.76, "duration_days": 86, "exit_reason": "time_stop", "hit_min_target": false}, {"symbol": "BEL", "signal_date": "2025-06-20", "entry_date": "2025-06-23", "entry_price": 411.0, "exit_date": "2025-09-17", "exit_price": 412.2, "pnl_pct": 0.29, "duration_days": 86, "exit_reason": "time_stop", "hit_min_target": false}, {"symbol": "BEML", "signal_date": "2025-06-20", "entry_date": "2025-06-23", "entry_price": 2325.2, "exit_date": "2025-09-17", "exit_price": 2201.7, "pnl_pct": -5.31, "duration_days": 86, "exit_reason": "time_stop", "hit_min_target": false}, {"symbol": "BIRLACORPN", "signal_date": "2025-07-22", "entry_date": "2025-07-23", "entry_price": 1473.0, "exit_date": "2025-10-20", "exit_price": 1179.7, "pnl_pct": -19.91, "duration_days": 89, "exit_reason": "time_stop", "hit_min_target": false}, {"symbol": "MAZDOCK", "signal_date": "2025-04-29", "entry_date": "2025-04-30", "entry_price": 3073.7, "exit_date": "2025-05-16", "exit_price": 3534.75, "pnl_pct": 15.0, "duration_days": 16, "exit_reason": "target_hit", "hit_min_target": true}, {"symbol": "GRAPHITE", "signal_date": "2025-07-14", "entry_date": "2025-07-15", "entry_price": 595.0, "exit_date": "2025-10-10", "exit_price": 563.25, "pnl_pct": -5.34, "duration_days": 87, "exit_reason": "time_stop", "hit_min_target": false}, {"symbol": "CARBORUNIV", "signal_date": "2026-06-17", "entry_date": "2026-06-18", "entry_price": 1138.0, "exit_date": "2026-07-29", "exit_price": 1056.0, "pnl_pct": -7.21, "duration_days": 41, "exit_reason": "time_stop", "hit_min_target": false}, {"symbol": "CESC", "signal_date": "2025-10-15", "entry_date": "2025-10-16", "entry_price": 171.25, "exit_date": "2026-01-13", "exit_price": 160.1, "pnl_pct": -6.51, "duration_days": 89, "exit_reason": "time_stop", "hit_min_target": false}, {"symbol": "EXIDEIND", "signal_date": "2026-07-02", "entry_date": "2026-07-03", "entry_price": 421.15, "exit_date": "2026-07-29", "exit_price": 435.65, "pnl_pct": 3.44, "duration_days": 26, "exit_reason": "time_stop", "hit_min_target": false}, {"symbol": "COSMOFIRST", "signal_date": "2026-07-03", "entry_date": "2026-07-06", "entry_price": 861.7, "exit_date": "2026-07-29", "exit_price": 889.1, "pnl_pct": 3.18, "duration_days": 23, "exit_reason": "time_stop", "hit_min_target": false}, {"symbol": "CGPOWER", "signal_date": "2026-05-07", "entry_date": "2026-05-08", "entry_price": 860.35, "exit_date": "2026-07-29", "exit_price": 829.5, "pnl_pct": -3.59, "duration_days": 82, "exit_reason": "time_stop", "hit_min_target": false}, {"symbol": "DCMSHRIRAM", "signal_date": "2025-06-13", "entry_date": "2025-06-16", "entry_price": 1140.0, "exit_date": "2025-07-03", "exit_price": 1311.0, "pnl_pct": 15.0, "duration_days": 17, "exit_reason": "target_hit", "hit_min_target": true}, {"symbol": "EQUITASBNK", "signal_date": "2026-06-08", "entry_date": "2026-06-09", "entry_price": 75.2, "exit_date": "2026-07-29", "exit_price": 73.13, "pnl_pct": -2.75, "duration_days": 50, "exit_reason": "time_stop", "hit_min_target": false}, {"symbol": "EIDPARRY", "signal_date": "2025-06-25", "entry_date": "2025-06-26", "entry_price": 1055.0, "exit_date": "2025-07-29", "exit_price": 1213.25, "pnl_pct": 15.0, "duration_days": 33, "exit_reason": "target_hit", "hit_min_target": true}, {"symbol": "FEDERALBNK", "signal_date": "2026-01-19", "entry_date": "2026-01-20", "entry_price": 278.0, "exit_date": "2026-04-21", "exit_price": 295.75, "pnl_pct": 6.38, "duration_days": 91, "exit_reason": "time_stop", "hit_min_target": false}, {"symbol": "FEDERALBNK", "signal_date": "2026-07-17", "entry_date": "2026-07-20", "entry_price": 341.5, "exit_date": "2026-07-29", "exit_price": 359.15, "pnl_pct": 5.17, "duration_days": 9, "exit_reason": "time_stop", "hit_min_target": false}, {"symbol": "FINCABLES", "signal_date": "2026-05-27", "entry_date": "2026-05-29", "entry_price": 1155.0, "exit_date": "2026-07-29", "exit_price": 984.9, "pnl_pct": -14.73, "duration_days": 61, "exit_reason": "time_stop", "hit_min_target": false}, {"symbol": "GABRIEL", "signal_date": "2025-06-30", "entry_date": "2025-07-01", "entry_price": 842.75, "exit_date": "2025-07-02", "exit_price": 969.16, "pnl_pct": 15.0, "duration_days": 1, "exit_reason": "target_hit", "hit_min_target": true}, {"symbol": "GABRIEL", "signal_date": "2026-07-15", "entry_date": "2026-07-16", "entry_price": 1370.0, "exit_date": "2026-07-29", "exit_price": 1414.8, "pnl_pct": 3.27, "duration_days": 13, "exit_reason": "time_stop", "hit_min_target": false}, {"symbol": "GARFIBRES", "signal_date": "2025-07-22", "entry_date": "2025-07-23", "entry_price": 965.0, "exit_date": "2025-10-20", "exit_price": 765.25, "pnl_pct": -20.7, "duration_days": 89, "exit_reason": "time_stop", "hit_min_target": false}, {"symbol": "GLAXO", "signal_date": "2025-05-27", "entry_date": "2025-05-28", "entry_price": 3053.3, "exit_date": "2025-08-21", "exit_price": 2711.4, "pnl_pct": -11.2, "duration_days": 85, "exit_reason": "time_stop", "hit_min_target": false}, {"symbol": "GODFRYPHLP", "signal_date": "2025-08-05", "entry_date": "2025-08-06", "entry_price": 3306.0, "exit_date": "2025-08-07", "exit_price": 3801.9, "pnl_pct": 15.0, "duration_days": 1, "exit_reason": "target_hit", "hit_min_target": true}, {"symbol": "GLAND", "signal_date": "2026-06-30", "entry_date": "2026-07-01", "entry_price": 2495.0, "exit_date": "2026-07-29", "exit_price": 2543.7, "pnl_pct": 1.95, "duration_days": 28, "exit_reason": "time_stop", "hit_min_target": false}, {"symbol": "HEG", "signal_date": "2025-07-17", "entry_date": "2025-07-18", "entry_price": 559.0, "exit_date": "2025-10-15", "exit_price": 511.3, "pnl_pct": -8.53, "duration_days": 89, "exit_reason": "time_stop", "hit_min_target": false}, {"symbol": "HEG", "signal_date": "2025-10-29", "entry_date": "2025-10-30", "entry_price": 578.0, "exit_date": "2025-12-31", "exit_price": 664.7, "pnl_pct": 15.0, "duration_days": 62, "exit_reason": "target_hit", "hit_min_target": true}, {"symbol": "IDBI", "signal_date": "2025-05-20", "entry_date": "2025-05-21", "entry_price": 92.0, "exit_date": "2025-06-30", "exit_price": 105.8, "pnl_pct": 15.0, "duration_days": 40, "exit_reason": "target_hit", "hit_min_target": true}, {"symbol": "IFCI", "signal_date": "2026-06-02", "entry_date": "2026-06-03", "entry_price": 72.3, "exit_date": "2026-06-04", "exit_price": 83.14, "pnl_pct": 15.0, "duration_days": 1, "exit_reason": "target_hit", "hit_min_target": true}, {"symbol": "INDIACEM", "signal_date": "2026-01-08", "entry_date": "2026-01-09", "entry_price": 470.0, "exit_date": "2026-04-10", "exit_price": 385.9, "pnl_pct": -17.89, "duration_days": 91, "exit_reason": "time_stop", "hit_min_target": false}, {"symbol": "INDIAGLYCO", "signal_date": "2025-06-24", "entry_date": "2025-06-25", "entry_price": 985.7, "exit_date": "2025-09-19", "exit_price": 873.0, "pnl_pct": -11.43, "duration_days": 86, "exit_reason": "time_stop", "hit_min_target": false}, {"symbol": "GMMPFAUDLR", "signal_date": "2025-07-30", "entry_date": "2025-07-31", "entry_price": 1350.0, "exit_date": "2025-10-29", "exit_price": 1232.6, "pnl_pct": -8.7, "duration_days": 90, "exit_reason": "time_stop", "hit_min_target": false}, {"symbol": "INGERRAND", "signal_date": "2025-07-10", "entry_date": "2025-07-11", "entry_price": 4178.5, "exit_date": "2025-10-08", "exit_price": 4012.4, "pnl_pct": -3.98, "duration_days": 89, "exit_reason": "time_stop", "hit_min_target": false}, {"symbol": "IOC", "signal_date": "2025-10-29", "entry_date": "2025-10-30", "entry_price": 158.24, "exit_date": "2026-01-28", "exit_price": 162.85, "pnl_pct": 2.91, "duration_days": 90, "exit_reason": "time_stop", "hit_min_target": false}, {"symbol": "IPCALAB", "signal_date": "2025-07-24", "entry_date": "2025-07-25", "entry_price": 1552.0, "exit_date": "2025-10-23", "exit_price": 1276.8, "pnl_pct": -17.73, "duration_days": 90, "exit_reason": "time_stop", "hit_min_target": false}, {"symbol": "KAJARIACER", "signal_date": "2026-06-24", "entry_date": "2026-06-25", "entry_price": 1218.4, "exit_date": "2026-07-29", "exit_price": 1209.7, "pnl_pct": -0.71, "duration_days": 34, "exit_reason": "time_stop", "hit_min_target": false}, {"symbol": "KPIL", "signal_date": "2026-06-16", "entry_date": "2026-06-17", "entry_price": 1380.8, "exit_date": "2026-07-29", "exit_price": 1303.4, "pnl_pct": -5.61, "duration_days": 42, "exit_reason": "time_stop", "hit_min_target": false}, {"symbol": "KARURVYSYA", "signal_date": "2025-10-20", "entry_date": "2025-10-21", "entry_price": 241.31, "exit_date": "2026-01-05", "exit_price": 277.51, "pnl_pct": 15.0, "duration_days": 76, "exit_reason": "target_hit", "hit_min_target": true}, {"symbol": "CARYSIL", "signal_date": "2026-06-10", "entry_date": "2026-06-11", "entry_price": 1205.0, "exit_date": "2026-07-29", "exit_price": 1178.4, "pnl_pct": -2.21, "duration_days": 48, "exit_reason": "time_stop", "hit_min_target": false}, {"symbol": "WHEELS", "signal_date": "2025-09-17", "entry_date": "2025-09-18", "entry_price": 819.85, "exit_date": "2025-10-08", "exit_price": 942.83, "pnl_pct": 15.0, "duration_days": 20, "exit_reason": "target_hit", "hit_min_target": true}, {"symbol": "WHEELS", "signal_date": "2026-06-29", "entry_date": "2026-06-30", "entry_price": 1795.0, "exit_date": "2026-07-29", "exit_price": 1434.5, "pnl_pct": -20.08, "duration_days": 29, "exit_reason": "time_stop", "hit_min_target": false}, {"symbol": "WSTCSTPAPR", "signal_date": "2026-05-06", "entry_date": "2026-05-07", "entry_price": 532.9, "exit_date": "2026-07-29", "exit_price": 570.3, "pnl_pct": 7.02, "duration_days": 83, "exit_reason": "time_stop", "hit_min_target": false}, {"symbol": "NAVA", "signal_date": "2025-07-23", "entry_date": "2025-07-24", "entry_price": 634.75, "exit_date": "2025-09-15", "exit_price": 729.96, "pnl_pct": 15.0, "duration_days": 53, "exit_reason": "target_hit", "hit_min_target": true}, {"symbol": "PANACEABIO", "signal_date": "2025-04-03", "entry_date": "2025-04-04", "entry_price": 477.15, "exit_date": "2025-04-21", "exit_price": 548.72, "pnl_pct": 15.0, "duration_days": 17, "exit_reason": "target_hit", "hit_min_target": true}, {"symbol": "HDFCAMC", "signal_date": "2025-06-06", "entry_date": "2025-06-09", "entry_price": 2496.9, "exit_date": "2025-08-22", "exit_price": 2871.44, "pnl_pct": 15.0, "duration_days": 74, "exit_reason": "target_hit", "hit_min_target": true}, {"symbol": "SHRIRAMFIN", "signal_date": "2025-12-19", "entry_date": "2025-12-22", "entry_price": 919.0, "exit_date": "2026-02-09", "exit_price": 1056.85, "pnl_pct": 15.0, "duration_days": 49, "exit_reason": "target_hit", "hit_min_target": true}, {"symbol": "CREDITACC", "signal_date": "2025-07-23", "entry_date": "2025-07-24", "entry_price": 1350.1, "exit_date": "2025-10-21", "exit_price": 1295.7, "pnl_pct": -4.03, "duration_days": 89, "exit_reason": "time_stop", "hit_min_target": false}, {"symbol": "SHARDAMOTR", "signal_date": "2025-07-02", "entry_date": "2025-07-03", "entry_price": 1049.7, "exit_date": "2025-07-07", "exit_price": 1207.16, "pnl_pct": 15.0, "duration_days": 4, "exit_reason": "target_hit", "hit_min_target": true}, {"symbol": "KRBL", "signal_date": "2025-05-19", "entry_date": "2025-05-20", "entry_price": 351.4, "exit_date": "2025-07-04", "exit_price": 404.11, "pnl_pct": 15.0, "duration_days": 45, "exit_reason": "target_hit", "hit_min_target": true}, {"symbol": "KRBL", "signal_date": "2025-08-08", "entry_date": "2025-08-11", "entry_price": 427.95, "exit_date": "2025-08-13", "exit_price": 492.14, "pnl_pct": 15.0, "duration_days": 2, "exit_reason": "target_hit", "hit_min_target": true}, {"symbol": "PILANIINVS", "signal_date": "2025-10-03", "entry_date": "2025-10-06", "entry_price": 5649.5, "exit_date": "2026-01-01", "exit_price": 5179.0, "pnl_pct": -8.33, "duration_days": 87, "exit_reason": "time_stop", "hit_min_target": false}, {"symbol": "APARINDS", "signal_date": "2025-07-29", "entry_date": "2025-07-30", "entry_price": 9710.0, "exit_date": "2025-10-28", "exit_price": 9107.5, "pnl_pct": -6.2, "duration_days": 90, "exit_reason": "time_stop", "hit_min_target": false}, {"symbol": "FORCEMOT", "signal_date": "2025-05-02", "entry_date": "2025-05-05", "entry_price": 10062.5, "exit_date": "2025-05-28", "exit_price": 11571.88, "pnl_pct": 15.0, "duration_days": 23, "exit_reason": "target_hit", "hit_min_target": true}, {"symbol": "WELENT", "signal_date": "2026-06-30", "entry_date": "2026-07-01", "entry_price": 604.0, "exit_date": "2026-07-29", "exit_price": 593.15, "pnl_pct": -1.8, "duration_days": 28, "exit_reason": "time_stop", "hit_min_target": false}];
+const summary = {"total_trades": 57, "win_rate_pct": 56.1, "hit_min_10pct_target_rate": 38.6, "avg_pnl_pct": 2.38, "median_pnl_pct": 2.91, "avg_duration_days": 53.1, "target_hit_count": 22, "time_stop_count": 35, "stop_loss_count": 0};
+
+function fmtPct(v) { return (v >= 0 ? '+' : '') + v.toFixed(1) + '%'; }
+
+// --- KPI cards ---
+const kpiDefs = [
+  ['Total trades', summary.total_trades ?? 0, null],
+  ['Win rate', (summary.win_rate_pct ?? 0) + '%', 'pos'],
+  ['Hit 10% floor', (summary.hit_min_10pct_target_rate ?? 0) + '%', 'pos'],
+  ['Avg P&L', fmtPct(summary.avg_pnl_pct ?? 0), (summary.avg_pnl_pct ?? 0) >= 0 ? 'pos' : 'neg'],
+  ['Avg duration', (summary.avg_duration_days ?? 0) + ' days', null],
+];
+document.getElementById('kpis').innerHTML = kpiDefs.map(([label, value, cls]) =>
+  `<div class="kpi"><p class="label">${label}</p><p class="value ${cls || ''}">${value}</p></div>`
+).join('');
+
+// --- Chart ---
+if (trades.length) {
+  const colorFor = (r) => r === 'target_hit' ? '#199e70' : r === 'stop_loss' ? '#e24b4a' : '#898781';
+  new Chart(document.getElementById('pnlChart'), {
+    type: 'bar',
+    data: {
+      labels: trades.map(t => t.symbol + ' ' + t.signal_date),
+      datasets: [{
+        data: trades.map(t => t.pnl_pct),
+        backgroundColor: trades.map(t => colorFor(t.exit_reason)),
+        borderRadius: 3,
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: (ctx) => fmtPct(ctx.raw) } }
+      },
+      scales: {
+        y: { grid: { color: 'rgba(128,128,128,0.15)' }, ticks: { callback: (v) => v + '%' } },
+        x: { grid: { display: false }, ticks: { display: trades.length <= 30, maxRotation: 60 } }
+      }
+    }
+  });
+} else {
+  document.querySelector('.card').innerHTML = '<div class="empty">No trades in this backtest window.</div>';
+}
+
+// --- Table ---
+let sortKey = 'signal_date', sortDir = -1;
+
+function render() {
+  const reasonFilter = document.getElementById('filterReason').value;
+  const symbolFilter = document.getElementById('filterSymbol').value.toUpperCase();
+  let rows = trades.filter(t =>
+    (!reasonFilter || t.exit_reason === reasonFilter) &&
+    (!symbolFilter || t.symbol.toUpperCase().includes(symbolFilter))
+  );
+  rows.sort((a, b) => {
+    const av = a[sortKey], bv = b[sortKey];
+    if (av < bv) return -1 * sortDir;
+    if (av > bv) return 1 * sortDir;
+    return 0;
+  });
+
+  if (!rows.length) {
+    document.getElementById('tableWrap').innerHTML = '<div class="empty">No trades match this filter.</div>';
+    return;
+  }
+
+  const reasonLabel = { target_hit: 'Target hit', time_stop: 'Time stop', stop_loss: 'Stop loss' };
+  const cols = [
+    ['symbol', 'Symbol'], ['signal_date', 'Signal'], ['entry_date', 'Entry date'],
+    ['entry_price', 'Entry ₹'], ['exit_date', 'Exit date'], ['exit_price', 'Exit ₹'],
+    ['pnl_pct', 'P&L'], ['duration_days', 'Days'], ['exit_reason', 'Outcome'],
+  ];
+  const numCols = new Set(['entry_price', 'exit_price', 'pnl_pct', 'duration_days']);
+
+  let html = '<table><thead><tr>' + cols.map(([key, label]) =>
+    `<th class="${numCols.has(key) ? 'num' : ''}" onclick="setSort('${key}')">${label}${sortKey === key ? (sortDir === 1 ? ' \u2191' : ' \u2193') : ''}</th>`
+  ).join('') + '</tr></thead><tbody>';
+
+  for (const t of rows) {
+    html += '<tr>';
+    html += `<td>${t.symbol}</td>`;
+    html += `<td>${t.signal_date}</td>`;
+    html += `<td>${t.entry_date}</td>`;
+    html += `<td class="num">${t.entry_price.toFixed(2)}</td>`;
+    html += `<td>${t.exit_date}</td>`;
+    html += `<td class="num">${t.exit_price.toFixed(2)}</td>`;
+    html += `<td class="num ${t.pnl_pct >= 0 ? 'pos' : 'neg'}">${fmtPct(t.pnl_pct)}</td>`;
+    html += `<td class="num">${t.duration_days}</td>`;
+    html += `<td><span class="pill ${t.exit_reason}">${reasonLabel[t.exit_reason] || t.exit_reason}</span></td>`;
+    html += '</tr>';
+  }
+  html += '</tbody></table>';
+  document.getElementById('tableWrap').innerHTML = html;
+}
+
+function setSort(key) {
+  if (sortKey === key) { sortDir *= -1; } else { sortKey = key; sortDir = -1; }
+  render();
+}
+window.setSort = setSort;
+
+document.getElementById('filterReason').addEventListener('change', render);
+document.getElementById('filterSymbol').addEventListener('input', render);
+render();
+</script>
+</body>
+</html>
