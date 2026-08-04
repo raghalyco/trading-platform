@@ -1,0 +1,549 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Signal Engine</title>
+<style>
+  :root{
+    --bg:#0b0f14; --panel:#11171f; --panel-2:#0e1620;
+    --line:#1e2733; --text:#e7edf3; --muted:#7b8a9a;
+    --ce:#22e08a; --pe:#ff5470; --amber:#f5b942; --cyan:#3ec6ff;
+    --font-mono: 'SF Mono', 'Consolas', 'Menlo', monospace;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; background:var(--bg); color:var(--text);
+    font-family: var(--font-mono); font-size:14px;
+    max-width:480px; margin:0 auto; padding:12px; min-height:100vh;
+  }
+  .row{display:flex; justify-content:space-between; align-items:center; gap:8px;}
+  .top-bar{font-size:11px; color:var(--muted); border-bottom:1px solid var(--line); padding-bottom:8px; margin-bottom:8px; flex-wrap:wrap;}
+  .spot-row{padding:10px 0; border-bottom:1px solid var(--line); margin-bottom:8px;}
+  .spot-price{font-size:28px; font-weight:700;}
+  .spot-label{font-size:10px; color:var(--muted); text-transform:uppercase; letter-spacing:.05em;}
+  .chip{background:var(--panel-2); border:1px solid var(--line); border-radius:6px; padding:4px 8px; text-align:center;}
+  select, input{
+    background:var(--panel-2); color:var(--text); border:1px solid var(--line);
+    border-radius:6px; padding:6px 8px; font-family:var(--font-mono); font-size:12px;
+  }
+  .mode-toggle{display:flex; gap:8px; margin:10px 0;}
+  .mode-btn{
+    flex:1; padding:10px; text-align:center; border-radius:8px; border:1px solid var(--line);
+    cursor:pointer; font-weight:600; letter-spacing:.03em;
+  }
+  .mode-btn.active.scalp{background:var(--ce); color:#04140c;}
+  .mode-btn.active.smart{background:#8b5cf6; color:#fff;}
+  .mode-btn:not(.active){background:var(--panel-2); color:var(--muted);}
+
+  .caution-banner{
+    background:#241a08; border:1px solid var(--amber); color:var(--amber);
+    padding:6px 10px; border-radius:6px; font-size:11.5px; margin-bottom:10px;
+  }
+
+  .card{
+    border-radius:10px; padding:16px; margin-bottom:12px;
+    border:1px solid var(--line); background:var(--panel);
+  }
+  .card.ce{border-color:var(--ce); box-shadow:0 0 0 1px rgba(34,224,138,.15) inset;}
+  .card.pe{border-color:var(--pe); box-shadow:0 0 0 1px rgba(255,84,112,.15) inset;}
+  .card.wait{border-color:var(--line);}
+
+  .verdict{font-size:22px; font-weight:800; letter-spacing:.02em; margin-bottom:8px;}
+  .verdict.ce{color:var(--ce);}
+  .verdict.pe{color:var(--pe);}
+  .verdict.wait{color:var(--muted);}
+
+  .badge{display:inline-block; font-size:11px; padding:3px 8px; border-radius:5px; border:1px solid var(--line); margin-left:6px;}
+  .note{background:var(--panel-2); border:1px solid var(--line); border-radius:6px; padding:8px 10px; font-size:12px; color:var(--muted); margin:10px 0;}
+
+  .levels{display:grid; grid-template-columns:repeat(4,1fr); gap:6px; margin:10px 0;}
+  .level-box{background:var(--panel-2); border:1px solid var(--line); border-radius:6px; padding:8px 4px; text-align:center;}
+  .level-box .lbl{font-size:9px; color:var(--muted); text-transform:uppercase;}
+  .level-box .val{font-size:13px; font-weight:700; margin-top:4px;}
+  .val.pos{color:var(--ce);} .val.neg{color:var(--pe);}
+
+  .pa-line{font-size:12px; color:var(--muted); margin:8px 0;}
+  .pa-line b{color:var(--text);}
+
+  .score-bar{display:flex; gap:3px; margin:8px 0 4px;}
+  .score-seg{flex:1; height:6px; border-radius:3px; background:var(--line);}
+  .score-seg.on.ce{background:var(--ce);}
+  .score-seg.on.pe{background:var(--pe);}
+  .comp-labels{display:flex; gap:3px; margin-bottom:10px;}
+  .comp-labels span{flex:1; text-align:center; font-size:8.5px; color:var(--muted);}
+
+  .confidence-wrap{margin-top:12px;}
+  .confidence-track{height:6px; background:var(--line); border-radius:3px; overflow:hidden; margin:6px 0;}
+  .confidence-fill{height:100%; border-radius:3px;}
+  .confidence-fill.low{background:var(--pe);}
+  .confidence-fill.mid{background:var(--amber);}
+  .confidence-fill.high{background:var(--ce);}
+  .confidence-label{font-weight:700; font-size:13px;}
+  .avoid-scale{display:flex; justify-content:space-between; font-size:9px; color:var(--muted); margin-top:2px;}
+
+  .risk-strip{
+    display:flex; justify-content:space-between; font-size:11px; color:var(--muted);
+    background:var(--panel-2); border:1px solid var(--line); border-radius:6px; padding:8px 10px; margin-top:10px;
+  }
+  .risk-strip b{color:var(--text);}
+  .risk-strip.blocked{border-color:var(--pe); color:var(--pe);}
+
+  .footer-note{font-size:10px; color:var(--muted); text-align:center; margin-top:16px;}
+
+  .mini-cards{display:flex; flex-direction:column; gap:8px; margin-top:4px;}
+  .mini-card{
+    border-radius:8px; padding:10px 12px; border:1px solid var(--line); background:var(--panel);
+    font-size:12px;
+  }
+  .mini-card.inactive{opacity:.55;}
+  .mini-card.active.ce{border-color:var(--ce);}
+  .mini-card.active.pe{border-color:var(--pe);}
+  .mini-card.active.neutral{border-color:var(--cyan);}
+  .mini-head{display:flex; justify-content:space-between; align-items:center; margin-bottom:4px;}
+  .mini-title{font-weight:700; font-size:11px; letter-spacing:.03em; text-transform:uppercase; color:var(--muted);}
+  .mini-status{font-size:10px; padding:2px 6px; border-radius:4px; font-weight:700;}
+  .mini-status.on{background:rgba(34,224,138,.15); color:var(--ce);}
+  .mini-status.off{background:var(--panel-2); color:var(--muted);}
+  .mini-label{font-size:13px; font-weight:700; margin-bottom:2px;}
+  .mini-label.ce{color:var(--ce);} .mini-label.pe{color:var(--pe);}
+  .mini-detail{font-size:11px; color:var(--muted);}
+  .mini-detail b{color:var(--text);}
+
+  .action-row{display:flex; gap:8px; margin-top:12px;}
+  .action-btn{
+    flex:1; padding:12px; border-radius:8px; border:none; font-weight:700;
+    font-family:var(--font-mono); font-size:13px; cursor:pointer; letter-spacing:.03em;
+  }
+  .action-btn.in{background:var(--ce); color:#04140c;}
+  .action-btn.skip{background:var(--panel-2); color:var(--pe); border:1px solid var(--pe);}
+  .action-btn:disabled{opacity:.4; cursor:not-allowed;}
+
+  .journal-section{margin-top:16px; border-top:1px solid var(--line); padding-top:12px;}
+  .journal-header{display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;}
+  .journal-title{font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.05em; color:var(--muted);}
+  .journal-stats{font-size:11px; color:var(--muted);}
+  .journal-export{font-size:10px; color:var(--cyan); text-decoration:none; cursor:pointer;}
+  .journal-table{width:100%; border-collapse:collapse; font-size:11px;}
+  .journal-table th{text-align:left; color:var(--muted); font-weight:600; padding:4px 6px; border-bottom:1px solid var(--line);}
+  .journal-table td{padding:4px 6px; border-bottom:1px solid var(--panel-2);}
+  .journal-table tr.win td:first-child{border-left:2px solid var(--ce);}
+  .journal-table tr.loss td:first-child{border-left:2px solid var(--pe);}
+  .journal-table tr.open td:first-child{border-left:2px solid var(--cyan);}
+  .exit-btn{
+    background:var(--pe); color:#fff; border:none; border-radius:4px;
+    padding:3px 8px; font-size:10px; cursor:pointer; font-family:var(--font-mono);
+  }
+  .journal-empty{color:var(--muted); font-size:11px; text-align:center; padding:12px;}
+</style>
+</head>
+<body>
+
+  <div class="row top-bar">
+    <div>SYMBOL
+      <select id="symbol">
+        <option value="NIFTY">NIFTY</option>
+        <option value="SENSEX">SENSEX</option>
+      </select>
+    </div>
+    <div>VIX: <span id="vix" class="chip">--</span></div>
+    <div>Refresh: <span id="ticker">--s</span></div>
+    <div>Source: <span id="dataSource" class="chip">--</span></div>
+    <div>Regime: <span id="regimeBadge" class="chip">--</span></div>
+  </div>
+
+  <div class="row spot-row">
+    <div>
+      <div class="spot-label">Spot</div>
+      <div class="spot-price" id="spot">--</div>
+    </div>
+    <div class="chip">
+      <div class="spot-label">ATM</div>
+      <div id="atm">--</div>
+    </div>
+    <div class="chip">
+      <div class="spot-label">P&amp;L Today</div>
+      <div id="pnlToday">--</div>
+    </div>
+  </div>
+
+  <div class="mode-toggle">
+    <div class="mode-btn scalp active" data-mode="SCALP" onclick="setMode('SCALP')">SCALP</div>
+    <div class="mode-btn smart" data-mode="SMART_TRADE" onclick="setMode('SMART_TRADE')">SMART TRADE</div>
+  </div>
+
+  <div id="cautions"></div>
+
+  <div class="card wait" id="signalCard">
+    <div class="verdict wait" id="verdict">LOADING...</div>
+    <span class="badge" id="modeBadge">--</span>
+
+    <div class="note" id="setupNote">--</div>
+    <div class="note" id="premiumNote" style="display:none;"></div>
+
+    <div class="levels" id="levels"></div>
+
+    <div class="pa-line" id="paLine"></div>
+
+    <div class="pa-line" id="smartDetails" style="display:none;"></div>
+
+    <div class="score-bar" id="scoreBar"></div>
+    <div class="comp-labels" id="compLabels"></div>
+
+    <div class="confidence-wrap">
+      <div class="row">
+        <span style="font-size:11px;color:var(--muted);">ENTRY CONFIDENCE</span>
+        <span class="confidence-label" id="confLabel">--</span>
+      </div>
+      <div class="confidence-track"><div class="confidence-fill" id="confFill" style="width:0%;"></div></div>
+    </div>
+
+    <div class="risk-strip" id="riskStrip"></div>
+
+    <div class="action-row">
+      <button class="action-btn in" id="inBtn" onclick="takeEntry()">IN</button>
+      <button class="action-btn skip" onclick="skipSignal()">SKIP</button>
+    </div>
+  </div>
+
+  <div class="mini-cards" id="miniCards"></div>
+
+  <div class="journal-section">
+    <div class="journal-header">
+      <span class="journal-title">Trade Journal</span>
+      <span class="journal-stats" id="journalStats">--</span>
+      <a class="journal-export" onclick="window.open('/api/journal/export.csv')">Export CSV</a>
+    </div>
+    <table class="journal-table" id="journalTable">
+      <thead>
+        <tr><th>Time</th><th>Sym</th><th>Side</th><th>Entry</th><th>Exit</th><th>P&amp;L</th><th></th></tr>
+      </thead>
+      <tbody id="journalBody"></tbody>
+    </table>
+    <div class="journal-empty" id="journalEmpty" style="display:none;">No trades logged yet</div>
+  </div>
+
+  <div class="footer-note" id="footerNote">Simulator feed - swap SimulatorFeed for KiteFeed in app/api/main.py for live trading</div>
+
+<script>
+let currentMode = "SCALP";
+let refreshSeconds = 6;
+let countdown = refreshSeconds;
+let lastSignal = null;
+let openTradeId = null;
+
+function setMode(mode){
+  currentMode = mode;
+  document.querySelectorAll('.mode-btn').forEach(b=>b.classList.remove('active'));
+  document.querySelector(`.mode-btn[data-mode="${mode}"]`).classList.add('active');
+  fetchSignal();
+}
+
+async function fetchSignal(){
+  const symbol = document.getElementById('symbol').value;
+  const res = await fetch(`/api/signal?symbol=${symbol}&mode=${currentMode}`);
+  const data = await res.json();
+  render(data);
+  countdown = refreshSeconds;
+  fetchDailyPnl();
+}
+
+async function fetchDailyPnl(){
+  try {
+    const res = await fetch('/api/journal/daily-summary');
+    const d = await res.json();
+    const el = document.getElementById('pnlToday');
+    const sign = d.pnl_rupees > 0 ? '+' : '';
+    el.textContent = `${sign}Rs ${d.pnl_rupees} (${d.trades})`;
+    el.style.color = d.pnl_rupees > 0 ? 'var(--ce)' : d.pnl_rupees < 0 ? 'var(--pe)' : 'var(--text)';
+  } catch (e) {
+    document.getElementById('pnlToday').textContent = '--';
+  }
+}
+
+async function takeEntry(){
+  if (!lastSignal) return;
+  const inBtn = document.getElementById('inBtn');
+  inBtn.disabled = true;
+  try {
+    const res = await fetch('/api/journal/entry', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        symbol: lastSignal.symbol,
+        side: lastSignal.side,
+        signal_source: currentMode,
+        mode: currentMode,
+        entry_price: lastSignal.levels.entry,
+        rr: lastSignal.levels.rr,
+      }),
+    });
+    const d = await res.json();
+    openTradeId = d.trade_id;
+    inBtn.textContent = `OPEN #${d.trade_id}`;
+  } finally {
+    await loadJournal();
+  }
+}
+
+function skipSignal(){
+  // No-op logging for now - SKIP just means "don't take this one",
+  // nothing to record. Left as a hook if you want skip-tracking later.
+}
+
+async function exitTrade(tradeId){
+  if (!lastSignal) return;
+  await fetch('/api/journal/exit', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      trade_id: tradeId,
+      exit_price: lastSignal.levels.entry, // current index level as exit proxy
+      lot_size: 1,
+      points_per_lot_value: 1.0,
+    }),
+  });
+  if (tradeId === openTradeId) {
+    openTradeId = null;
+    document.getElementById('inBtn').disabled = false;
+    document.getElementById('inBtn').textContent = 'IN';
+  }
+  await loadJournal();
+  await fetchDailyPnl();
+}
+
+async function loadJournal(){
+  const res = await fetch('/api/journal');
+  const trades = await res.json();
+
+  const tbody = document.getElementById('journalBody');
+  const emptyEl = document.getElementById('journalEmpty');
+  const statsEl = document.getElementById('journalStats');
+
+  if (trades.length === 0) {
+    tbody.innerHTML = '';
+    emptyEl.style.display = 'block';
+    statsEl.textContent = '--';
+    return;
+  }
+  emptyEl.style.display = 'none';
+
+  const wins = trades.filter(t => t.result === 'WIN').length;
+  const losses = trades.filter(t => t.result === 'LOSS').length;
+  statsEl.textContent = `${wins}W / ${losses}L`;
+
+  tbody.innerHTML = trades.map(t => {
+    const rowClass = t.result === 'WIN' ? 'win' : t.result === 'LOSS' ? 'loss' : 'open';
+    const time = t.entry_time ? t.entry_time.split('T')[1]?.slice(0,8) : '--';
+    const exitCell = t.result === 'OPEN'
+      ? `<button class="exit-btn" onclick="exitTrade(${t.id})">EXIT</button>`
+      : (t.exit_price ?? '--');
+    const pnl = t.pnl_rupees !== null && t.pnl_rupees !== undefined
+      ? `${t.pnl_rupees > 0 ? '+' : ''}${t.pnl_rupees}` : '--';
+    return `<tr class="${rowClass}">
+      <td>${time}</td><td>${t.symbol}</td><td>${t.side}</td>
+      <td>${t.entry_price}</td><td>${exitCell}</td><td>${pnl}</td><td></td>
+    </tr>`;
+  }).join('');
+
+  // track any already-open trade across page refreshes
+  const openTrade = trades.find(t => t.result === 'OPEN');
+  if (openTrade) {
+    openTradeId = openTrade.id;
+    document.getElementById('inBtn').disabled = true;
+    document.getElementById('inBtn').textContent = `OPEN #${openTrade.id}`;
+  }
+}
+
+function render(d){
+  lastSignal = d;
+  document.getElementById('spot').textContent = d.spot.toLocaleString();
+  document.getElementById('atm').textContent = d.atm_strike;
+  document.getElementById('vix').textContent = d.vix;
+
+  const side = d.side; // CE or PE
+  const isWait = d.verdict.includes("WAIT");
+  const sideClass = isWait ? "wait" : (side === "CE" ? "ce" : "pe");
+
+  const card = document.getElementById('signalCard');
+  card.className = `card ${sideClass}`;
+  const verdictEl = document.getElementById('verdict');
+  verdictEl.textContent = d.verdict;
+  verdictEl.className = `verdict ${sideClass}`;
+
+  document.getElementById('modeBadge').textContent = d.mode.replace("_"," ");
+  document.getElementById('setupNote').textContent = d.levels.note;
+
+  const premiumEl = document.getElementById('premiumNote');
+  if (d.estimated_premium !== null && d.estimated_premium !== undefined) {
+    premiumEl.style.display = 'block';
+    premiumEl.innerHTML = `Est. premium (ATM): <b>~Rs ${d.estimated_premium}</b> <span style="color:var(--amber)">(est - not a live quote)</span>`;
+  } else {
+    premiumEl.style.display = 'none';
+  }
+
+  const lv = d.levels;
+  document.getElementById('levels').innerHTML = `
+    <div class="level-box"><div class="lbl">TF</div><div class="val">${lv.timeframe}</div></div>
+    <div class="level-box"><div class="lbl">Target 1</div><div class="val pos">${fmtSigned(lv.target1 - lv.entry)}</div></div>
+    <div class="level-box"><div class="lbl">Target 2</div><div class="val pos">${fmtSigned(lv.target2 - lv.entry)}</div></div>
+    <div class="level-box"><div class="lbl">Stop Loss</div><div class="val neg">${fmtSigned(lv.stop_loss - lv.entry)}</div></div>
+  `;
+
+  const pa = d.price_action;
+  document.getElementById('paLine').innerHTML =
+    `PA: <b>${pa.direction}</b> | ${pa.score}/${pa.max_score} score | <b>${pa.pattern}</b>`;
+
+  const smartEl = document.getElementById('smartDetails');
+  if (d.mode === 'SMART_TRADE' && d.adx_value !== undefined) {
+    smartEl.style.display = 'block';
+    const pcrTxt = d.oi_live ? `PCR: <b>${d.pcr}</b>` : `PCR: <span style="color:var(--muted)">not live - see options_data.py</span>`;
+    smartEl.innerHTML = `
+      ADX: <b>${d.adx_value}</b> (DI+ ${d.di_plus} / DI- ${d.di_minus}) &nbsp;|&nbsp; ${pcrTxt}<br>
+      ${lv.ob_label ? `<b>${lv.ob_label}</b>` : ''} &nbsp;|&nbsp; Expiry: <b>${lv.expiry}</b>
+    `;
+  } else {
+    smartEl.style.display = 'none';
+  }
+
+  // score bar
+  const scoreBar = document.getElementById('scoreBar');
+  const compLabels = document.getElementById('compLabels');
+  scoreBar.innerHTML = "";
+  compLabels.innerHTML = "";
+  const componentKeys = Object.keys(d.components);
+  componentKeys.forEach(c=>{
+    const vote = d.components[c];
+    const on = vote === side;
+    const seg = document.createElement('div');
+    seg.className = `score-seg ${on ? 'on '+sideClass : ''}`;
+    scoreBar.appendChild(seg);
+    const lbl = document.createElement('span');
+    lbl.textContent = c;
+    compLabels.appendChild(lbl);
+  });
+
+  // confidence
+  const pct = d.confidence_pct;
+  const fill = document.getElementById('confFill');
+  fill.style.width = pct + "%";
+  fill.className = `confidence-fill ${pct < 35 ? 'low' : pct < 75 ? 'mid' : 'high'}`;
+  document.getElementById('confLabel').textContent = `${d.confidence_label} ${pct}%`;
+  document.getElementById('confLabel').style.color =
+    pct < 35 ? 'var(--pe)' : pct < 75 ? 'var(--amber)' : 'var(--ce)';
+
+  // cautions
+  const cautionsDiv = document.getElementById('cautions');
+  cautionsDiv.innerHTML = d.cautions.map(c=>`<div class="caution-banner">⚠ ${c}</div>`).join('');
+
+  // risk gate
+  const riskStrip = document.getElementById('riskStrip');
+  const rg = d.risk_gate;
+  const dr = d.daily_risk;
+  riskStrip.className = `risk-strip ${rg.can_enter ? '' : 'blocked'}`;
+  riskStrip.innerHTML = `
+    <span>R:R <b>1:${lv.rr}</b></span>
+    <span>Day P&L <b>${dr.realized_pnl}</b></span>
+    <span>${rg.can_enter ? 'GATE OK' : '⛔ '+rg.reason}</span>
+  `;
+
+  renderMiniCards(d);
+
+  const regimeEl = document.getElementById('regimeBadge');
+  const regime = d.regime.regime;
+  const adxTxt = d.regime.adx !== null ? ` (ADX ${d.regime.adx})` : '';
+  regimeEl.textContent = regime + adxTxt;
+  regimeEl.style.color =
+    regime === 'RANGE' ? 'var(--amber)' :
+    regime === 'STRONG_TREND' ? 'var(--ce)' :
+    regime === 'TRENDING' ? 'var(--cyan)' : 'var(--muted)';
+}
+
+function sideCssClass(side){
+  if(side === 'CE') return 'ce';
+  if(side === 'PE') return 'pe';
+  return 'neutral';
+}
+
+function renderMiniCards(d){
+  const wrap = document.getElementById('miniCards');
+  wrap.innerHTML = '';
+
+  // --- ORB ---
+  const orb = d.orb;
+  const orbCls = orb.active ? `active ${sideCssClass(orb.side)}` : 'inactive';
+  const orbBody = orb.active
+    ? `<div class="mini-label ${sideCssClass(orb.side)}">${orb.label}</div>
+       <div class="mini-detail">Range <b>${orb.orb_low}</b>–<b>${orb.orb_high}</b> · broke to <b>${orb.breakout_close}</b></div>`
+    : `<div class="mini-detail">${orb.reason}</div>`;
+  wrap.innerHTML += `
+    <div class="mini-card ${orbCls}">
+      <div class="mini-head">
+        <span class="mini-title">📊 ORB Breakout</span>
+        <span class="mini-status ${orb.active ? 'on' : 'off'}">${orb.active ? 'ACTIVE' : 'WAIT'}</span>
+      </div>
+      ${orbBody}
+    </div>`;
+
+  // --- Retest ---
+  const rt = d.retest;
+  const rtCls = rt.active ? `active ${sideCssClass(rt.side)}` : 'inactive';
+  const rtBody = rt.active
+    ? `<div class="mini-label ${sideCssClass(rt.side)}">${rt.label}</div>
+       <div class="mini-detail">Level <b>${rt.level}</b> · price <b>${rt.price}</b> · body <b>${rt.body_pct}%</b></div>`
+    : `<div class="mini-detail">${rt.reason}</div>`;
+  wrap.innerHTML += `
+    <div class="mini-card ${rtCls}">
+      <div class="mini-head">
+        <span class="mini-title">🎯 Retest Entry</span>
+        <span class="mini-status ${rt.active ? 'on' : 'off'}">${rt.active ? 'ACTIVE' : 'WAIT'}</span>
+      </div>
+      ${rtBody}
+    </div>`;
+
+  // --- Gamma Blast ---
+  const gb = d.gamma_blast;
+  const gbCls = gb.active ? 'active neutral' : 'inactive';
+  const gbBody = gb.active
+    ? `<div class="mini-label">${gb.label}</div>
+       <div class="mini-detail">Score <b>${gb.score}/${gb.max_score}</b> — ${gb.reasons.join(', ')}</div>`
+    : `<div class="mini-detail">${gb.reason}</div>`;
+  wrap.innerHTML += `
+    <div class="mini-card ${gbCls}">
+      <div class="mini-head">
+        <span class="mini-title">🔥 Gamma Blast</span>
+        <span class="mini-status ${gb.active ? 'on' : 'off'}">${gb.active ? 'ACTIVE' : 'WAIT'}</span>
+      </div>
+      ${gbBody}
+    </div>`;
+}
+
+function fmtSigned(n){
+  n = Math.round(n*10)/10;
+  return (n>=0?'+':'') + n;
+}
+
+document.getElementById('symbol').addEventListener('change', fetchSignal);
+
+fetch('/api/status').then(r=>r.json()).then(s=>{
+  const el = document.getElementById('dataSource');
+  const isLive = s.data_source === 'kite';
+  el.textContent = isLive ? 'LIVE (Kite)' : 'SIMULATOR';
+  el.style.color = isLive ? 'var(--ce)' : 'var(--amber)';
+
+  const footer = document.getElementById('footerNote');
+  footer.textContent = isLive
+    ? 'Live Kite data - real trades affect real capital. Trade at your own risk.'
+    : 'Simulator feed - swap SimulatorFeed for KiteFeed in app/api/main.py for live trading';
+});
+
+fetchSignal();
+loadJournal();
+setInterval(()=>{
+  countdown -= 1;
+  document.getElementById('ticker').textContent = countdown + "s";
+  if(countdown <= 0) fetchSignal();
+}, 1000);
+</script>
+</body>
+</html>
