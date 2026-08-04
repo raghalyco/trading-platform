@@ -83,7 +83,7 @@ def start_telegram_client_with_retry(client, logger, session_name, attempts=3, d
             )
             time.sleep(delay_seconds)
 
-SOURCE_CHAT = 'profitpulse202'
+SOURCE_CHAT = 'Options Playbook by SK'
 NOTIFICATION_CHAT = 't.me/testalgotradinganand'
 KITE_PRODUCT = "NRML"
 KITE_ORDER_TYPE = "LIMIT"
