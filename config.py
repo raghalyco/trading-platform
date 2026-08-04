@@ -44,7 +44,7 @@ WARMUP_YEARS = 3
 # For a first dry run you may want to cap this — scanning ~2000 symbols x
 # ~4 years of daily candles through Kite's historical API (rate-limited to
 # ~3 req/sec) takes hours. Set MAX_UNIVERSE_SIZE to e.g. 300 to test quickly.
-UNIVERSE_MODE = "nifty100"     # "nifty50" | "nifty100" | "nifty500" | "all" | "file"
+UNIVERSE_MODE = "nifty100"     # "nifty50" | "nifty100" | "nifty200" | "nifty500" | "all" | "file"
 UNIVERSE_FILE = "data/universe.csv"   # used if UNIVERSE_MODE == "file", one symbol per line
 MAX_UNIVERSE_SIZE = None       # e.g. 300 for a quick test run, None = no cap
 
@@ -177,7 +177,7 @@ SMART_MONEY_SCAN_INTERVAL_SEC = 300       # CLI loop delay between full scans
 SMART_MONEY_SEND_TELEGRAM = True
 
 # Stock for day — Smart Money BUY screen on a focused index list
-STOCK_FOR_DAY_UNIVERSE = "nifty100"       # "nifty50" | "nifty100" | "nifty500"
+STOCK_FOR_DAY_UNIVERSE = "nifty100"       # "nifty50" | "nifty100" | "nifty200" | "nifty500"
 STOCK_FOR_DAY_LOOKBACK_DAYS = 200         # daily history warmup
 STOCK_FOR_DAY_SEND_TELEGRAM = False       # list in UI by default; opt-in alerts
 STOCK_FOR_DAY_BACKTEST_MONTHS = 3         # success-rate window for Stock for day backtest

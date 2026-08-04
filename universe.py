@@ -11,6 +11,7 @@ Symbols with no market cap data available are EXCLUDED rather than silently
 let through, so the filter is never accidentally skipped.
 """
 import os
+from typing import Optional
 
 import pandas as pd
 import requests
@@ -21,8 +22,29 @@ NIFTY500_URL = "https://archives.nseindia.com/content/indices/ind_nifty500list.c
 NIFTY_INDEX_URLS = {
     "nifty50": "https://archives.nseindia.com/content/indices/ind_nifty50list.csv",
     "nifty100": "https://archives.nseindia.com/content/indices/ind_nifty100list.csv",
+    "nifty200": "https://archives.nseindia.com/content/indices/ind_nifty200list.csv",
     "nifty500": NIFTY500_URL,
 }
+NIFTY_INDEX_LABELS = {
+    "nifty50": "Nifty 50",
+    "nifty100": "Nifty 100",
+    "nifty200": "Nifty 200",
+    "nifty500": "Nifty 500",
+}
+
+
+def normalize_nifty_mode(mode: Optional[str], default: str = "nifty100") -> str:
+    mode = (mode or default).strip().lower()
+    if mode not in NIFTY_INDEX_URLS:
+        raise ValueError(
+            f"Unknown nifty universe mode: {mode!r}. "
+            f"Use one of: {', '.join(NIFTY_INDEX_URLS)}"
+        )
+    return mode
+
+
+def nifty_mode_label(mode: str) -> str:
+    return NIFTY_INDEX_LABELS.get(mode, mode)
 
 
 def load_market_cap_csv() -> dict:
@@ -98,11 +120,9 @@ def fetch_market_cap_yfinance(symbols: list) -> dict:
 
 def build_nifty_index_universe(kite_client, mode: str = "nifty100") -> pd.DataFrame:
     """NSE index constituent list matched to Kite equity instruments.
-    mode: nifty50 | nifty100 | nifty500"""
-    mode = (mode or "nifty100").strip().lower()
-    url = NIFTY_INDEX_URLS.get(mode)
-    if not url:
-        raise ValueError(f"Unknown nifty universe mode: {mode!r}")
+    mode: nifty50 | nifty100 | nifty200 | nifty500"""
+    mode = normalize_nifty_mode(mode)
+    url = NIFTY_INDEX_URLS[mode]
 
     cache_file = os.path.join(config.CACHE_DIR, f"{mode}_constituents.csv")
     import time
@@ -123,7 +143,7 @@ def build_nifty_index_universe(kite_client, mode: str = "nifty100") -> pd.DataFr
 
     instruments = kite_client.get_nse_equity_instruments()
     instruments = instruments[instruments["tradingsymbol"].isin(symbols)].reset_index(drop=True)
-    label = {"nifty50": "Nifty 50", "nifty100": "Nifty 100", "nifty500": "Nifty 500"}.get(mode, mode)
+    label = nifty_mode_label(mode)
     print(f"Universe: {label} list -> {len(instruments)} matched to tradeable "
           f"Kite instruments (of {len(symbols)} listed)")
     return instruments
@@ -137,7 +157,7 @@ def build_nifty500_universe(kite_client) -> pd.DataFrame:
 def build_universe(kite_client) -> pd.DataFrame:
     """Returns DataFrame[instrument_token, tradingsymbol, (market_cap_cr)]
     depending on UNIVERSE_MODE:
-      - "nifty50" / "nifty100" / "nifty500": NSE index lists (fast, no mcap fetch)
+      - "nifty50" / "nifty100" / "nifty200" / "nifty500": NSE index lists (fast, no mcap fetch)
       - "all": every NSE equity, filtered by MIN_MARKET_CAP_CR (slow)
       - "file": your own symbol list in UNIVERSE_FILE
     """

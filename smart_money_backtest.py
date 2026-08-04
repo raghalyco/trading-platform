@@ -103,14 +103,23 @@ def build_smart_money_signal_frame(daily: pd.DataFrame, start: date, end: date) 
     return out
 
 
-def run_stock_for_day_backtest(kite_client, months: Optional[int] = None) -> dict:
+def run_stock_for_day_backtest(
+    kite_client,
+    months: Optional[int] = None,
+    universe_mode: Optional[str] = None,
+) -> dict:
     months = months if months is not None else config.STOCK_FOR_DAY_BACKTEST_MONTHS
     end = date.today()
     start = end - relativedelta(months=months)
 
-    mode = (config.STOCK_FOR_DAY_UNIVERSE or "nifty100").strip().lower()
+    try:
+        mode = universe_mod.normalize_nifty_mode(
+            universe_mode or config.STOCK_FOR_DAY_UNIVERSE or "nifty100"
+        )
+    except ValueError:
+        mode = "nifty100"
     scan_df = universe_mod.build_nifty_index_universe(kite_client, mode)
-    label = {"nifty50": "Nifty 50", "nifty100": "Nifty 100", "nifty500": "Nifty 500"}.get(mode, mode)
+    label = universe_mod.nifty_mode_label(mode)
 
     from_date = start - timedelta(days=365)
     to_date = end

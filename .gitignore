@@ -1,0 +1,36 @@
+# Secrets / local credentials
+.env
+cache/access_token.json
+
+# Regenerable market-data & list caches (created at runtime)
+cache/
+!cache/.gitkeep
+
+# Backtest / scan output dumps
+results/
+!results/.gitkeep
+
+# Keep optional local data dir; ignore generated dumps if any
+data/*
+!data/.gitkeep
+!data/universe.csv
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.egg-info/
+.eggs/
+dist/
+build/
+.venv/
+venv/
+.env.local
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+*~

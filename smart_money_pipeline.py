@@ -169,15 +169,26 @@ def _weekly_from_daily(daily: pd.DataFrame) -> pd.DataFrame:
     return sms._resample_ohlcv(daily, "W-FRI")
 
 
-def scan_stock_for_day(kite_client, universe_df=None, send_telegram: Optional[bool] = None) -> dict:
-    """Scan Nifty 50/100 (config.STOCK_FOR_DAY_UNIVERSE) on daily candles with
-    Smart Money structure. Returns only BUY-eligible stocks."""
+def scan_stock_for_day(
+    kite_client,
+    universe_df=None,
+    send_telegram: Optional[bool] = None,
+    universe_mode: Optional[str] = None,
+) -> dict:
+    """Scan a Nifty index list on daily candles with Smart Money structure.
+    Returns only BUY-eligible stocks. universe_mode overrides config default."""
     import universe as universe_mod
 
     if send_telegram is None:
         send_telegram = config.STOCK_FOR_DAY_SEND_TELEGRAM
 
-    mode = (config.STOCK_FOR_DAY_UNIVERSE or "nifty100").strip().lower()
+    try:
+        mode = universe_mod.normalize_nifty_mode(
+            universe_mode or config.STOCK_FOR_DAY_UNIVERSE or "nifty100"
+        )
+    except ValueError:
+        mode = "nifty100"
+
     try:
         scan_df = universe_mod.build_nifty_index_universe(kite_client, mode)
     except Exception as e:
@@ -188,6 +199,7 @@ def scan_stock_for_day(kite_client, universe_df=None, send_telegram: Optional[bo
         return {
             "generated_at": datetime.now().isoformat(),
             "universe_mode": mode,
+            "universe_label": universe_mod.nifty_mode_label(mode),
             "universe_size": 0,
             "scanned": 0,
             "num_buys": 0,
@@ -199,7 +211,7 @@ def scan_stock_for_day(kite_client, universe_df=None, send_telegram: Optional[bo
 
     buys = []
     scanned = 0
-    label = {"nifty50": "Nifty 50", "nifty100": "Nifty 100", "nifty500": "Nifty 500"}.get(mode, mode)
+    label = universe_mod.nifty_mode_label(mode)
     print(f"Stock for day: scanning {label} ({len(scan_df)} symbols) with Smart Money structure...")
 
     for _, row in tqdm(scan_df.iterrows(), total=len(scan_df), desc=f"Stock for day ({label})"):

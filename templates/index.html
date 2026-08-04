@@ -53,6 +53,11 @@
     background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
     border-radius: 8px; padding: 9px 16px; font-size: 13px; font-weight: 600; cursor: pointer;
   }
+  .topbar-actions { display: flex; align-items: center; gap: 10px; }
+  select.universe-select {
+    background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 8px; padding: 9px 12px; font-size: 13px; font-weight: 600; cursor: pointer;
+  }
 
   .breadth-bar { height: 6px; border-radius: 3px; overflow: hidden; display: flex; margin: 10px 0 6px; background: var(--surface-2); }
   .breadth-bar .up { background: var(--green); }
@@ -208,12 +213,20 @@
     <div class="topbar">
       <div>
         <h1>Stock for day</h1>
-        <p class="meta" id="stockdayMeta">Nifty 100 · Smart Money structure · BUY-eligible only · not run yet</p>
+        <p class="meta" id="stockdayMeta">Smart Money structure · BUY-eligible only · not run yet</p>
       </div>
-      <button class="primary" id="stockdayBtn" onclick="runStockForDay(true)">Run Scan</button>
+      <div class="topbar-actions">
+        <select class="universe-select" id="stockdayUniverse" title="Index universe">
+          <option value="nifty50">Nifty 50</option>
+          <option value="nifty100" selected>Nifty 100</option>
+          <option value="nifty200">Nifty 200</option>
+          <option value="nifty500">Nifty 500</option>
+        </select>
+        <button class="primary" id="stockdayBtn" onclick="runStockForDay(true)">Run Scan</button>
+      </div>
     </div>
     <div class="card">
-      <div id="stockdayTableWrap"><div class="empty">Click "Run Scan" to scan Nifty 50/100 and list BUY-eligible Smart Money setups.</div></div>
+      <div id="stockdayTableWrap"><div class="empty">Pick Nifty 50/100/200/500, then click "Run Scan" for BUY-eligible Smart Money setups.</div></div>
     </div>
   </div>
 
@@ -224,10 +237,18 @@
         <h1>Stock for day · Backtest</h1>
         <p class="meta" id="stockdayBtMeta">Smart Money BUY signals · last 3 months · success rate</p>
       </div>
-      <button class="secondary" id="stockdayBtBtn" onclick="runStockdayBacktest()">Run Backtest</button>
+      <div class="topbar-actions">
+        <select class="universe-select" id="stockdayBtUniverse" title="Index universe">
+          <option value="nifty50">Nifty 50</option>
+          <option value="nifty100" selected>Nifty 100</option>
+          <option value="nifty200">Nifty 200</option>
+          <option value="nifty500">Nifty 500</option>
+        </select>
+        <button class="secondary" id="stockdayBtBtn" onclick="runStockdayBacktest()">Run Backtest</button>
+      </div>
     </div>
     <div class="card">
-      <div id="stockdayBtWrap"><div class="empty">Click "Run Backtest" to measure Smart Money success rate over the last 3 months (Nifty 50/100).</div></div>
+      <div id="stockdayBtWrap"><div class="empty">Pick an index universe, then click "Run Backtest" for the last 3 months.</div></div>
     </div>
   </div>
 
@@ -664,17 +685,34 @@ function renderTrendingCards(sectors) {
 let stockdayData = null;
 let stockdaySortKey = 'confidence', stockdaySortDir = -1;
 
+function stockdayUniverseMode(selectId) {
+  const el = document.getElementById(selectId);
+  return (el && el.value) || 'nifty100';
+}
+
+function syncStockdayUniverses(sourceId) {
+  const mode = stockdayUniverseMode(sourceId);
+  ['stockdayUniverse', 'stockdayBtUniverse'].forEach(id => {
+    const el = document.getElementById(id);
+    if (el) el.value = mode;
+  });
+}
+document.getElementById('stockdayUniverse')?.addEventListener('change', () => syncStockdayUniverses('stockdayUniverse'));
+document.getElementById('stockdayBtUniverse')?.addEventListener('change', () => syncStockdayUniverses('stockdayBtUniverse'));
+
 async function runStockForDay(refresh = true) {
   const btn = document.getElementById('stockdayBtn');
+  const mode = stockdayUniverseMode('stockdayUniverse');
   btn.disabled = true; btn.textContent = refresh ? 'Scanning...' : 'Loading...';
   document.getElementById('stockdayTableWrap').innerHTML =
-    '<div class="loading">Scanning Nifty 50/100 with Smart Money structure — usually under a minute with warm cache…</div>';
+    '<div class="loading">Scanning selected index with Smart Money structure — usually under a minute with warm cache…</div>';
   try {
-    const url = refresh ? '/api/stock_for_day?refresh=1' : '/api/stock_for_day';
+    let url = '/api/stock_for_day?universe=' + encodeURIComponent(mode);
+    if (refresh) url += '&refresh=1';
     stockdayData = await fetchJson(url);
     const stamp = new Date(stockdayData.generated_at).toLocaleTimeString();
     const src = stockdayData.cached ? 'cached' : 'fresh scan';
-    const label = stockdayData.universe_label || stockdayData.universe_mode || 'Nifty 100';
+    const label = stockdayData.universe_label || stockdayData.universe_mode || mode;
     document.getElementById('stockdayMeta').textContent =
       `${stockdayData.num_buys} BUY-eligible · ${label} · scanned ${stockdayData.scanned}/${stockdayData.universe_size} · ${src} · ${stamp}`;
     updateMarketStatus(stockdayData.market_open);
@@ -732,32 +770,21 @@ let stockdayBtSortKey = 'signal_date', stockdayBtSortDir = -1;
 
 async function runStockdayBacktest() {
   const btn = document.getElementById('stockdayBtBtn');
+  const mode = stockdayUniverseMode('stockdayBtUniverse');
   btn.disabled = true; btn.textContent = 'Running backtest...';
   document.getElementById('stockdayBtWrap').innerHTML =
-    '<div class="loading">Backtesting Smart Money BUY signals over 3 months on Nifty 50/100 — usually under a minute…</div>';
+    '<div class="loading">Backtesting Smart Money BUY signals over 3 months — larger universes take longer…</div>';
   try {
-    const res = await fetch('/api/stock_for_day/backtest');
-    const text = await res.text();
-    let data;
-    try {
-      data = JSON.parse(text);
-    } catch (parseErr) {
-      throw new Error(
-        'Server returned non-JSON (status ' + res.status + '). '
-        + 'Restart python app.py so /api/stock_for_day/backtest is loaded. '
-        + 'Preview: ' + text.slice(0, 120).replace(/\\s+/g, ' ')
-      );
-    }
-    if (!res.ok || data.error) {
-      throw new Error(data.error || ('HTTP ' + res.status));
-    }
+    const data = await fetchJson(
+      '/api/stock_for_day/backtest?universe=' + encodeURIComponent(mode)
+    );
     stockdayBtData = data;
-    const label = stockdayBtData.universe_label || 'Nifty 100';
+    const label = stockdayBtData.universe_label || mode;
     document.getElementById('stockdayBtMeta').textContent =
       `Smart Money · ${label} · ${stockdayBtData.window_start} → ${stockdayBtData.window_end}`;
     renderStockdayBacktest();
   } catch (e) {
-    document.getElementById('stockdayBtWrap').innerHTML = '<div class="empty">Backtest failed: ' + e.message + '</div>';
+    document.getElementById('stockdayBtWrap').innerHTML = '<div class="empty">Backtest failed: ' + (e.message || e) + '</div>';
   }
   btn.disabled = false; btn.textContent = 'Run Backtest';
 }

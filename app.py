@@ -99,7 +99,8 @@ print(f"Universe ready: {len(_universe_df)} symbols.")
 _last_scan_cache = {"generated_at": None, "results": []}
 _sector_cache = {"generated_at": None, "results": []}
 _trending_cache = {"generated_at": None, "sectors": {}}
-_stock_for_day_cache = {"generated_at": None, "payload": None}
+# Per-universe cache: mode -> {generated_at, payload}
+_stock_for_day_cache: dict = {}
 
 
 def _refresh_sector_cache():
@@ -300,28 +301,53 @@ def api_smart_money_scan():
     return jsonify(result)
 
 
+def _stock_for_day_universe_arg() -> str:
+    """Resolve ?universe= from request, falling back to config default."""
+    from flask import request
+    import universe as universe_mod
+    raw = (request.args.get("universe") or config.STOCK_FOR_DAY_UNIVERSE or "nifty100")
+    try:
+        return universe_mod.normalize_nifty_mode(raw)
+    except ValueError:
+        return "nifty100"
+
+
 @app.route("/api/stock_for_day", methods=["POST", "GET"])
 def api_stock_for_day():
-    """Full-universe Smart Money structure scan — BUY-eligible stocks only."""
-    refresh = _want_refresh()
-    if refresh or not _stock_for_day_cache["generated_at"]:
-        print("Running Stock for day scan (full universe + Smart Money)...")
-        payload = smart_money_pipeline.scan_stock_for_day(
-            _client, _universe_df, send_telegram=config.STOCK_FOR_DAY_SEND_TELEGRAM
-        )
-        _stock_for_day_cache["generated_at"] = payload["generated_at"]
-        _stock_for_day_cache["payload"] = payload
-    out = dict(_stock_for_day_cache["payload"] or {})
-    out["market_open"] = _is_market_open()
-    out["cached"] = not refresh
-    return jsonify(out)
+    """Smart Money structure scan on selected Nifty universe — BUY-eligible only."""
+    try:
+        mode = _stock_for_day_universe_arg()
+        refresh = _want_refresh()
+        cached = _stock_for_day_cache.get(mode) or {}
+        if refresh or not cached.get("generated_at"):
+            print(f"Running Stock for day scan ({mode})...")
+            payload = smart_money_pipeline.scan_stock_for_day(
+                _client,
+                _universe_df,
+                send_telegram=config.STOCK_FOR_DAY_SEND_TELEGRAM,
+                universe_mode=mode,
+            )
+            cached = {"generated_at": payload["generated_at"], "payload": payload}
+            _stock_for_day_cache[mode] = cached
+        out = dict(cached.get("payload") or {})
+        out["market_open"] = _is_market_open()
+        out["cached"] = not refresh
+        return jsonify(out)
+    except Exception as e:
+        print(f"[stock_for_day] failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e), "buys": [], "num_buys": 0}), 500
 
 
 @app.route("/api/stock_for_day/backtest", methods=["POST", "GET"])
 def api_stock_for_day_backtest():
-    """3-month Smart Money success-rate backtest on Nifty 50/100."""
+    """3-month Smart Money success-rate backtest on selected Nifty universe."""
+    mode = _stock_for_day_universe_arg()
     try:
-        result = smart_money_backtest.run_stock_for_day_backtest(_client)
+        result = smart_money_backtest.run_stock_for_day_backtest(
+            _client, universe_mode=mode
+        )
         result["market_open"] = _is_market_open()
         return jsonify(result)
     except Exception as e:
