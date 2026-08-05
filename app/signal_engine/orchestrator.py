@@ -18,6 +18,7 @@ from app.signal_engine.gamma_blast import check_gamma_blast, is_monthly_expiry_t
 from app.signal_engine.regime import classify_regime, gate_breakout_signal
 from app.signal_engine.session import get_session_label
 from app.signal_engine.option_pricing import estimate_premium
+from app.signal_engine.trade_recommendation import build_trade_recommendation
 from app.config import CONFIG
 from app.data_feed.base import DataFeed
 
@@ -113,16 +114,37 @@ def generate_signal(feed: DataFeed, symbol: str, mode: str, risk_mgr: RiskManage
             iv_multiplier=CONFIG.option_pricing.iv_multiplier,
         )
 
+    # 9. full trade recommendation (strike, premium band, capital, TAKE/SKIP)
+    recommendation = build_trade_recommendation(
+        feed=feed,
+        symbol=symbol,
+        side=side,
+        mode=mode,
+        spot=spot,
+        vix=vix,
+        levels=levels,
+        verdict=verdict,
+        confidence_pct_val=pct,
+        confidence_label_val=label,
+        risk_can_enter=can_enter,
+        risk_reason=risk_reason,
+        regime=regime_info,
+        risk_mgr=risk_mgr,
+    )
+
     return {
         "symbol": symbol,
         "spot": round(spot, 2),
         "vix": vix,
-        "atm_strike": round(spot / 50) * 50,
+        "atm_strike": recommendation["atm_strike"],
         "verdict": verdict,
         "side": side,
         "mode": mode,
         "score": total_score,
         "max_score": max_score,
+        "base_score": base["score"],
+        "max_components": max_components,
+        "pa_bonus": bonus,
         "components": comp["votes"],
         "price_action": pa,
         "levels": levels,
@@ -138,5 +160,6 @@ def generate_signal(feed: DataFeed, symbol: str, mode: str, risk_mgr: RiskManage
         "session": session_label,
         "estimated_premium": estimated_premium,
         "estimated_premium_note": "MODEL ESTIMATE, not a live quote - see option_pricing.py",
+        "recommendation": recommendation,
         **smart_extra,
     }

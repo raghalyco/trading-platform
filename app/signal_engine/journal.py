@@ -3,6 +3,7 @@ Auto trade journal. Every trade logs on exit: entry/exit price, time held,
 P&L, R:R, signal source. Filterable by WIN/LOSS, exportable to CSV.
 
 Uses SQLite (stdlib only, zero extra dependency) so it works out of the box.
+Also stores Target 1 / SL so the target monitor can alert when T1 is hit.
 """
 
 import sqlite3
@@ -12,6 +13,21 @@ import os
 from datetime import datetime
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "..", "journal.db")
+
+_EXTRA_COLUMNS = {
+    "target1": "REAL",
+    "target2": "REAL",
+    "stop_loss": "REAL",
+    "contract": "TEXT",
+    "expiry": "TEXT",
+    "strike": "INTEGER",
+    "entry_premium": "REAL",
+    "t1_premium": "REAL",
+    "t2_premium": "REAL",
+    "sl_premium": "REAL",
+    "t1_hit_at": "TEXT",
+    "t1_alerted": "INTEGER DEFAULT 0",
+}
 
 
 def _connect():
@@ -34,17 +50,42 @@ def _connect():
             result TEXT
         )
     """)
+    existing = {
+        row[1] for row in conn.execute("PRAGMA table_info(trades)").fetchall()
+    }
+    for col, typedef in _EXTRA_COLUMNS.items():
+        if col not in existing:
+            conn.execute(f"ALTER TABLE trades ADD COLUMN {col} {typedef}")
+    conn.commit()
     return conn
 
 
+def _row_to_dict(conn, row) -> dict:
+    cols = [d[0] for d in conn.execute("SELECT * FROM trades LIMIT 0").description]
+    return dict(zip(cols, row))
+
+
 def log_entry(symbol: str, side: str, signal_source: str, mode: str,
-              entry_price: float, rr: float) -> int:
+              entry_price: float, rr: float,
+              target1: float | None = None, target2: float | None = None,
+              stop_loss: float | None = None, contract: str | None = None,
+              expiry: str | None = None, strike: int | None = None,
+              entry_premium: float | None = None, t1_premium: float | None = None,
+              t2_premium: float | None = None, sl_premium: float | None = None) -> int:
     """Called when the user clicks IN. Returns the trade's row id (open trade)."""
     conn = _connect()
     cur = conn.execute(
-        """INSERT INTO trades (symbol, side, signal_source, mode, entry_price,
-           entry_time, rr, result) VALUES (?, ?, ?, ?, ?, ?, ?, 'OPEN')""",
-        (symbol, side, signal_source, mode, entry_price, datetime.now().isoformat(), rr),
+        """INSERT INTO trades (
+               symbol, side, signal_source, mode, entry_price, entry_time, rr,
+               result, target1, target2, stop_loss, contract, expiry, strike,
+               entry_premium, t1_premium, t2_premium, sl_premium, t1_alerted
+           ) VALUES (?, ?, ?, ?, ?, ?, ?, 'OPEN', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0)""",
+        (
+            symbol, side, signal_source, mode, entry_price,
+            datetime.now().isoformat(), rr,
+            target1, target2, stop_loss, contract, expiry, strike,
+            entry_premium, t1_premium, t2_premium, sl_premium,
+        ),
     )
     conn.commit()
     trade_id = cur.lastrowid
@@ -61,8 +102,7 @@ def log_exit(trade_id: int, exit_price: float, lot_size: int = 1,
         conn.close()
         raise ValueError(f"No trade with id {trade_id}")
 
-    cols = [d[0] for d in conn.execute("SELECT * FROM trades LIMIT 0").description]
-    trade = dict(zip(cols, row))
+    trade = _row_to_dict(conn, row)
 
     entry_price = trade["entry_price"]
     side = trade["side"]
@@ -92,16 +132,52 @@ def log_exit(trade_id: int, exit_price: float, lot_size: int = 1,
     }
 
 
+def open_trades_awaiting_t1() -> list[dict]:
+    """OPEN trades that have a target1 (index or premium) and not yet alerted."""
+    conn = _connect()
+    rows = conn.execute(
+        """SELECT * FROM trades
+           WHERE result = 'OPEN'
+             AND (target1 IS NOT NULL OR t1_premium IS NOT NULL)
+             AND COALESCE(t1_alerted, 0) = 0
+           ORDER BY id ASC"""
+    ).fetchall()
+    trades = [_row_to_dict(conn, r) for r in rows]
+    conn.close()
+    return trades
+
+
+def mark_t1_hit(trade_id: int, spot_at_hit: float | None = None) -> None:
+    conn = _connect()
+    conn.execute(
+        """UPDATE trades SET t1_alerted = 1, t1_hit_at = ?
+           WHERE id = ?""",
+        (datetime.now().isoformat(), trade_id),
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_trade(trade_id: int) -> dict | None:
+    conn = _connect()
+    row = conn.execute("SELECT * FROM trades WHERE id = ?", (trade_id,)).fetchone()
+    trade = _row_to_dict(conn, row) if row else None
+    conn.close()
+    return trade
+
+
 def list_trades(result_filter: str | None = None) -> list[dict]:
     """result_filter: 'WIN', 'LOSS', 'OPEN', or None for all."""
     conn = _connect()
     if result_filter:
-        rows = conn.execute("SELECT * FROM trades WHERE result = ? ORDER BY id DESC", (result_filter,)).fetchall()
+        rows = conn.execute(
+            "SELECT * FROM trades WHERE result = ? ORDER BY id DESC", (result_filter,)
+        ).fetchall()
     else:
         rows = conn.execute("SELECT * FROM trades ORDER BY id DESC").fetchall()
-    cols = [d[0] for d in conn.execute("SELECT * FROM trades LIMIT 0").description]
+    trades = [_row_to_dict(conn, r) for r in rows]
     conn.close()
-    return [dict(zip(cols, row)) for row in rows]
+    return trades
 
 
 def daily_summary(day: str | None = None) -> dict:
@@ -110,7 +186,6 @@ def daily_summary(day: str | None = None) -> dict:
     Returns total P&L in rupees, trade count, and win count - matches
     the 'P&L -₹651, 5 trades' style header shown in the reference app.
     """
-    from datetime import datetime
     from zoneinfo import ZoneInfo
     IST = ZoneInfo("Asia/Kolkata")
 

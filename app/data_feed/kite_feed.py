@@ -68,7 +68,10 @@ class KiteFeed(DataFeed):
             raise ValueError(f"Set instrument token for {symbol} in INSTRUMENT_TOKENS")
 
         to_dt = datetime.now()
-        from_dt = to_dt - timedelta(minutes=lookback_minutes + 5)
+        # Look back several calendar days so after-hours / weekend requests
+        # still land on the last trading session. A wall-clock window of only
+        # `lookback_minutes` from now is empty outside NSE hours (9:15-15:30 IST).
+        from_dt = to_dt - timedelta(days=5)
         candles = self.kite.historical_data(token, from_dt, to_dt, "minute")
 
         if not candles:
@@ -76,22 +79,21 @@ class KiteFeed(DataFeed):
                 f"Kite returned 0 candles for {symbol} (token {token}), "
                 f"from {from_dt} to {to_dt}. This is NOT a code bug - Kite "
                 f"genuinely sent back no data. Most likely causes: "
-                f"(1) market is closed right now (NSE hours: 9:15-15:30 IST, Mon-Fri), "
-                f"(2) instrument token is wrong/stale - re-run scripts/fetch_instrument_tokens.py, "
-                f"(3) access_token has expired - re-run scripts/generate_session.py."
+                f"(1) instrument token is wrong/stale - re-run "
+                f"scripts/fetch_instrument_tokens.py, "
+                f"(2) access_token has expired - re-run scripts/generate_session.py, "
+                f"(3) holiday / no sessions in the last 5 days."
             )
 
         df = pd.DataFrame(candles).rename(columns={"date": "timestamp"})
-
-        # Use the timezone Kite's own data already carries, rather than
-        # assuming server-local time - avoids IST/UTC mismatches on
-        # servers (e.g. EC2) not configured for IST.
-        tz = df["timestamp"].dt.tz
-        if tz is not None:
-            cutoff = pd.Timestamp.now(tz=tz) - pd.Timedelta(minutes=lookback_minutes)
-            df = df[df["timestamp"] >= cutoff]
-
-        return df[["timestamp", "open", "high", "low", "close", "volume"]].reset_index(drop=True)
+        # Take the most recent N market minutes by candle count, not a
+        # wall-clock cutoff relative to now (that would drop everything
+        # after 15:30 IST when the market is closed).
+        return (
+            df[["timestamp", "open", "high", "low", "close", "volume"]]
+            .tail(lookback_minutes)
+            .reset_index(drop=True)
+        )
 
     def get_spot_price(self, symbol: str) -> float:
         token = INSTRUMENT_TOKENS.get(symbol)

@@ -55,7 +55,26 @@ Useful endpoints while running:
 | `GET /` | Dashboard UI |
 | `GET /api/signal?symbol=NIFTY&mode=SCALP` | Live signal payload |
 | `GET /api/signal?symbol=NIFTY&mode=SMART_TRADE` | SMART TRADE mode |
+| `GET /api/telegram/preview` | RSTA-style Telegram message (no send) |
+| `POST /api/telegram/send` | Send to channel (`dry_run: true` without token) |
+| `GET /api/report/performance` | Backtest win/loss/timeout on recent 1m bars |
 | `GET /docs` | FastAPI Swagger UI |
+
+#### Telegram (optional)
+
+```powershell
+$env:TELEGRAM_BOT_TOKEN = "123456:ABC..."
+$env:TELEGRAM_CHAT_ID = "@testalgotradinganand"   # bot must be channel admin
+uvicorn app.api.main:app --reload --port 8000
+```
+
+Smoke test without posting:
+
+```bash
+# from repo root
+set PYTHONPATH=.
+python scripts/test_telegram_and_report.py
+```
 
 To stop the server, press `Ctrl+C` in the terminal.
 

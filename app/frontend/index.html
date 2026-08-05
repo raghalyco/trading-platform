@@ -266,6 +266,9 @@ async function takeEntry(){
   const inBtn = document.getElementById('inBtn');
   inBtn.disabled = true;
   try {
+    const rec = lastSignal.recommendation || {};
+    const pl = rec.levels_premium || {};
+    const prem = rec.premium || {};
     const res = await fetch('/api/journal/entry', {
       method: 'POST',
       headers: {'Content-Type': 'application/json'},
@@ -276,6 +279,16 @@ async function takeEntry(){
         mode: currentMode,
         entry_price: lastSignal.levels.entry,
         rr: lastSignal.levels.rr,
+        target1: lastSignal.levels.target1,
+        target2: lastSignal.levels.target2,
+        stop_loss: lastSignal.levels.stop_loss,
+        contract: rec.contract || null,
+        expiry: rec.expiry || null,
+        strike: rec.strike || null,
+        entry_premium: pl.entry ?? prem.mid ?? null,
+        t1_premium: pl.target1 ?? null,
+        t2_premium: pl.target2 ?? null,
+        sl_premium: pl.stop_loss ?? null,
       }),
     });
     const d = await res.json();
@@ -375,7 +388,22 @@ function render(d){
   document.getElementById('setupNote').textContent = d.levels.note;
 
   const premiumEl = document.getElementById('premiumNote');
-  if (d.estimated_premium !== null && d.estimated_premium !== undefined) {
+  const rec = d.recommendation;
+  if (rec) {
+    premiumEl.style.display = 'block';
+    const p = rec.premium || {};
+    const pl = rec.levels_premium || {};
+    const src = p.source === 'live' ? 'live' : 'est';
+    const actionColor = rec.action === 'TAKE' ? 'var(--ce)' : 'var(--pe)';
+    premiumEl.innerHTML = `
+      Strike: <b>${rec.contract}</b> (${rec.expiry}) &nbsp;|&nbsp;
+      Prem (${src}): <b>${p.low ?? '-'} – ${p.high ?? '-'}</b> (mid ${p.mid ?? '-'})<br>
+      Capital: <b>Rs ${rec.capital_required ?? '-'}</b> (${rec.recommended_lots}×${rec.lot_size}) &nbsp;|&nbsp;
+      Prem SL ${pl.stop_loss ?? '-'} / T1 ${pl.target1 ?? '-'} &nbsp;|&nbsp; R:R <b>1:${pl.rr ?? '-'}</b><br>
+      <span style="color:${actionColor};font-weight:700;">${rec.action}</span>
+      — ${(rec.reasons || []).slice(0,2).join('; ') || ''}
+    `;
+  } else if (d.estimated_premium !== null && d.estimated_premium !== undefined) {
     premiumEl.style.display = 'block';
     premiumEl.innerHTML = `Est. premium (ATM): <b>~Rs ${d.estimated_premium}</b> <span style="color:var(--amber)">(est - not a live quote)</span>`;
   } else {

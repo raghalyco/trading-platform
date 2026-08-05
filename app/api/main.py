@@ -21,7 +21,15 @@ from app.signal_engine.orchestrator import generate_signal
 from app.signal_engine.risk import RiskManager
 from app.signal_engine.strike_selector import pick_strike, fixed_points_levels
 from app.signal_engine.modes import current_expiry_date, current_expiry_date_iso
+from app.signal_engine.backtest import run_backtest
 from app.signal_engine import journal
+from app.signal_engine.target_monitor import check_and_alert_t1
+from app.telegram_alerts import (
+    format_signal_message,
+    format_t1_hit_message,
+    send_signal_alert,
+    telegram_configured,
+)
 
 app = FastAPI(title="Trading Signal Engine")
 
@@ -67,6 +75,16 @@ class TradeEntry(BaseModel):
     mode: str
     entry_price: float
     rr: float
+    target1: float | None = None
+    target2: float | None = None
+    stop_loss: float | None = None
+    contract: str | None = None
+    expiry: str | None = None
+    strike: int | None = None
+    entry_premium: float | None = None
+    t1_premium: float | None = None
+    t2_premium: float | None = None
+    sl_premium: float | None = None
 
 
 class TradeExit(BaseModel):
@@ -76,12 +94,94 @@ class TradeExit(BaseModel):
     points_per_lot_value: float = 1.0
 
 
+class TelegramSendRequest(BaseModel):
+    symbol: str = "NIFTY"
+    mode: str = "SCALP"
+    dry_run: bool = False
+
+
 @app.get("/api/signal")
 def get_signal(symbol: str = Query("NIFTY"), mode: str = Query("SCALP")):
     mode = mode.upper()
     if mode not in ("SCALP", "SMART_TRADE"):
         return {"error": "mode must be SCALP or SMART_TRADE"}
-    return generate_signal(feed, symbol, mode, risk_mgr)
+    try:
+        signal = generate_signal(feed, symbol, mode, risk_mgr)
+        # Side-effect: check open trades for Target 1 hits and alert once
+        try:
+            t1_events = check_and_alert_t1(feed)
+            signal["t1_alerts"] = [e for e in t1_events if e.get("hit")]
+        except Exception as e:
+            signal["t1_alerts"] = []
+            signal["t1_alert_error"] = str(e)
+        return signal
+    except Exception as e:
+        # Keep the dashboard usable and avoid flooding the terminal with
+        # ASGI stack traces when the feed has no data (e.g. bad token).
+        return {"error": str(e), "data_source": DATA_SOURCE}
+
+
+@app.get("/api/telegram/preview")
+def telegram_preview(symbol: str = Query("NIFTY"), mode: str = Query("SCALP")):
+    """Format the RSTA-style Telegram message without sending."""
+    mode = mode.upper()
+    try:
+        signal = generate_signal(feed, symbol, mode, risk_mgr)
+    except Exception as e:
+        return {"error": str(e)}
+    if signal.get("error"):
+        return signal
+    return {
+        "configured": telegram_configured(),
+        "message": format_signal_message(signal),
+        "signal": {
+            "verdict": signal.get("verdict"),
+            "score": signal.get("score"),
+            "base_score": signal.get("base_score"),
+            "max_components": signal.get("max_components"),
+            "side": signal.get("side"),
+            "mode": signal.get("mode"),
+        },
+    }
+
+
+@app.post("/api/telegram/send")
+def telegram_send(req: TelegramSendRequest):
+    """
+    Send current signal to TELEGRAM_CHAT_ID (default @testalgotradinganand).
+    Set dry_run=true to return the message without calling Telegram.
+    Requires TELEGRAM_BOT_TOKEN (+ TELEGRAM_CHAT_ID) for a live send.
+    """
+    mode = req.mode.upper()
+    try:
+        signal = generate_signal(feed, req.symbol, mode, risk_mgr)
+    except Exception as e:
+        return {"error": str(e)}
+    if signal.get("error"):
+        return signal
+    # Force dry_run when credentials missing so callers still get the text
+    dry = req.dry_run or not telegram_configured()
+    result = send_signal_alert(signal, dry_run=dry)
+    result["configured"] = telegram_configured()
+    return result
+
+
+@app.get("/api/report/performance")
+def performance_report(
+    symbol: str = Query("NIFTY"),
+    mode: str = Query("SCALP"),
+    step_minutes: int = Query(5, ge=1, le=30),
+):
+    """
+    Backtest win/loss rate on recent 1m candles from the active feed.
+    WIN = T1 before SL within hold window.
+    """
+    mode = mode.upper()
+    try:
+        df = feed.get_ohlcv_1m(symbol, lookback_minutes=375)  # ~1 full session
+        return run_backtest(df, symbol=symbol, mode=mode, step_minutes=step_minutes)
+    except Exception as e:
+        return {"error": str(e), "data_source": DATA_SOURCE}
 
 
 @app.post("/api/risk/record")
@@ -97,7 +197,10 @@ def risk_summary():
 
 @app.get("/api/status")
 def status():
-    return {"data_source": DATA_SOURCE}
+    return {
+        "data_source": DATA_SOURCE,
+        "telegram_configured": telegram_configured(),
+    }
 
 
 @app.post("/api/manual-trade")
@@ -146,8 +249,61 @@ def journal_entry(trade: TradeEntry):
     trade_id = journal.log_entry(
         trade.symbol, trade.side, trade.signal_source, trade.mode,
         trade.entry_price, trade.rr,
+        target1=trade.target1, target2=trade.target2,
+        stop_loss=trade.stop_loss, contract=trade.contract,
+        expiry=trade.expiry, strike=trade.strike,
+        entry_premium=trade.entry_premium, t1_premium=trade.t1_premium,
+        t2_premium=trade.t2_premium, sl_premium=trade.sl_premium,
     )
-    return {"trade_id": trade_id}
+    return {"trade_id": trade_id, "watching_t1": trade.target1 is not None or trade.t1_premium is not None}
+
+
+@app.post("/api/telegram/check-t1")
+def telegram_check_t1(dry_run: bool = Query(False)):
+    """Scan open trades for Target 1 hits and send alerts (once per trade)."""
+    events = check_and_alert_t1(feed, dry_run=dry_run or not telegram_configured())
+    return {
+        "configured": telegram_configured(),
+        "checked": len(events),
+        "hits": [e for e in events if e.get("hit")],
+        "events": events,
+    }
+
+
+@app.get("/api/telegram/t1-preview")
+def telegram_t1_preview(symbol: str = Query("NIFTY"), mode: str = Query("SCALP")):
+    """
+    Preview the Target-1-hit Telegram message using the current signal's
+    premium levels (simulates a hit at premium T1).
+    """
+    mode = mode.upper()
+    try:
+        signal = generate_signal(feed, symbol, mode, risk_mgr)
+    except Exception as e:
+        return {"error": str(e)}
+    rec = signal.get("recommendation") or {}
+    pl = rec.get("levels_premium") or {}
+    prem = rec.get("premium") or {}
+    entry_prem = pl.get("entry") or prem.get("mid")
+    t1_prem = pl.get("target1")
+    mock_trade = {
+        "id": "PREVIEW",
+        "symbol": symbol,
+        "side": signal.get("side"),
+        "mode": mode,
+        "strike": rec.get("strike"),
+        "expiry": rec.get("expiry"),
+        "contract": rec.get("contract"),
+        "entry_premium": entry_prem,
+        "t1_premium": t1_prem,
+        "entry_price": entry_prem,
+        "target1": t1_prem,
+    }
+    return {
+        "message": format_t1_hit_message(mock_trade),
+        "entry_message": format_signal_message(signal),
+        "mock_trade": mock_trade,
+    }
 
 
 @app.post("/api/journal/exit")
