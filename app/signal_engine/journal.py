@@ -166,21 +166,29 @@ def get_trade(trade_id: int) -> dict | None:
     return trade
 
 
-def list_trades(result_filter: str | None = None) -> list[dict]:
-    """result_filter: 'WIN', 'LOSS', 'OPEN', or None for all."""
+def list_trades(result_filter: str | None = None, symbol: str | None = None) -> list[dict]:
+    """result_filter: 'WIN', 'LOSS', 'OPEN', or None for all.
+    symbol: optional NIFTY/SENSEX filter.
+    """
     conn = _connect()
+    clauses = []
+    params: list = []
     if result_filter:
-        rows = conn.execute(
-            "SELECT * FROM trades WHERE result = ? ORDER BY id DESC", (result_filter,)
-        ).fetchall()
-    else:
-        rows = conn.execute("SELECT * FROM trades ORDER BY id DESC").fetchall()
+        clauses.append("result = ?")
+        params.append(result_filter)
+    if symbol:
+        clauses.append("symbol = ?")
+        params.append(symbol.upper())
+    where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
+    rows = conn.execute(
+        f"SELECT * FROM trades {where} ORDER BY id DESC", params
+    ).fetchall()
     trades = [_row_to_dict(conn, r) for r in rows]
     conn.close()
     return trades
 
 
-def daily_summary(day: str | None = None) -> dict:
+def daily_summary(day: str | None = None, symbol: str | None = None) -> dict:
     """
     Aggregates closed trades for a given day (default: today, IST).
     Returns total P&L in rupees, trade count, and win count - matches
@@ -191,10 +199,17 @@ def daily_summary(day: str | None = None) -> dict:
 
     day = day or datetime.now(IST).strftime("%Y-%m-%d")
     conn = _connect()
-    rows = conn.execute(
-        "SELECT pnl_rupees, result FROM trades WHERE result != 'OPEN' AND exit_time LIKE ?",
-        (f"{day}%",),
-    ).fetchall()
+    if symbol:
+        rows = conn.execute(
+            """SELECT pnl_rupees, result FROM trades
+               WHERE result != 'OPEN' AND exit_time LIKE ? AND symbol = ?""",
+            (f"{day}%", symbol.upper()),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT pnl_rupees, result FROM trades WHERE result != 'OPEN' AND exit_time LIKE ?",
+            (f"{day}%",),
+        ).fetchall()
     conn.close()
 
     total_pnl = sum(r[0] for r in rows if r[0] is not None)
@@ -203,6 +218,7 @@ def daily_summary(day: str | None = None) -> dict:
 
     return {
         "date": day,
+        "symbol": symbol.upper() if symbol else None,
         "pnl_rupees": round(total_pnl, 2),
         "trades": len(rows),
         "wins": wins,
@@ -210,8 +226,8 @@ def daily_summary(day: str | None = None) -> dict:
     }
 
 
-def export_csv() -> str:
-    trades = list_trades()
+def export_csv(symbol: str | None = None) -> str:
+    trades = list_trades(symbol=symbol)
     if not trades:
         return ""
     output = io.StringIO()

@@ -64,14 +64,58 @@ class OptionPricingConfig:
 
 
 @dataclass
+class AutoTradeConfig:
+    # When True, TAKE signals during market hours auto-open an ATM/OTM
+    # option capture (journal + optional Telegram). Does NOT place broker
+    # orders unless you wire kite.place_order separately.
+    enabled: bool = True
+    min_confidence_pct: int = 75
+    require_take: bool = True
+    default_otm_steps: int = 0  # 0=ATM
+    max_open_positions: int = 1
+    send_telegram: bool = True
+    # Skip auto-entry in these session labels
+    skip_sessions: tuple = ("MARKET CLOSED", "DEAD ZONE")
+
+
+@dataclass
 class AppConfig:
     risk: RiskConfig = field(default_factory=RiskConfig)
     scalp: ScalpConfig = field(default_factory=ScalpConfig)
     smart: SmartTradeConfig = field(default_factory=SmartTradeConfig)
     signal: SignalConfig = field(default_factory=SignalConfig)
     option_pricing: OptionPricingConfig = field(default_factory=OptionPricingConfig)
+    auto_trade: AutoTradeConfig = field(default_factory=AutoTradeConfig)
     instruments: tuple = ("NIFTY", "SENSEX")
     refresh_seconds: int = 6
 
 
 CONFIG = AppConfig()
+
+# Env overrides (set on EC2 / .env) — load .env first if present
+import os as _os
+
+def _load_dotenv() -> None:
+    _env = _os.path.join(_os.path.dirname(__file__), "..", ".env")
+    if not _os.path.isfile(_env):
+        return
+    try:
+        with open(_env, encoding="utf-8") as _f:
+            for _line in _f:
+                _line = _line.strip()
+                if not _line or _line.startswith("#") or "=" not in _line:
+                    continue
+                _k, _, _v = _line.partition("=")
+                _k, _v = _k.strip(), _v.strip().strip('"').strip("'")
+                if _k and _k not in _os.environ:
+                    _os.environ[_k] = _v
+    except OSError:
+        pass
+
+_load_dotenv()
+
+_at = _os.getenv("AUTO_TRADE", "").strip().lower()
+if _at in ("1", "true", "yes", "on"):
+    CONFIG.auto_trade.enabled = True
+elif _at in ("0", "false", "no", "off"):
+    CONFIG.auto_trade.enabled = False

@@ -95,6 +95,40 @@ class KiteFeed(DataFeed):
             .reset_index(drop=True)
         )
 
+    def get_ohlcv_history(self, symbol: str, days: int = 90,
+                          interval: str = "5minute") -> pd.DataFrame:
+        """
+        Multi-day OHLCV for backtests. Uses chunked Kite historical calls
+        (Kite caps continuous windows by interval — 5minute is suitable for
+        ~90 calendar days).
+        """
+        token = INSTRUMENT_TOKENS.get(symbol)
+        if token is None:
+            raise ValueError(f"Set instrument token for {symbol} in INSTRUMENT_TOKENS")
+
+        to_dt = datetime.now()
+        from_dt = to_dt - timedelta(days=days)
+        chunk_days = 25  # stay under Kite continuous-window limits
+        all_candles = []
+        cursor = from_dt
+        while cursor < to_dt:
+            end = min(cursor + timedelta(days=chunk_days), to_dt)
+            batch = self.kite.historical_data(token, cursor, end, interval)
+            if batch:
+                all_candles.extend(batch)
+            cursor = end + timedelta(minutes=1)
+
+        if not all_candles:
+            raise RuntimeError(
+                f"Kite returned 0 candles for {symbol} over {days}d ({interval}). "
+                f"Re-run scripts/generate_session.py if the token expired."
+            )
+
+        df = pd.DataFrame(all_candles).rename(columns={"date": "timestamp"})
+        df = df[["timestamp", "open", "high", "low", "close", "volume"]]
+        df = df.drop_duplicates(subset=["timestamp"]).sort_values("timestamp")
+        return df.reset_index(drop=True)
+
     def get_spot_price(self, symbol: str) -> float:
         token = INSTRUMENT_TOKENS.get(symbol)
         quote = self.kite.quote([token])

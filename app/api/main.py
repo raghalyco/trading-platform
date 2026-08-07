@@ -20,10 +20,18 @@ from app.data_feed.kite_feed import KiteFeed, SESSION_FILE
 from app.signal_engine.orchestrator import generate_signal
 from app.signal_engine.risk import RiskManager
 from app.signal_engine.strike_selector import pick_strike, fixed_points_levels
-from app.signal_engine.modes import current_expiry_date, current_expiry_date_iso
+from app.signal_engine.modes import (
+    current_expiry_date,
+    current_expiry_date_iso,
+    default_symbol_for_today,
+    is_expiry_today,
+)
 from app.signal_engine.backtest import run_backtest
 from app.signal_engine import journal
 from app.signal_engine.target_monitor import check_and_alert_t1
+from app.signal_engine.live_capture import capture_entry, poll_open_positions
+from app.signal_engine.auto_trade import maybe_auto_enter
+from app.config import CONFIG
 from app.telegram_alerts import (
     format_signal_message,
     format_t1_hit_message,
@@ -100,25 +108,84 @@ class TelegramSendRequest(BaseModel):
     dry_run: bool = False
 
 
+class LiveEnterRequest(BaseModel):
+    symbol: str = "NIFTY"
+    mode: str = "SCALP"
+    otm_steps: int = 0  # 0=ATM, 1=1 OTM, 2=2 OTM
+    lots: int = 1
+    send_telegram: bool = True
+
+
 @app.get("/api/signal")
-def get_signal(symbol: str = Query("NIFTY"), mode: str = Query("SCALP")):
+def get_signal(
+    symbol: str = Query("NIFTY"),
+    mode: str = Query("SCALP"),
+    otm_steps: int = Query(0, ge=0, le=5),
+):
     mode = mode.upper()
     if mode not in ("SCALP", "SMART_TRADE"):
         return {"error": "mode must be SCALP or SMART_TRADE"}
     try:
-        signal = generate_signal(feed, symbol, mode, risk_mgr)
-        # Side-effect: check open trades for Target 1 hits and alert once
+        signal = generate_signal(feed, symbol, mode, risk_mgr, otm_steps=otm_steps)
+        signal["auto_trade_enabled"] = CONFIG.auto_trade.enabled
+
+        # 1) Manage open ATM/OTM positions (auto exit on premium T1/SL)
         try:
-            t1_events = check_and_alert_t1(feed)
-            signal["t1_alerts"] = [e for e in t1_events if e.get("hit")]
+            live = poll_open_positions(feed, auto_exit=True)
+            signal["live_positions"] = live
+            signal["t1_alerts"] = [
+                p for p in live if p.get("exited") and p.get("hit") == "T1"
+            ]
         except Exception as e:
+            signal["live_positions"] = []
             signal["t1_alerts"] = []
-            signal["t1_alert_error"] = str(e)
+            signal["live_poll_error"] = str(e)
+
+        # 2) Auto-enter new ATM/OTM capture when gates pass
+        try:
+            auto = maybe_auto_enter(feed, signal, risk_mgr, otm_steps=otm_steps)
+            signal["auto_trade"] = auto
+            if auto and auto.get("ok") and not auto.get("skipped"):
+                # Refresh open list after new entry
+                signal["live_positions"] = poll_open_positions(feed, auto_exit=False)
+        except Exception as e:
+            signal["auto_trade"] = {"ok": False, "error": str(e)}
+
         return signal
     except Exception as e:
-        # Keep the dashboard usable and avoid flooding the terminal with
-        # ASGI stack traces when the feed has no data (e.g. bad token).
         return {"error": str(e), "data_source": DATA_SOURCE}
+
+
+@app.post("/api/live/enter")
+def live_enter(req: LiveEnterRequest):
+    """
+    Capture a live trade: ATM (otm_steps=0) or OTM, with live option premium
+    when Kite is available. Arms T1/SL monitoring on subsequent /api/signal polls.
+    """
+    mode = req.mode.upper()
+    try:
+        signal = generate_signal(
+            feed, req.symbol, mode, risk_mgr, otm_steps=req.otm_steps
+        )
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+    if signal.get("error"):
+        return {"ok": False, "error": signal["error"]}
+    return capture_entry(
+        feed, signal, risk_mgr,
+        otm_steps=req.otm_steps,
+        lots=req.lots,
+        send_telegram=req.send_telegram,
+    )
+
+
+@app.get("/api/live/positions")
+def live_positions(auto_exit: bool = Query(True)):
+    """Snapshot open live captures; optionally auto-exit on T1/SL."""
+    return {
+        "data_source": DATA_SOURCE,
+        "positions": poll_open_positions(feed, auto_exit=auto_exit),
+    }
 
 
 @app.get("/api/telegram/preview")
@@ -170,16 +237,35 @@ def telegram_send(req: TelegramSendRequest):
 def performance_report(
     symbol: str = Query("NIFTY"),
     mode: str = Query("SCALP"),
-    step_minutes: int = Query(5, ge=1, le=30),
+    months: int = Query(3, ge=1, le=6),
+    step_minutes: int = Query(15, ge=5, le=60),
+    mark_to_market: bool = Query(True),
+    min_score: int = Query(4, ge=0, le=9),
 ):
     """
-    Backtest win/loss rate on recent 1m candles from the active feed.
-    WIN = T1 before SL within hold window.
+    Backtest over the last N months using 5-minute candles.
+    Default mark_to_market=True so hold-end close decides WIN/LOSS instead
+    of leaving most trades as TIMEOUT (more honest for coarse bars).
     """
     mode = mode.upper()
+    days = months * 30
     try:
-        df = feed.get_ohlcv_1m(symbol, lookback_minutes=375)  # ~1 full session
-        return run_backtest(df, symbol=symbol, mode=mode, step_minutes=step_minutes)
+        getter = getattr(feed, "get_ohlcv_history", None)
+        if getter is not None:
+            df = getter(symbol, days=days, interval="5minute")
+            bar_minutes = 5
+        else:
+            df = feed.get_ohlcv_1m(symbol, lookback_minutes=min(days * 75, 2000))
+            bar_minutes = 1
+        report = run_backtest(
+            df, symbol=symbol, mode=mode,
+            step_minutes=step_minutes, bar_minutes=bar_minutes,
+            mark_to_market=mark_to_market, min_score=min_score,
+        )
+        report["months"] = months
+        report["days"] = days
+        report["data_source"] = DATA_SOURCE
+        return report
     except Exception as e:
         return {"error": str(e), "data_source": DATA_SOURCE}
 
@@ -197,9 +283,25 @@ def risk_summary():
 
 @app.get("/api/status")
 def status():
+    default_symbol = default_symbol_for_today()
     return {
         "data_source": DATA_SOURCE,
         "telegram_configured": telegram_configured(),
+        "auto_trade_enabled": CONFIG.auto_trade.enabled,
+        "auto_trade": {
+            "enabled": CONFIG.auto_trade.enabled,
+            "min_confidence_pct": CONFIG.auto_trade.min_confidence_pct,
+            "default_otm_steps": CONFIG.auto_trade.default_otm_steps,
+            "max_open_positions": CONFIG.auto_trade.max_open_positions,
+        },
+        "default_symbol": default_symbol,
+        "expiry_today": {
+            "NIFTY": is_expiry_today("NIFTY"),
+            "SENSEX": is_expiry_today("SENSEX"),
+            "active": default_symbol if (
+                is_expiry_today("NIFTY") or is_expiry_today("SENSEX")
+            ) else None,
+        },
     }
 
 
@@ -312,20 +414,30 @@ def journal_exit(trade: TradeExit):
 
 
 @app.get("/api/journal")
-def journal_list(result: str | None = Query(None)):
-    return journal.list_trades(result)
+def journal_list(
+    result: str | None = Query(None),
+    symbol: str | None = Query(None),
+):
+    return journal.list_trades(result, symbol)
 
 
 @app.get("/api/journal/export.csv")
-def journal_export():
-    csv_data = journal.export_csv()
-    return Response(content=csv_data, media_type="text/csv",
-                     headers={"Content-Disposition": "attachment; filename=trade_journal.csv"})
+def journal_export(symbol: str | None = Query(None)):
+    csv_data = journal.export_csv(symbol)
+    filename = f"trade_journal_{symbol.upper()}.csv" if symbol else "trade_journal.csv"
+    return Response(
+        content=csv_data,
+        media_type="text/csv",
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
 
 
 @app.get("/api/journal/daily-summary")
-def journal_daily_summary(day: str | None = Query(None)):
-    return journal.daily_summary(day)
+def journal_daily_summary(
+    day: str | None = Query(None),
+    symbol: str | None = Query(None),
+):
+    return journal.daily_summary(day, symbol)
 
 
 @app.post("/api/risk/reset")

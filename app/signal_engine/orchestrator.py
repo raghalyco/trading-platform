@@ -23,7 +23,8 @@ from app.config import CONFIG
 from app.data_feed.base import DataFeed
 
 
-def generate_signal(feed: DataFeed, symbol: str, mode: str, risk_mgr: RiskManager) -> dict:
+def generate_signal(feed: DataFeed, symbol: str, mode: str, risk_mgr: RiskManager,
+                    otm_steps: int | None = None) -> dict:
     """
     mode: 'SCALP' or 'SMART_TRADE'
     """
@@ -130,6 +131,7 @@ def generate_signal(feed: DataFeed, symbol: str, mode: str, risk_mgr: RiskManage
         risk_reason=risk_reason,
         regime=regime_info,
         risk_mgr=risk_mgr,
+        otm_steps=otm_steps,
     )
 
     return {

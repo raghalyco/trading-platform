@@ -43,7 +43,29 @@ class SimulatorFeed(DataFeed):
     def get_ohlcv_1m(self, symbol: str, lookback_minutes: int = 120) -> pd.DataFrame:
         if symbol not in self._cache:
             self._cache[symbol] = self._generate(symbol, max(lookback_minutes, 60))
+        # regenerate if caller asks for more history than cached
+        if len(self._cache[symbol]) < lookback_minutes:
+            self._cache[symbol] = self._generate(symbol, lookback_minutes)
         return self._cache[symbol].tail(lookback_minutes).reset_index(drop=True)
+
+    def get_ohlcv_history(self, symbol: str, days: int = 90,
+                          interval: str = "5minute") -> pd.DataFrame:
+        """Synthetic multi-day series for backtest UI when Kite is unavailable."""
+        bar_minutes = 5 if "5" in interval else (15 if "15" in interval else 1)
+        bars_per_day = max(1, 75 // bar_minutes)
+        n = max(bars_per_day * days, 200)
+        key = f"{symbol}_{interval}_{days}"
+        if key not in self._cache:
+            df = self._generate(symbol, n).copy()
+            # Spread bars across the full calendar window so from/to ≈ `days`
+            span_minutes = days * 24 * 60
+            step = max(bar_minutes, span_minutes // n)
+            now = datetime.now()
+            df["timestamp"] = [
+                now - timedelta(minutes=step * (n - i)) for i in range(n)
+            ]
+            self._cache[key] = df
+        return self._cache[key].reset_index(drop=True)
 
     def get_spot_price(self, symbol: str) -> float:
         return float(self.get_ohlcv_1m(symbol, 5)["close"].iloc[-1])

@@ -13,6 +13,27 @@ from app.config import CONFIG
 EXPIRY_WEEKDAY = {"NIFTY": 1, "SENSEX": 3}  # Tue=1, Thu=3
 
 
+def is_expiry_today(symbol: str) -> bool:
+    """True when today (IST) is that index's weekly options expiry day."""
+    weekday = EXPIRY_WEEKDAY.get(symbol)
+    if weekday is None:
+        return False
+    today = pd.Timestamp.now(tz="Asia/Kolkata")
+    return int(today.weekday()) == weekday
+
+
+def default_symbol_for_today() -> str:
+    """
+    On weekly expiry day, default to that index (NIFTY Tue / SENSEX Thu).
+    Prefer SENSEX if both somehow match; otherwise NIFTY.
+    """
+    if is_expiry_today("SENSEX"):
+        return "SENSEX"
+    if is_expiry_today("NIFTY"):
+        return "NIFTY"
+    return "NIFTY"
+
+
 def current_expiry_date(symbol: str) -> str:
     """Returns the nearest upcoming (or today's) weekly expiry as 'DDMMMYY' - for display."""
     weekday = EXPIRY_WEEKDAY.get(symbol)
