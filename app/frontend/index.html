@@ -137,7 +137,8 @@ table.trades tr.open td:first-child{box-shadow:inset 3px 0 0 var(--blue);}
 .res-neg{color:var(--red); font-weight:700;}
 .res-mute{color:var(--muted); font-weight:600;}
 .exit-mini{background:var(--red); color:#fff; border:none; border-radius:5px; padding:3px 6px; font-size:10px; font-family:var(--font); cursor:pointer;}
-.empty{text-align:center; color:var(--muted); padding:16px; font-size:12px;}
+.chart-link{color:var(--blue); font-weight:700; text-decoration:none; font-size:11px;}
+.chart-link:hover{text-decoration:underline;}
 .export-btn{display:flex; align-items:center; justify-content:center; gap:6px; width:100%; padding:9px; border-radius:9px; border:1px solid var(--line); background:var(--card); color:var(--text); font-family:var(--font); font-size:13px; font-weight:700; cursor:pointer;}
 .bt-run{width:100%; padding:9px; border:none; border-radius:9px; background:var(--blue); color:#fff; font-family:var(--font); font-weight:700; font-size:13px; cursor:pointer; margin-bottom:8px;}
 .bt-run:disabled{opacity:.5;}
@@ -251,7 +252,7 @@ table.trades tr.open td:first-child{box-shadow:inset 3px 0 0 var(--blue);}
   <div class="table-card">
     <table class="trades">
       <thead>
-        <tr><th>Date</th><th>Side</th><th>Entry</th><th>Exit</th><th>Result</th></tr>
+        <tr><th>Date</th><th>Side</th><th>Entry</th><th>Exit</th><th>Result</th><th>P&amp;L</th></tr>
       </thead>
       <tbody id="journalBody"></tbody>
     </table>
@@ -575,17 +576,17 @@ async function takeEntry(){
 function skipSignal(){}
 
 async function exitTrade(tradeId){
-  if (!lastSignal) return;
-  const pl = (lastSignal.recommendation && lastSignal.recommendation.levels_premium) || {};
-  const prem = (lastSignal.recommendation && lastSignal.recommendation.premium) || {};
-  const exitPx = pl.entry ?? prem.mid ?? lastSignal.levels.entry;
-  await fetch('/api/journal/exit', {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({
-      trade_id: tradeId, exit_price: exitPx, lot_size: 1, points_per_lot_value: 1.0,
-    }),
-  });
+  try {
+    const res = await fetch(`/api/live/exit?trade_id=${tradeId}`, { method: 'POST' });
+    const d = await res.json();
+    if (!d.ok) {
+      alert(d.error || 'Live exit failed');
+      return;
+    }
+  } catch (e) {
+    alert(String(e));
+    return;
+  }
   if (tradeId === openTradeId) {
     openTradeId = null;
     const inBtn = document.getElementById('inBtn');
@@ -656,7 +657,9 @@ async function loadJournal(){
       else {
         const cls = pnl > 0 ? 'res-pos' : pnl < 0 ? 'res-neg' : 'res-mute';
         const sign = pnl > 0 ? '+' : '';
-        resultCell = `<span class="${cls}">${sign}${Math.round(pnl*10)/10}</span>`;
+        const pts = t.pnl_points != null ? `${sign}${Math.round(t.pnl_points*10)/10}` : '';
+        const rs = t.pnl_rupees != null ? ` ₹${Math.round(t.pnl_rupees)}` : '';
+        resultCell = `<span class="${cls}">${pts}${rs}</span>`;
       }
     }
     return `<tr class="${rowClass}">
@@ -665,6 +668,7 @@ async function loadJournal(){
       <td>${entry}</td>
       <td>${exitCell}</td>
       <td>${resultCell}</td>
+      <td><a class="chart-link" href="/chart?id=${t.id}" target="_blank" rel="noopener">Chart</a></td>
     </tr>`;
   }).join('');
 

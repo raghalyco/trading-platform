@@ -149,32 +149,8 @@ class KiteFeed(DataFeed):
         Fetches the live last-traded-price of ONE specific option contract.
         expiry_date: 'YYYY-MM-DD' string matching Kite's instrument expiry field.
         side: 'CE' or 'PE'.
-
-        Uses kite.instruments("NFO") to find the exact instrument_token
-        (matched on underlying name + expiry + strike + type), then
-        kite.quote() for the live price. instruments("NFO") is a large,
-        slow call (~thousands of rows) so it's cached per-process rather
-        than re-fetched every call - restart the server if today's
-        contracts aren't showing up (e.g. right after a new expiry began).
         """
-        if self._nfo_instruments is None:
-            self._nfo_instruments = self.kite.instruments("NFO")
-
-        matches = [
-            i for i in self._nfo_instruments
-            if i["name"] == underlying
-            and str(i["expiry"]) == expiry_date
-            and int(i["strike"]) == int(strike)
-            and i["instrument_type"] == side
-        ]
-        if not matches:
-            raise ValueError(
-                f"No matching option contract found for {underlying} {expiry_date} "
-                f"{strike}{side}. Check the expiry date format matches Kite's "
-                f"instrument data (YYYY-MM-DD) and that strike/expiry are currently listed."
-            )
-
-        instrument = matches[0]
+        instrument = self._find_option_instrument(underlying, expiry_date, strike, side)
         token = instrument["instrument_token"]
         tradingsymbol = instrument["tradingsymbol"]
         quote = self.kite.quote([token])
@@ -185,3 +161,57 @@ class KiteFeed(DataFeed):
             "instrument_token": token,
             "ltp": float(ltp),
         }
+
+    def get_option_ohlcv_1m(
+        self,
+        underlying: str,
+        expiry_date: str,
+        strike: int,
+        side: str,
+        from_dt: datetime,
+        to_dt: datetime,
+    ) -> pd.DataFrame:
+        """1-minute OHLCV for a specific option between from_dt and to_dt."""
+        instrument = self._find_option_instrument(underlying, expiry_date, strike, side)
+        token = instrument["instrument_token"]
+        candles = self.kite.historical_data(token, from_dt, to_dt, "minute")
+        if not candles:
+            return pd.DataFrame(columns=["timestamp", "open", "high", "low", "close", "volume"])
+        df = pd.DataFrame(candles).rename(columns={"date": "timestamp"})
+        df = df[["timestamp", "open", "high", "low", "close", "volume"]]
+        df = df.drop_duplicates(subset=["timestamp"]).sort_values("timestamp")
+        return df.reset_index(drop=True)
+
+    def _find_option_instrument(self, underlying: str, expiry_date: str, strike: int, side: str) -> dict:
+        """Match option on NFO (NIFTY) or BFO (SENSEX)."""
+        def _load():
+            rows = []
+            for ex in ("NFO", "BFO"):
+                try:
+                    rows.extend(self.kite.instruments(ex))
+                except Exception:
+                    continue
+            return rows
+
+        if self._nfo_instruments is None:
+            self._nfo_instruments = _load()
+
+        def _match(pool):
+            return [
+                i for i in pool
+                if i.get("name") == underlying
+                and str(i.get("expiry")) == expiry_date
+                and int(i.get("strike", -1)) == int(strike)
+                and i.get("instrument_type") == side
+            ]
+
+        matches = _match(self._nfo_instruments or [])
+        if not matches:
+            self._nfo_instruments = _load()
+            matches = _match(self._nfo_instruments)
+        if not matches:
+            raise ValueError(
+                f"No matching option contract found for {underlying} {expiry_date} "
+                f"{strike}{side}."
+            )
+        return matches[0]

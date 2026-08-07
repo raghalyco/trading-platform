@@ -75,3 +75,35 @@ class SimulatorFeed(DataFeed):
 
     def is_expiry_day(self, symbol: str) -> bool:
         return datetime.now().weekday() == 1  # Tuesday, matches your NIFTY screenshot
+
+    def get_option_ohlcv_1m(
+        self,
+        underlying: str,
+        expiry_date: str,
+        strike: int,
+        side: str,
+        from_dt: datetime,
+        to_dt: datetime,
+    ) -> pd.DataFrame:
+        """Synthetic option premium path between from_dt and to_dt."""
+        minutes = max(5, int((to_dt - from_dt).total_seconds() / 60) + 5)
+        base = 100.0 + (strike % 50)
+        rng = self._rng
+        n = minutes
+        drift = rng.normal(0.05 if side == "CE" else -0.02, 0.4, n).cumsum()
+        close = np.maximum(1.0, base + drift)
+        high = close + rng.uniform(0.2, 1.5, n)
+        low = np.maximum(0.5, close - rng.uniform(0.2, 1.5, n))
+        open_ = close + rng.normal(0, 0.4, n)
+        volume = rng.integers(50, 800, n)
+        timestamps = [from_dt + timedelta(minutes=i) for i in range(n)]
+        return pd.DataFrame(
+            {
+                "timestamp": timestamps,
+                "open": open_,
+                "high": np.maximum.reduce([high, open_, close]),
+                "low": np.minimum.reduce([low, open_, close]),
+                "close": close,
+                "volume": volume,
+            }
+        )

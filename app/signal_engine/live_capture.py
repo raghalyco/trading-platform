@@ -206,13 +206,6 @@ def poll_open_positions(feed, auto_exit: bool = True) -> list[dict]:
                 lot_size=1,
                 points_per_lot_value=float(lot_size),
             )
-            # For premium P&L: long option → (exit - entry) * lot_size
-            # journal uses side sign on index; override for premium-priced exits
-            pnl_points = round(float(ltp) - float(entry_prem), 2)
-            pnl_rupees = round(pnl_points * lot_size, 2)
-            result_label = "WIN" if pnl_points > 0 else ("LOSS" if pnl_points < 0 else "BREAKEVEN")
-            # Correct journal row if side-sign made index-style P&L wrong
-            _correct_premium_pnl(trade["id"], float(ltp), pnl_points, pnl_rupees, result_label)
 
             payload = {
                 **trade,
@@ -226,31 +219,12 @@ def poll_open_positions(feed, auto_exit: bool = True) -> list[dict]:
                 journal.mark_t1_hit(trade["id"], ltp)
 
             status["exited"] = True
-            status["exit"] = {
-                **exit_info,
-                "pnl_points": pnl_points,
-                "pnl_rupees": pnl_rupees,
-                "result": result_label,
-                "reason": hit,
-            }
+            status["exit"] = {**exit_info, "reason": hit}
             status["telegram"] = tg
 
         results.append(status)
 
     return results
-
-
-def _correct_premium_pnl(trade_id: int, exit_price: float,
-                         pnl_points: float, pnl_rupees: float, result: str) -> None:
-    """Rewrite P&L using option premium math (always long premium)."""
-    conn = journal._connect()
-    conn.execute(
-        """UPDATE trades SET exit_price=?, pnl_points=?, pnl_rupees=?, result=?
-           WHERE id=?""",
-        (exit_price, pnl_points, pnl_rupees, result, trade_id),
-    )
-    conn.commit()
-    conn.close()
 
 
 def _format_sl_hit(trade: dict, ltp: float) -> str:

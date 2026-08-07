@@ -30,7 +30,7 @@ from app.signal_engine.backtest import run_backtest
 from app.signal_engine import journal
 from app.signal_engine.target_monitor import check_and_alert_t1
 from app.signal_engine.live_capture import capture_entry, poll_open_positions
-from app.signal_engine.auto_trade import maybe_auto_enter
+from app.signal_engine.trade_chart import build_trade_chart
 from app.config import CONFIG
 from app.telegram_alerts import (
     format_signal_message,
@@ -408,8 +408,74 @@ def telegram_t1_preview(symbol: str = Query("NIFTY"), mode: str = Query("SCALP")
     }
 
 
+@app.post("/api/journal/repair")
+def journal_repair(trade_id: int | None = Query(None)):
+    """Recompute premium P&L from Kite tape (T1/SL first-touch)."""
+    from app.signal_engine.repair_trades import repair_all_premium_trades, repair_premium_trade
+    if trade_id is not None:
+        return repair_premium_trade(feed, trade_id)
+    return {"ok": True, "repairs": repair_all_premium_trades(feed)}
+
+
+@app.post("/api/live/exit")
+def live_exit(trade_id: int = Query(...)):
+    """
+    Exit an open capture using live option LTP (not index / estimate).
+    Falls back to last known premium mid only if quote fails.
+    """
+    from app.signal_engine.live_capture import LOT_SIZES, _live_option_quote
+
+    trade = journal.get_trade(trade_id)
+    if not trade:
+        return {"ok": False, "error": f"Trade #{trade_id} not found"}
+    if trade.get("result") != "OPEN":
+        return {"ok": False, "error": f"Trade #{trade_id} is already {trade.get('result')}"}
+
+    symbol = trade["symbol"]
+    side = trade["side"]
+    strike = trade.get("strike")
+    lot_size = LOT_SIZES.get(symbol, 25)
+
+    ltp = None
+    quote = _live_option_quote(feed, symbol, strike, side) if strike else None
+    if quote and quote.get("ltp") is not None:
+        ltp = float(quote["ltp"])
+    if ltp is None and trade.get("entry_premium") is not None:
+        return {"ok": False, "error": "No live option LTP — cannot exit accurately"}
+
+    if ltp is None:
+        return {"ok": False, "error": "No exit price available"}
+
+    info = journal.log_exit(
+        trade_id,
+        exit_price=ltp,
+        lot_size=1,
+        points_per_lot_value=float(lot_size),
+    )
+    return {"ok": True, "exit_premium": ltp, **info}
+
+
 @app.post("/api/journal/exit")
 def journal_exit(trade: TradeExit):
+    # Prefer live premium exit path when trade has entry_premium
+    existing = journal.get_trade(trade.trade_id)
+    if existing and existing.get("entry_premium") is not None and existing.get("result") == "OPEN":
+        # Keep lot multiplier from request, but pricing is premium-based in log_exit
+        from app.signal_engine.live_capture import LOT_SIZES
+        lot = LOT_SIZES.get(existing.get("symbol") or "NIFTY", 25)
+        # If caller passed an index-looking exit (> 5x premium), reject
+        ep = float(existing["entry_premium"])
+        if trade.exit_price > ep * 5:
+            return {
+                "ok": False,
+                "error": (
+                    f"Exit {trade.exit_price} looks like index/estimate, not premium "
+                    f"(entry premium {ep}). Use POST /api/live/exit?trade_id=…"
+                ),
+            }
+        return journal.log_exit(
+            trade.trade_id, trade.exit_price, 1, float(lot),
+        )
     return journal.log_exit(trade.trade_id, trade.exit_price, trade.lot_size, trade.points_per_lot_value)
 
 
@@ -419,6 +485,17 @@ def journal_list(
     symbol: str | None = Query(None),
 ):
     return journal.list_trades(result, symbol)
+
+
+@app.get("/api/journal/{trade_id}/chart")
+def journal_trade_chart(trade_id: int):
+    """Candles + entry/exit/target/stop overlay data for the P&L chart page."""
+    return build_trade_chart(feed, trade_id)
+
+
+@app.get("/chart")
+def trade_chart_page():
+    return FileResponse(os.path.join(FRONTEND_DIR, "chart.html"))
 
 
 @app.get("/api/journal/export.csv")

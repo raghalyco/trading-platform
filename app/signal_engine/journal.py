@@ -95,7 +95,13 @@ def log_entry(symbol: str, side: str, signal_source: str, mode: str,
 
 def log_exit(trade_id: int, exit_price: float, lot_size: int = 1,
              points_per_lot_value: float = 1.0) -> dict:
-    """Called when the user clicks EXIT. Computes P&L and closes the row."""
+    """
+    Close a trade and compute P&L.
+
+    Premium captures (entry_premium set): always long the option, so
+    pnl_points = exit_premium - entry_premium (ignore CE/PE index sign).
+    Index-only trades: keep directional sign on index points.
+    """
     conn = _connect()
     row = conn.execute("SELECT * FROM trades WHERE id = ?", (trade_id,)).fetchone()
     if row is None:
@@ -103,11 +109,22 @@ def log_exit(trade_id: int, exit_price: float, lot_size: int = 1,
         raise ValueError(f"No trade with id {trade_id}")
 
     trade = _row_to_dict(conn, row)
-
-    entry_price = trade["entry_price"]
+    entry_premium = trade.get("entry_premium")
     side = trade["side"]
-    sign = 1 if side == "CE" else -1
-    pnl_points = sign * (exit_price - entry_price)
+
+    if entry_premium is not None:
+        entry = float(entry_premium)
+        exit_px = float(exit_price)
+        pnl_points = exit_px - entry
+        # Store premium exit; keep index entry_price untouched
+        exit_col_price = exit_px
+    else:
+        entry = float(trade["entry_price"])
+        exit_px = float(exit_price)
+        sign = 1 if side == "CE" else -1
+        pnl_points = sign * (exit_px - entry)
+        exit_col_price = exit_px
+
     pnl_rupees = pnl_points * lot_size * points_per_lot_value
 
     entry_dt = datetime.fromisoformat(trade["entry_time"])
@@ -118,7 +135,8 @@ def log_exit(trade_id: int, exit_price: float, lot_size: int = 1,
     conn.execute(
         """UPDATE trades SET exit_price=?, exit_time=?, hold_minutes=?,
            pnl_points=?, pnl_rupees=?, result=? WHERE id=?""",
-        (exit_price, exit_dt.isoformat(), hold_minutes, pnl_points, pnl_rupees, result, trade_id),
+        (exit_col_price, exit_dt.isoformat(), hold_minutes,
+         round(pnl_points, 2), round(pnl_rupees, 2), result, trade_id),
     )
     conn.commit()
     conn.close()
@@ -129,6 +147,7 @@ def log_exit(trade_id: int, exit_price: float, lot_size: int = 1,
         "pnl_rupees": round(pnl_rupees, 2),
         "hold_minutes": hold_minutes,
         "result": result,
+        "pricing": "premium" if entry_premium is not None else "index",
     }
 
 

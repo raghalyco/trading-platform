@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Trade chart</title>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#131722; --panel:#1e222d; --text:#d1d4dc; --muted:#787b86;
+  --green:#26a69a; --green-bg:rgba(38,166,154,.22);
+  --red:#ef5350; --red-bg:rgba(239,83,80,.22);
+  --blue:#2962ff; --line:#2a2e39;
+  --font:Inter,-apple-system,sans-serif;
+}
+*{box-sizing:border-box;}
+body{
+  margin:0; background:var(--bg); color:var(--text);
+  font-family:var(--font); min-height:100vh;
+}
+.top{
+  display:flex; justify-content:space-between; align-items:flex-start;
+  gap:12px; padding:12px 14px; border-bottom:1px solid var(--line);
+}
+.title{font-size:15px; font-weight:700; margin:0 0 4px;}
+.sub{font-size:12px; color:var(--muted);}
+.badge{
+  font-size:11px; font-weight:700; padding:4px 8px; border-radius:6px;
+  background:var(--panel); color:var(--muted);
+}
+.badge.win{color:var(--green); background:rgba(38,166,154,.15);}
+.badge.loss{color:var(--red); background:rgba(239,83,80,.15);}
+.wrap{position:relative; height:calc(100vh - 64px); width:100%;}
+canvas{display:block; width:100%; height:100%;}
+.err{padding:24px; color:var(--red);}
+.note{padding:0 14px 8px; font-size:11px; color:var(--muted);}
+</style>
+</head>
+<body>
+  <div class="top">
+    <div>
+      <h1 class="title" id="title">Loading…</h1>
+      <div class="sub" id="sub"></div>
+    </div>
+    <span class="badge" id="resultBadge">—</span>
+  </div>
+  <div class="note" id="note"></div>
+  <div class="wrap"><canvas id="c"></canvas></div>
+<script>
+const params = new URLSearchParams(location.search);
+const tradeId = params.get('id') || params.get('trade_id');
+
+function parseTs(iso){
+  if (!iso) return null;
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? null : d.getTime();
+}
+
+function fmtNum(n, dig=2){
+  if (n == null || Number.isNaN(Number(n))) return '—';
+  return Number(n).toFixed(dig);
+}
+
+async function load(){
+  if (!tradeId) {
+    document.getElementById('title').textContent = 'Missing trade id';
+    return;
+  }
+  const res = await fetch(`/api/journal/${tradeId}/chart`);
+  const d = await res.json();
+  if (!d.ok) {
+    document.getElementById('title').textContent = d.error || 'Failed';
+    return;
+  }
+  document.title = d.title + ' · chart';
+  document.getElementById('title').textContent = d.title;
+  const bits = [];
+  if (d.entry?.time_label) bits.push('Entry ' + d.entry.time_label + ' IST');
+  if (d.exit?.time_label) bits.push('Exit ' + d.exit.time_label + ' IST');
+  bits.push(d.timezone || 'Asia/Kolkata');
+  document.getElementById('sub').textContent = bits.join(' · ');
+  const badge = document.getElementById('resultBadge');
+  badge.textContent = d.result || '—';
+  badge.className = 'badge ' + (d.result === 'WIN' ? 'win' : d.result === 'LOSS' ? 'loss' : '');
+  if (d.note) document.getElementById('note').textContent = d.note + ` · candles: ${d.candle_source}`;
+  else document.getElementById('note').textContent = `Candles: ${d.candle_source}`;
+  draw(d);
+}
+
+function draw(d){
+  const canvas = document.getElementById('c');
+  const wrap = canvas.parentElement;
+  const dpr = window.devicePixelRatio || 1;
+  const W = wrap.clientWidth;
+  const H = wrap.clientHeight;
+  canvas.width = W * dpr;
+  canvas.height = H * dpr;
+  canvas.style.width = W + 'px';
+  canvas.style.height = H + 'px';
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+
+  const candles = d.candles || [];
+  if (!candles.length) {
+    ctx.fillStyle = '#ef5350';
+    ctx.font = '14px Inter';
+    ctx.fillText('No candle data', 20, 40);
+    return;
+  }
+
+  const padL = 12, padR = 64, padT = 28, padB = 48;
+  const plotW = W - padL - padR;
+  const plotH = H - padT - padB;
+
+  const entry = d.entry?.price;
+  const exitPx = d.exit?.price ?? d.target;
+  const target = d.target ?? exitPx;
+  const stop = d.stop;
+
+  let minP = Math.min(...candles.map(c => c.low), entry || Infinity, stop || Infinity, target || Infinity);
+  let maxP = Math.max(...candles.map(c => c.high), entry || 0, stop || 0, target || 0, exitPx || 0);
+  const span = Math.max(1, maxP - minP);
+  minP -= span * 0.08;
+  maxP += span * 0.12;
+
+  const t0 = parseTs(candles[0].time);
+  const t1 = parseTs(candles[candles.length-1].time);
+  const tSpan = Math.max(1, t1 - t0);
+
+  const xOf = (t) => padL + ((t - t0) / tSpan) * plotW;
+  const yOf = (p) => padT + ((maxP - p) / (maxP - minP)) * plotH;
+
+  // background
+  ctx.fillStyle = '#131722';
+  ctx.fillRect(0, 0, W, H);
+
+  const entryT = parseTs(d.entry?.time) || t0;
+  const exitT = parseTs(d.exit?.time) || t1;
+  const yEntry = yOf(entry);
+  const yTarget = yOf(target);
+  const yStop = stop != null ? yOf(stop) : yEntry + 40;
+  const xEntry = xOf(Math.max(t0, Math.min(t1, entryT)));
+  const xExit = xOf(Math.max(t0, Math.min(t1, exitT)));
+
+  // Profit / loss zones (long option premium)
+  const zoneRight = Math.max(xEntry + 40, xExit);
+  ctx.fillStyle = 'rgba(38,166,154,0.20)';
+  ctx.fillRect(xEntry, Math.min(yEntry, yTarget), zoneRight - xEntry, Math.abs(yTarget - yEntry));
+  ctx.fillStyle = 'rgba(239,83,80,0.18)';
+  ctx.fillRect(xEntry, Math.min(yEntry, yStop), zoneRight - xEntry, Math.abs(yStop - yEntry));
+
+  // Candles
+  const cw = Math.max(2, (plotW / candles.length) * 0.7);
+  candles.forEach(c => {
+    const x = xOf(parseTs(c.time));
+    const up = c.close >= c.open;
+    ctx.strokeStyle = up ? '#26a69a' : '#ef5350';
+    ctx.fillStyle = up ? '#26a69a' : '#ef5350';
+    ctx.beginPath();
+    ctx.moveTo(x, yOf(c.high));
+    ctx.lineTo(x, yOf(c.low));
+    ctx.stroke();
+    const y1 = yOf(c.open), y2 = yOf(c.close);
+    ctx.fillRect(x - cw/2, Math.min(y1,y2), cw, Math.max(1, Math.abs(y2-y1)));
+  });
+
+  // Diagonal entry -> exit
+  if (exitPx != null) {
+    ctx.setLineDash([6, 5]);
+    ctx.strokeStyle = '#26a69a';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(xEntry, yEntry);
+    ctx.lineTo(xExit, yOf(exitPx));
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // Entry / exit markers
+  ctx.strokeStyle = '#2962ff';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.arc(xEntry, yEntry, 7, 0, Math.PI*2);
+  ctx.stroke();
+  if (exitPx != null) {
+    ctx.fillStyle = '#26a69a';
+    ctx.beginPath();
+    ctx.arc(xExit, yOf(exitPx), 5, 0, Math.PI*2);
+    ctx.fill();
+  }
+
+  // Price labels on right
+  function priceTag(price, color, bg){
+    if (price == null) return;
+    const y = yOf(price);
+    ctx.fillStyle = bg;
+    ctx.fillRect(W - padR + 4, y - 9, padR - 8, 18);
+    ctx.fillStyle = color;
+    ctx.font = '600 11px Inter';
+    ctx.textAlign = 'left';
+    ctx.fillText(fmtNum(price), W - padR + 8, y + 4);
+  }
+  priceTag(target, '#26a69a', 'rgba(38,166,154,.25)');
+  priceTag(entry, '#d1d4dc', 'rgba(120,123,134,.35)');
+  priceTag(stop, '#ef5350', 'rgba(239,83,80,.25)');
+  if (exitPx != null && Math.abs(exitPx - (target||0)) > 0.2) {
+    priceTag(exitPx, '#26a69a', 'rgba(38,166,154,.35)');
+  }
+
+  // Target / Stop captions
+  ctx.textAlign = 'left';
+  ctx.font = '600 11px Inter';
+  if (target != null && entry) {
+    const pts = (target - entry);
+    const pct = entry ? (pts / entry) * 100 : 0;
+    ctx.fillStyle = '#26a69a';
+    ctx.fillText(`Target: ${fmtNum(pts)} (${fmtNum(pct)}%)`, xEntry + 8, Math.min(yEntry, yTarget) + 14);
+  }
+  if (stop != null && entry) {
+    const pts = Math.abs(entry - stop);
+    const pct = entry ? (pts / entry) * 100 : 0;
+    ctx.fillStyle = '#ef5350';
+    ctx.fillText(`Stop: ${fmtNum(pts)} (${fmtNum(pct)}%)`, xEntry + 8, Math.max(yEntry, yStop) - 8);
+  }
+
+  // Center P&L card
+  const pnl = d.pnl_points;
+  if (pnl != null) {
+    const boxW = 110, boxH = 54;
+    const bx = (xEntry + xExit) / 2 - boxW / 2;
+    const by = (yEntry + yOf(exitPx ?? target)) / 2 - boxH / 2;
+    ctx.fillStyle = pnl >= 0 ? '#1b5e20' : '#7f1d1d';
+    roundRect(ctx, bx, by, boxW, boxH, 6);
+    ctx.fill();
+    ctx.fillStyle = '#fff';
+    ctx.font = '700 14px Inter';
+    ctx.textAlign = 'center';
+    ctx.fillText((pnl >= 0 ? '+' : '') + fmtNum(pnl), bx + boxW/2, by + 20);
+    ctx.font = '500 10px Inter';
+    ctx.fillStyle = 'rgba(255,255,255,.85)';
+    const rr = d.rr != null ? `R:R ${d.rr}` : '';
+    const pct = d.pnl_pct != null ? `${d.pnl_pct}%` : '';
+    ctx.fillText([pct, rr].filter(Boolean).join(' · ') || 'P&L', bx + boxW/2, by + 38);
+  }
+
+  // Time labels under axis
+  ctx.fillStyle = '#2962ff';
+  ctx.font = '600 11px Inter';
+  ctx.textAlign = 'center';
+  if (d.entry?.time_label) {
+    ctx.fillText(d.entry.time_label, xEntry, H - 18);
+  }
+  if (d.exit?.time_label) {
+    ctx.fillText(d.exit.time_label, xExit, H - 18);
+  }
+
+  ctx.textAlign = 'left';
+}
+
+function roundRect(ctx, x, y, w, h, r){
+  ctx.beginPath();
+  ctx.moveTo(x+r, y);
+  ctx.arcTo(x+w, y, x+w, y+h, r);
+  ctx.arcTo(x+w, y+h, x, y+h, r);
+  ctx.arcTo(x, y+h, x, y, r);
+  ctx.arcTo(x, y, x+w, y, r);
+  ctx.closePath();
+}
+
+window.addEventListener('resize', () => {
+  // simple reload redraw
+  load();
+});
+load();
+</script>
+</body>
+</html>
