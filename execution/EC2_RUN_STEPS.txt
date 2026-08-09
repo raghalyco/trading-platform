@@ -1,0 +1,376 @@
+EC2 RUN STEPS FOR NIFTY ALGO TRADING BOT
+=========================================
+
+Use this as a quick server runbook when setting up or restarting the bot on EC2.
+
+
+1. SSH INTO EC2
+---------------
+
+ssh ubuntu@YOUR_EC2_PUBLIC_IP
+
+
+2. GO TO PROJECT FOLDER
+-----------------------
+
+cd /home/ubuntu/kite_bot
+
+Use your actual project path if it is different.
+
+
+3. UPDATE CODE
+--------------
+
+git pull origin main
+pip install -r requirements.txt
+
+
+3a. ONE-TIME SESSION MIGRATION (run only if you see "Exit 1" after git pull)
+-----------------------------------------------------------------------------
+
+The bot now uses trading_session_new.session instead of trading_session.session.
+If the old file exists on EC2, rename it so Telegram auth is preserved:
+
+    ls trading_session*.session 2>/dev/null
+
+If you see trading_session.session (without "_new"), run:
+
+    cp trading_session.session trading_session_new.session
+
+If you see no session file at all, skip this step and re-authenticate
+interactively (see step 8 — run python index.py in a live terminal).
+
+Verify the correct file is present:
+
+    ls -lh trading_session_new.session
+
+
+4. CREATE OR UPDATE PYTHON VIRTUAL ENV
+--------------------------------------
+
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+
+
+5. CREATE CONFIG FILE
+---------------------
+
+Create config.txt in the project folder:
+
+nano config.txt
+
+Example format:
+
+[ZERODHA]
+user_id=YOUR_ZERODHA_USER_ID
+password=YOUR_ZERODHA_PASSWORD
+totp_secret=YOUR_TOTP_SECRET
+api_key=7g6jn8cbel1pybuv
+api_secret=6gz7qpuuc93nbtleaz10g4yne2gjz8og
+
+///https://kite.trade/connect/login?v=3&api_key=7g6jn8cbel1pybuv
+
+Save and exit:
+
+Ctrl+O
+Enter
+Ctrl+X
+
+
+6. ADD OR REFRESH ACCESS TOKEN
+------------------------------
+
+Option A: Let the bot generate access_token.txt automatically.
+
+Run:
+
+source .venv/bin/activate
+python test_bot.py
+
+If Zerodha login succeeds, access_token.txt should be created or refreshed.
+
+Option B: Manually add access token.
+
+nano access_token.txt
+
+Paste only the raw access token value, with no extra labels.
+
+Save and exit:
+
+Ctrl+O
+Enter
+Ctrl+X
+
+
+7. RUN LOCAL VALIDATION
+-----------------------
+
+source .venv/bin/activate
+python test_bot.py
+
+This checks authentication, parsing, contract lookup, and target point calculation.
+
+
+8. RUN BOT MANUALLY
+-------------------
+
+source .venv/bin/activate
+python -u index.py
+
+Watch logs in another SSH window:
+
+tail -f bot_output.log
+
+
+9. OPTIONAL: RUN WITH LOG-ONLY MODE
+-----------------------------------
+
+Use this when you want to verify Telegram parsing without placing trades:
+
+LOG_ONLY_MODE=true python -u index.py
+
+
+10. SYSTEMD SERVICE SETUP
+-------------------------
+
+Create service file:
+
+sudo nano /etc/systemd/system/nifty-bot.service
+
+Example:
+
+[Unit]
+Description=Nifty Algo Trading Bot
+After=network.target
+
+[Service]
+Type=simple
+User=ubuntu
+WorkingDirectory=/home/ubuntu/kite_bot
+ExecStart=/home/ubuntu/kite_bot/.venv/bin/python -u index.py
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target
+
+Save and exit.
+
+Reload systemd:
+
+sudo systemctl daemon-reload
+
+Enable service:
+
+sudo systemctl enable nifty-bot
+
+Start service:
+
+sudo systemctl start nifty-bot
+
+Check status:
+
+sudo systemctl status nifty-bot
+
+Watch live logs:
+
+journalctl -u nifty-bot -f
+
+
+11. RESTART BOT AFTER CODE OR TOKEN CHANGE
+------------------------------------------
+
+sudo systemctl restart nifty-bot
+
+
+12. STOP BOT
+------------
+
+sudo systemctl stop nifty-bot
+
+
+13. IMPORTANT RUNTIME FILES
+---------------------------
+
+Keep these files on EC2. Do not delete them unless intentionally resetting auth/session state.
+
+config.txt
+access_token.txt
+trading_session_new.session
+pending_trades.json
+
+Notes:
+
+- access_token.txt is used by kite_auth.py.
+- If access_token.txt expires or is invalid, test_bot.py or index.py can try to refresh it using config.txt.
+- trading_session_new.session is the Telegram login session (renamed from trading_session.session).
+- pending_trades.json stores untriggered pending trades for restart recovery.
+- Do not run the same Telegram session from multiple machines at the same time.
+
+
+14. DAILY START STEPS (DO EVERY TRADING MORNING BEFORE 9 AM)
+-------------------------------------------------------------
+
+Step 1 — SSH into EC2:
+
+    ssh ubuntu@YOUR_EC2_PUBLIC_IP
+
+Step 2 — Go to project folder and activate venv:
+
+    cd /home/ubuntu/kite_bot
+    source venv/bin/activate
+
+Step 3 — Refresh Zerodha access token (REQUIRED every day, token expires at 6 AM IST):
+
+    a) Get the login URL:
+       python -c "from kite_auth import get_manual_login_url; print(get_manual_login_url())"
+
+    b) Open the printed URL in your browser and complete Zerodha login.
+
+    c) Copy the request_token from the browser redirect URL:
+       URL looks like: https://yourapp.com/?request_token=XXXXXXXX&action=login&status=success
+
+    d) Pass it to kite_auth.py (you can paste the full URL or just the token):
+       python kite_auth.py "PASTE_REQUEST_TOKEN_OR_FULL_REDIRECT_URL_HERE"
+
+    You should see: "Access token updated successfully."
+
+Step 4 — Stop the old bot process (if running):
+
+    kill $(pgrep -f index.py)
+
+    Verify it stopped:
+    pgrep -a -f index.py   (should return nothing)
+
+Step 5 — Start the bot in background:
+
+    nohup python index.py > bot_output.log 2>&1 &
+    echo $! > bot.pid
+
+Step 6 — Verify bot started correctly:
+
+    tail -f bot_output.log
+
+    You should see within a few seconds:
+    - "Starting bot with source chat Option Playbook by SK..."
+    - "KiteTicker connected: ..."
+    - "Resolved source chat Option Playbook by SK to entity..."
+
+    If all three lines appear, the bot is live. Press Ctrl+C to exit the log view.
+
+
+15. STOPPING THE BOT
+--------------------
+
+    kill $(cat bot.pid)
+    # or
+    kill $(pgrep -f index.py)
+
+
+16. CHECKING IF BOT IS RUNNING
+-------------------------------
+
+    pgrep -a -f index.py
+
+    One line = bot is running.
+    No output = bot is not running.
+
+
+17. NOTES
+---------
+
+- Zerodha access token MUST be refreshed every trading day morning (expires at 6 AM IST daily).
+- Do NOT run multiple instances of index.py — even with the WAL fix a second instance will conflict.
+- Do NOT delete trading_session_new.session — it stores your Telegram login. Deleting it requires re-authentication with phone + OTP.
+- The bot uses WAL journal mode and a 30-second busy timeout on the session DB. Transient lock errors are retried automatically; a persistent "database is locked" means a second instance is running.
+- Logs go to bot_output.log. Messages outside 9:00–15:30 IST or on weekends are logged but not traded.
+- The bot auto-recovers pending trades from pending_trades.json on restart.
+- If the bot exits immediately with code 1 after a git pull, check: (a) trading_session_new.session exists (see step 3a), (b) access_token.txt is fresh, (c) tail bot_output.log for the actual error.
+
+
+Use below steps to kill existing bot and run network
+
+Go to cd folder path 
+
+step 1 - source venv/bin/activate
+
+type python
+
+run below cmd
+
+import configparser
+from kiteconnect import KiteConnect
+
+# Read configuration settings
+config = configparser.ConfigParser()
+config.read("config.txt")
+z = config["ZERODHA"]
+
+# Initialize configuration and request exchange
+kite = KiteConnect(api_key=z["api_key"].strip())
+data = kite.generate_session("yupRKgBoFOXxEadFfPdrQXSS9GPpciUW", api_secret=z["api_secret"].strip())
+
+# Save the live access token to disk
+with open("access_token.txt", "w") as f:
+    f.write(data["access_token"])
+
+print("🚀 Access token updated successfully!")
+
+exit() or ctrl+D
+
+pkill -f index.py
+git fetch --all
+git reset --hard origin/main
+pip install -r requirements.txt
+
+# One-time: migrate session file if needed (see step 3a)
+# cp trading_session.session trading_session_new.session
+
+nohup python index.py > bot_output.log 2>&1 &
+tail -f bot_output.log
+
+
+Run below steps to re-authenticate Telegram (only when session file is missing or corrupted)
+python index.py      # run in a live terminal so OTP prompt is visible
+# Enter phone number and OTP when prompted, then Ctrl+C after "Resolved source chat" line appears
+# Then start in background: nohup python index.py > bot_output.log 2>&1 &
+
+
+https://ap-south-1.console.aws.amazon.com/ec2-instance-connect/ssh?region=ap-south-1&connType=standard&instanceId=i-08b2716290a45a0a0&osUser=ubuntu&sshPort=22&addressFamily=ipv4
+
+
+NOTE: "database is locked" errors are now handled automatically by the bot (WAL mode + 30-second
+busy timeout). You should no longer need to rename session files for lock errors. If you still
+see persistent lock errors it means two instances of index.py are running — kill all of them:
+
+    pkill -f index.py
+    sleep 2
+    pgrep -a -f index.py   # must return nothing
+    nohup python index.py > bot_output.log 2>&1 &
+
+
+Daily task
+python kite_auth.py "<request_token_from_zerodha_login>"
+kill $(pgrep -f index.py)
+nohup python index.py > bot_output.log 2>&1 &
+
+
+sudo systemctl stop kitebot
+sudo systemctl status kitebot
+
+
+
+sudo systemctl stop kitebot
+
+cd ~/kite_bot
+
+git fetch origin
+
+git pull origin main
+
+sudo systemctl restart kitebot
+
+sudo systemctl status kitebot
+
+sudo journalctl -u kitebot -f
