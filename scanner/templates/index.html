@@ -82,6 +82,7 @@
   .pos { color: var(--green); } .neg { color: var(--red); }
   .pill { font-size: 11px; padding: 3px 8px; border-radius: 6px; }
   .pill.target_hit { background: var(--green-bg); color: var(--green); }
+  .pill.stop_hit { background: var(--red-bg); color: var(--red); }
   .pill.time_stop { background: var(--surface-2); color: var(--text-secondary); }
   .pill.stop_loss { background: var(--red-bg); color: var(--red); }
   .empty { color: var(--text-muted); font-size: 13px; padding: 2rem 0; text-align: center; }
@@ -118,67 +119,13 @@
   <div class="nav-item" data-tab="trending">Trending Stocks by Sector</div>
   <div class="nav-item" data-tab="stockday">Stock for day</div>
   <div class="nav-item sub" data-tab="stockday-bt">↳ Backtest (3M)</div>
-  <div class="nav-item" data-tab="main">Momentum Breakout</div>
-  <div class="nav-item" data-tab="ema10">EMA10 Pullback</div>
-  <div class="nav-item" data-tab="nday">N-Day Breakout</div>
+  <div class="nav-item" data-tab="support">Previous Support Bounce</div>
+  <div class="nav-item" data-tab="swing">Swing Trade (Weekly)</div>
   <div class="nav-item" data-tab="intraday">Intraday Monitor</div>
   <div class="nav-item" data-tab="backtest">Performance / Backtest</div>
 </div>
 
 <div class="main">
-
-  <!-- ============ TAB: 13-rule breakout scanner ============ -->
-  <div class="tab-page" id="page-main">
-    <div class="topbar">
-      <div>
-        <h1>Momentum Breakout Scanner</h1>
-        <p class="meta" id="scanMeta">Not run yet</p>
-      </div>
-      <button class="primary" id="scanBtn" onclick="runScan()">Run Scan</button>
-    </div>
-    <div id="breadthWrap"></div>
-    <div class="card">
-      <div id="scanTableWrap"><div class="empty">Click "Run Scan" to see today's matching stocks.</div></div>
-    </div>
-  </div>
-
-  <!-- ============ TAB: EMA10 pullback scanner ============ -->
-  <div class="tab-page" id="page-ema10">
-    <div class="topbar">
-      <div>
-        <h1>EMA10 Pullback Scanner</h1>
-        <p class="meta" id="ema10Meta">Close above EMA(10), within {{ ema10_max_distance }}% of it · not run yet</p>
-      </div>
-      <button class="primary" id="ema10Btn" onclick="runEma10Scan()">Run Scan</button>
-    </div>
-    <div id="ema10BreadthWrap"></div>
-    <div class="card">
-      <div id="ema10TableWrap"><div class="empty">Click "Run Scan" to see today's matching stocks.</div></div>
-    </div>
-  </div>
-
-  <!-- ============ TAB: N-Day BO (near N-day high/low) ============ -->
-  <div class="tab-page" id="page-nday">
-    <div class="topbar">
-      <div>
-        <h1>N-Day Breakout</h1>
-        <p class="meta" id="ndayMeta">Stocks within {{ nday_proximity }}% of their N-day high (bullish) or low (bearish) · not run yet</p>
-      </div>
-      <button class="primary" id="ndayBtn" onclick="runNdayScan()">Run Scan</button>
-    </div>
-    <div class="nday-grid">
-      <div>
-        <p class="section-title">10 Day BO</p>
-        <div id="nday10BreadthWrap"></div>
-        <div class="card"><div id="nday10TableWrap"><div class="empty">Click "Run Scan" to see today's list.</div></div></div>
-      </div>
-      <div>
-        <p class="section-title">50 Day BO</p>
-        <div id="nday50BreadthWrap"></div>
-        <div class="card"><div id="nday50TableWrap"><div class="empty">Click "Run Scan" to see today's list.</div></div></div>
-      </div>
-    </div>
-  </div>
 
   <!-- ============ TAB: Sector Analysis ============ -->
   <div class="tab-page active" id="page-sector">
@@ -213,20 +160,20 @@
     <div class="topbar">
       <div>
         <h1>Stock for day</h1>
-        <p class="meta" id="stockdayMeta">Smart Money structure · BUY-eligible only · not run yet</p>
+        <p class="meta" id="stockdayMeta">Smart Money BUY / SELL · Pine structure · loading…</p>
       </div>
       <div class="topbar-actions">
         <select class="universe-select" id="stockdayUniverse" title="Index universe">
-          <option value="nifty50">Nifty 50</option>
-          <option value="nifty100" selected>Nifty 100</option>
-          <option value="nifty200">Nifty 200</option>
-          <option value="nifty500">Nifty 500</option>
+          <option value="nifty50" {% if stock_for_day_universe == 'nifty50' %}selected{% endif %}>Nifty 50</option>
+          <option value="nifty100" {% if stock_for_day_universe == 'nifty100' %}selected{% endif %}>Nifty 100</option>
+          <option value="nifty200" {% if stock_for_day_universe == 'nifty200' %}selected{% endif %}>Nifty 200</option>
+          <option value="nifty500" {% if stock_for_day_universe == 'nifty500' %}selected{% endif %}>Nifty 500</option>
         </select>
         <button class="primary" id="stockdayBtn" onclick="runStockForDay(true)">Run Scan</button>
       </div>
     </div>
     <div class="card">
-      <div id="stockdayTableWrap"><div class="empty">Pick Nifty 50/100/200/500, then click "Run Scan" for BUY-eligible Smart Money setups.</div></div>
+      <div id="stockdayTableWrap"><div class="loading">Loading startup cache…</div></div>
     </div>
   </div>
 
@@ -239,16 +186,60 @@
       </div>
       <div class="topbar-actions">
         <select class="universe-select" id="stockdayBtUniverse" title="Index universe">
-          <option value="nifty50">Nifty 50</option>
-          <option value="nifty100" selected>Nifty 100</option>
-          <option value="nifty200">Nifty 200</option>
-          <option value="nifty500">Nifty 500</option>
+          <option value="nifty50" {% if stock_for_day_universe == 'nifty50' %}selected{% endif %}>Nifty 50</option>
+          <option value="nifty100" {% if stock_for_day_universe == 'nifty100' %}selected{% endif %}>Nifty 100</option>
+          <option value="nifty200" {% if stock_for_day_universe == 'nifty200' %}selected{% endif %}>Nifty 200</option>
+          <option value="nifty500" {% if stock_for_day_universe == 'nifty500' %}selected{% endif %}>Nifty 500</option>
         </select>
         <button class="secondary" id="stockdayBtBtn" onclick="runStockdayBacktest()">Run Backtest</button>
       </div>
     </div>
     <div class="card">
       <div id="stockdayBtWrap"><div class="empty">Pick an index universe, then click "Run Backtest" for the last 3 months.</div></div>
+    </div>
+  </div>
+
+  <!-- ============ TAB: Previous Support Bounce ============ -->
+  <div class="tab-page" id="page-support">
+    <div class="topbar">
+      <div>
+        <h1>Previous Support Bounce</h1>
+        <p class="meta" id="supportMeta">Ascending trendline / multi-touch horizontal support · Smart Money buy zone · loading…</p>
+      </div>
+      <div class="topbar-actions">
+        <select class="universe-select" id="supportUniverse" title="Index universe">
+          <option value="nifty50" {% if support_bounce_universe == 'nifty50' %}selected{% endif %}>Nifty 50</option>
+          <option value="nifty100" {% if support_bounce_universe == 'nifty100' %}selected{% endif %}>Nifty 100</option>
+          <option value="nifty200" {% if support_bounce_universe == 'nifty200' %}selected{% endif %}>Nifty 200</option>
+          <option value="nifty500" {% if support_bounce_universe == 'nifty500' %}selected{% endif %}>Nifty 500</option>
+        </select>
+        <button class="primary" id="supportBtn" onclick="runSupportBounce(true)">Run Scan</button>
+      </div>
+    </div>
+    <div class="card">
+      <div id="supportTableWrap"><div class="loading">Loading startup cache…</div></div>
+    </div>
+  </div>
+
+  <!-- ============ TAB: Swing Trade (Weekly) ============ -->
+  <div class="tab-page" id="page-swing">
+    <div class="topbar">
+      <div>
+        <h1>Swing Trade (Weekly)</h1>
+        <p class="meta" id="swingMeta">Weekly resistance breakout (trendline / box) + volume spike · loading…</p>
+      </div>
+      <div class="topbar-actions">
+        <select class="universe-select" id="swingUniverse" title="Index universe">
+          <option value="nifty50" {% if swing_trade_universe == 'nifty50' %}selected{% endif %}>Nifty 50</option>
+          <option value="nifty100" {% if swing_trade_universe == 'nifty100' %}selected{% endif %}>Nifty 100</option>
+          <option value="nifty200" {% if swing_trade_universe == 'nifty200' %}selected{% endif %}>Nifty 200</option>
+          <option value="nifty500" {% if swing_trade_universe == 'nifty500' %}selected{% endif %}>Nifty 500</option>
+        </select>
+        <button class="primary" id="swingBtn" onclick="runSwingTrade(true)">Run Scan</button>
+      </div>
+    </div>
+    <div class="card">
+      <div id="swingTableWrap"><div class="loading">Loading startup cache…</div></div>
     </div>
   </div>
 
@@ -337,6 +328,30 @@ function genericSort(rows, key, dir) {
   });
 }
 
+function patternChartHref(symbol) {
+  return '/support-chart/' + encodeURIComponent(symbol);
+}
+
+function patternLabel(row) {
+  return row.pattern || row.support_type || '—';
+}
+
+function smSignalPill(row) {
+  const sig = row.smart_money_signal || row.signal || 'NEUTRAL';
+  if (sig === 'BUY') return '<span class="pill target_hit">BUY</span>';
+  if (sig === 'SELL') return '<span class="pill stop_hit">SELL</span>';
+  if (sig === 'READY') {
+    const side = row.smart_money_side ? ` ${row.smart_money_side}` : '';
+    return `<span class="pill" style="background:#3a2e14;color:#f0b429">READY${side}</span>`;
+  }
+  return '<span class="pill" style="background:var(--surface-2);color:var(--text-muted)">NEUTRAL</span>';
+}
+
+function symbolWithChart(row, extraHtml = '') {
+  const href = patternChartHref(row.symbol);
+  return `<a href="${href}" target="_blank" rel="noopener" style="color:var(--accent);font-weight:600">${row.symbol}</a>${extraHtml}`;
+}
+
 function updateMarketStatus(marketOpen) {
   const pill = document.getElementById('marketStatus');
   const text = document.getElementById('marketStatusText');
@@ -363,212 +378,6 @@ function switchTab(tab) {
 document.querySelectorAll('.nav-item').forEach(el => {
   el.addEventListener('click', () => switchTab(el.dataset.tab));
 });
-
-// ---------------- 13-rule breakout scanner ----------------
-let scanData = null;
-let scanSortKey = 'rsi14', scanSortDir = -1;
-
-async function runScan() {
-  const btn = document.getElementById('scanBtn');
-  btn.disabled = true; btn.textContent = 'Scanning...';
-  document.getElementById('scanTableWrap').innerHTML = '<div class="loading">Running scanner across the universe — this can take a bit on a cold cache...</div>';
-  try {
-    scanData = await fetchJson('/api/scan');
-    updateMarketStatus(scanData.market_open);
-    document.getElementById('scanMeta').textContent =
-      `${scanData.num_signals} signal(s) from ${scanData.universe_size} scanned · generated ${new Date(scanData.generated_at).toLocaleTimeString()}`;
-    renderBreadth('breadthWrap', scanData);
-    renderScanTable();
-  } catch (e) {
-    document.getElementById('scanTableWrap').innerHTML = '<div class="empty">Scan failed: ' + (e.message || e) + '</div>';
-  }
-  btn.disabled = false; btn.textContent = 'Run Scan';
-}
-
-function renderBreadth(elId, data) {
-  const total = data.up + data.down;
-  const upPct = total ? (data.up / total * 100) : 0;
-  const downPct = total ? (data.down / total * 100) : 0;
-  document.getElementById(elId).innerHTML = total ? `
-    <div class="breadth-bar"><div class="up" style="width:${upPct}%"></div><div class="down" style="width:${downPct}%"></div></div>
-    <div class="breadth-label">
-      <span><span class="up-dot">●</span> ${data.up} stocks up</span>
-      <span><span class="down-dot">●</span> ${data.down} stocks down</span>
-    </div>` : '';
-}
-
-function setScanSort(key) {
-  if (scanSortKey === key) { scanSortDir *= -1; } else { scanSortKey = key; scanSortDir = -1; }
-  renderScanTable();
-}
-window.setScanSort = setScanSort;
-
-function renderScanTable() {
-  if (!scanData || !scanData.results.length) {
-    document.getElementById('scanTableWrap').innerHTML = '<div class="empty">No stocks pass all 13 conditions right now.</div>';
-    return;
-  }
-  const rows = genericSort(scanData.results, scanSortKey, scanSortDir);
-  const cols = [
-    ['symbol', 'Symbol'], ['ltp', 'LTP'], ['pct_change', '% Chg'], ['rsi14', 'RSI(14)'],
-    ['adx14', 'ADX(14)'], ['weekly_rsi14', 'Weekly RSI'], ['vol_vs_avg', 'Vol vs Avg'],
-    ['distance_from_breakout_pct', 'Dist. from BO'], ['signal_date', 'Signal date'],
-  ];
-  const numCols = new Set(['ltp', 'pct_change', 'rsi14', 'adx14', 'weekly_rsi14', 'vol_vs_avg', 'distance_from_breakout_pct']);
-
-  let html = '<table><thead><tr>' + cols.map(([key, label]) =>
-    `<th class="${numCols.has(key) ? 'num' : ''}" onclick="setScanSort('${key}')" style="cursor:pointer">${label}${sortIndicator(scanSortKey, key, scanSortDir)}</th>`
-  ).join('') + '</tr></thead><tbody>';
-
-  for (const h of rows) {
-    const initials = h.symbol.slice(0, 2);
-    const pctCls = (h.pct_change || 0) >= 0 ? 'pos' : 'neg';
-    html += `<tr>
-      <td><span class="sym-badge">${initials}</span>${h.symbol}</td>
-      <td class="num">₹${h.ltp.toFixed(2)}</td>
-      <td class="num ${pctCls}">${fmtPct(h.pct_change)}</td>
-      <td class="num">${h.rsi14}</td>
-      <td class="num">${h.adx14}</td>
-      <td class="num">${h.weekly_rsi14}</td>
-      <td class="num">${h.vol_vs_avg ?? '—'}x</td>
-      <td class="num">${fmtPct(h.distance_from_breakout_pct)}</td>
-      <td>${h.signal_date}</td>
-    </tr>`;
-  }
-  html += '</tbody></table>';
-  document.getElementById('scanTableWrap').innerHTML = html;
-}
-
-// ---------------- EMA10 pullback scanner ----------------
-let ema10Data = null;
-let ema10SortKey = 'distance_from_ema10_pct', ema10SortDir = 1;
-
-async function runEma10Scan() {
-  const btn = document.getElementById('ema10Btn');
-  btn.disabled = true; btn.textContent = 'Scanning...';
-  document.getElementById('ema10TableWrap').innerHTML = '<div class="loading">Running scanner across the universe...</div>';
-  try {
-    ema10Data = await fetchJson('/api/scan_ema10');
-    updateMarketStatus(ema10Data.market_open);
-    document.getElementById('ema10Meta').textContent =
-      `${ema10Data.num_signals} signal(s) from ${ema10Data.universe_size} scanned · generated ${new Date(ema10Data.generated_at).toLocaleTimeString()}`;
-    renderBreadth('ema10BreadthWrap', ema10Data);
-    renderEma10Table();
-  } catch (e) {
-    document.getElementById('ema10TableWrap').innerHTML = '<div class="empty">Scan failed: ' + (e.message || e) + '</div>';
-  }
-  btn.disabled = false; btn.textContent = 'Run Scan';
-}
-
-function setEma10Sort(key) {
-  if (ema10SortKey === key) { ema10SortDir *= -1; } else { ema10SortKey = key; ema10SortDir = -1; }
-  renderEma10Table();
-}
-window.setEma10Sort = setEma10Sort;
-
-function renderEma10Table() {
-  if (!ema10Data || !ema10Data.results.length) {
-    document.getElementById('ema10TableWrap').innerHTML = '<div class="empty">No stocks pass this filter right now.</div>';
-    return;
-  }
-  const rows = genericSort(ema10Data.results, ema10SortKey, ema10SortDir);
-  const cols = [
-    ['symbol', 'Symbol'], ['ltp', 'LTP'], ['pct_change', '% Chg'], ['ema10', 'EMA(10)'],
-    ['distance_from_ema10_pct', 'Dist. from EMA10'], ['signal_date', 'Signal date'],
-  ];
-  const numCols = new Set(['ltp', 'pct_change', 'ema10', 'distance_from_ema10_pct']);
-
-  let html = '<table><thead><tr>' + cols.map(([key, label]) =>
-    `<th class="${numCols.has(key) ? 'num' : ''}" onclick="setEma10Sort('${key}')" style="cursor:pointer">${label}${sortIndicator(ema10SortKey, key, ema10SortDir)}</th>`
-  ).join('') + '</tr></thead><tbody>';
-
-  for (const h of rows) {
-    const initials = h.symbol.slice(0, 2);
-    const pctCls = (h.pct_change || 0) >= 0 ? 'pos' : 'neg';
-    html += `<tr>
-      <td><span class="sym-badge">${initials}</span>${h.symbol}</td>
-      <td class="num">₹${h.ltp.toFixed(2)}</td>
-      <td class="num ${pctCls}">${fmtPct(h.pct_change)}</td>
-      <td class="num">₹${h.ema10.toFixed(2)}</td>
-      <td class="num pos">${fmtPct(h.distance_from_ema10_pct)}</td>
-      <td>${h.signal_date}</td>
-    </tr>`;
-  }
-  html += '</tbody></table>';
-  document.getElementById('ema10TableWrap').innerHTML = html;
-}
-
-// ---------------- N-Day BO (near N-day high/low) ----------------
-let nday10Data = null, nday50Data = null;
-let nday10SortKey = 'signal_date', nday10SortDir = -1;
-let nday50SortKey = 'signal_date', nday50SortDir = -1;
-
-async function runNdayScan() {
-  const btn = document.getElementById('ndayBtn');
-  btn.disabled = true; btn.textContent = 'Scanning...';
-  document.getElementById('nday10TableWrap').innerHTML = '<div class="loading">Scanning...</div>';
-  document.getElementById('nday50TableWrap').innerHTML = '<div class="loading">Scanning...</div>';
-  try {
-    [nday10Data, nday50Data] = await Promise.all([
-      fetchJson('/api/scan_nday?lookback=10'),
-      fetchJson('/api/scan_nday?lookback=50'),
-    ]);
-    updateMarketStatus(nday10Data.market_open);
-    document.getElementById('ndayMeta').textContent =
-      `10D: ${nday10Data.num_signals} · 50D: ${nday50Data.num_signals} signal(s) · generated ${new Date(nday10Data.generated_at).toLocaleTimeString()}`;
-    renderBreadth('nday10BreadthWrap', nday10Data);
-    renderBreadth('nday50BreadthWrap', nday50Data);
-    renderNdayTable('nday10TableWrap', nday10Data, nday10SortKey, nday10SortDir, 'setNday10Sort');
-    renderNdayTable('nday50TableWrap', nday50Data, nday50SortKey, nday50SortDir, 'setNday50Sort');
-  } catch (e) {
-    document.getElementById('nday10TableWrap').innerHTML = '<div class="empty">Scan failed: ' + (e.message || e) + '</div>';
-    document.getElementById('nday50TableWrap').innerHTML = '';
-  }
-  btn.disabled = false; btn.textContent = 'Run Scan';
-}
-
-function setNday10Sort(key) {
-  if (nday10SortKey === key) { nday10SortDir *= -1; } else { nday10SortKey = key; nday10SortDir = -1; }
-  renderNdayTable('nday10TableWrap', nday10Data, nday10SortKey, nday10SortDir, 'setNday10Sort');
-}
-function setNday50Sort(key) {
-  if (nday50SortKey === key) { nday50SortDir *= -1; } else { nday50SortKey = key; nday50SortDir = -1; }
-  renderNdayTable('nday50TableWrap', nday50Data, nday50SortKey, nday50SortDir, 'setNday50Sort');
-}
-window.setNday10Sort = setNday10Sort;
-window.setNday50Sort = setNday50Sort;
-
-function renderNdayTable(elId, data, sortKey, sortDir, sortFnName) {
-  if (!data || !data.results.length) {
-    document.getElementById(elId).innerHTML = '<div class="empty">No stocks near an N-day high or low right now.</div>';
-    return;
-  }
-  const rows = genericSort(data.results, sortKey, sortDir);
-  const cols = [
-    ['symbol', 'Symbol'], ['ltp', 'LTP'], ['pct_change', '% Chg'],
-    ['distance_pct', 'Distance'], ['direction', 'Signal'],
-  ];
-  const numCols = new Set(['ltp', 'pct_change', 'distance_pct']);
-
-  let html = '<table><thead><tr>' + cols.map(([key, label]) =>
-    `<th class="${numCols.has(key) ? 'num' : ''}" onclick="${sortFnName}('${key}')" style="cursor:pointer">${label}${sortIndicator(sortKey, key, sortDir)}</th>`
-  ).join('') + '</tr></thead><tbody>';
-
-  for (const h of rows) {
-    const initials = h.symbol.slice(0, 2);
-    const pctCls = (h.pct_change || 0) >= 0 ? 'pos' : 'neg';
-    const isUp = h.direction === 'near_high';
-    html += `<tr>
-      <td><span class="sym-badge">${initials}</span>${h.symbol}</td>
-      <td class="num">₹${h.ltp.toFixed(2)}</td>
-      <td class="num ${pctCls}">${fmtPct(h.pct_change)}</td>
-      <td class="num">${h.distance_pct}%</td>
-      <td class="${isUp ? 'dir-up' : 'dir-down'}">${isUp ? '↗ Near high' : '↘ Near low'}</td>
-    </tr>`;
-  }
-  html += '</tbody></table>';
-  document.getElementById(elId).innerHTML = html;
-}
 
 // ---------------- Sector Analysis ----------------
 let sectorData = null;
@@ -671,7 +480,7 @@ function renderTrendingCards(sectors) {
       const chg = s.pct_change_1d;
       const cls = (chg || 0) >= 0 ? 'pos' : 'neg';
       html += `<div class="stock-row">
-        <span class="sym">${s.symbol}</span>
+        <span class="sym">${symbolWithChart(s)}</span>
         <span style="color:var(--text-secondary)">₹${s.close.toFixed(2)}</span>
         <span class="chg ${cls}">${fmtPct(chg)} (1D)</span>
       </div>`;
@@ -714,7 +523,7 @@ async function runStockForDay(refresh = true) {
     const src = stockdayData.cached ? 'cached' : 'fresh scan';
     const label = stockdayData.universe_label || stockdayData.universe_mode || mode;
     document.getElementById('stockdayMeta').textContent =
-      `${stockdayData.num_buys} BUY-eligible · ${label} · scanned ${stockdayData.scanned}/${stockdayData.universe_size} · ${src} · ${stamp}`;
+      `${stockdayData.num_buys || 0} BUY · ${stockdayData.num_sells || 0} SELL · ${label} · scanned ${stockdayData.scanned}/${stockdayData.universe_size} · ${src} · ${stamp}`;
     updateMarketStatus(stockdayData.market_open);
     renderStockForDayTable();
   } catch (e) {
@@ -732,32 +541,34 @@ window.setStockdaySort = setStockdaySort;
 function renderStockForDayTable() {
   if (!stockdayData || !stockdayData.buys || !stockdayData.buys.length) {
     document.getElementById('stockdayTableWrap').innerHTML =
-      '<div class="empty">No BUY-eligible stocks right now — Smart Money gates (structure + trend + momentum + volume + breakout) did not all pass.</div>';
+      '<div class="empty">No Smart Money BUY/SELL labels right now — Pine gates (momentum + HTF/LTF trend + volume + breakout) did not pass.</div>';
     return;
   }
   const rows = genericSort(stockdayData.buys, stockdaySortKey, stockdaySortDir);
   const cols = [
-    ['symbol', 'Symbol'], ['entry_price', 'Entry'], ['stop_loss', 'Stop-loss'],
-    ['target', 'Target'], ['risk_reward', 'R:R'], ['confidence', 'Confidence'],
-    ['timestamp', 'Signal time'],
+    ['smart_money_signal', 'SM signal'], ['pattern', 'Pattern'], ['structure', 'Structure'],
+    ['stop_loss', 'Stop-loss'], ['target', 'Target'],
+    ['risk_reward', 'R:R'], ['confidence', 'Confidence'], ['timestamp', 'Signal time'],
   ];
-  const numCols = new Set(['entry_price', 'stop_loss', 'target', 'risk_reward', 'confidence']);
-  let html = '<table><thead><tr>' + cols.map(([key, label]) =>
+  const numCols = new Set(['stop_loss', 'target', 'risk_reward', 'confidence']);
+  let html = '<table><thead><tr><th></th>' + cols.map(([key, label]) =>
     `<th class="${numCols.has(key) ? 'num' : ''}" onclick="setStockdaySort('${key}')" style="cursor:pointer">${label}${sortIndicator(stockdaySortKey, key, stockdaySortDir)}</th>`
-  ).join('') + '<th></th></tr></thead><tbody>';
+  ).join('') + '</tr></thead><tbody>';
   for (const s of rows) {
-    const chart = s.chart_url || (`https://www.tradingview.com/chart/?symbol=NSE:${s.symbol}`);
     const ts = s.timestamp ? new Date(s.timestamp).toLocaleString() : '—';
+    const struct = s.structure || s.market_structure || '—';
+    const structCls = String(struct).startsWith('Bullish') ? 'pos'
+      : String(struct).startsWith('Bearish') ? 'neg' : '';
     html += `<tr>
-      <td><span class="sym-badge">${s.symbol.slice(0,2)}</span><b>${s.symbol}</b>
-        <span class="pill target_hit" style="margin-left:6px">BUY</span></td>
-      <td class="num">₹${Number(s.entry_price).toFixed(2)}</td>
+      <td>${symbolWithChart(s)}</td>
+      <td>${smSignalPill(s)}</td>
+      <td style="color:var(--text-secondary)">${patternLabel(s)}</td>
+      <td class="${structCls}">${struct}</td>
       <td class="num neg">₹${Number(s.stop_loss).toFixed(2)}</td>
       <td class="num pos">₹${Number(s.target).toFixed(2)}</td>
       <td class="num">${Number(s.risk_reward).toFixed(2)}</td>
       <td class="num">${Number(s.confidence).toFixed(0)}%</td>
       <td style="color:var(--text-secondary)">${ts}</td>
-      <td><a href="${chart}" target="_blank" rel="noopener" style="color:var(--accent);font-size:12px">Chart</a></td>
     </tr>`;
   }
   html += '</tbody></table>';
@@ -831,7 +642,7 @@ function renderStockdayBacktest() {
   for (const t of rows) {
     const pnlCls = t.pnl_pct >= 0 ? 'pos' : 'neg';
     html += `<tr>
-      <td>${t.symbol}</td><td>${t.signal_date}</td><td>${t.entry_date}</td>
+      <td>${symbolWithChart(t)}</td><td>${t.signal_date}</td><td>${t.entry_date}</td>
       <td class="num">${t.entry_price.toFixed(2)}</td><td>${t.exit_date}</td>
       <td class="num">${t.exit_price.toFixed(2)}</td>
       <td class="num ${pnlCls}">${fmtPct(t.pnl_pct)}</td>
@@ -841,6 +652,181 @@ function renderStockdayBacktest() {
   }
   html += '</tbody></table>';
   document.getElementById('stockdayBtWrap').innerHTML = html;
+}
+
+// ---------------- Previous Support Bounce ----------------
+let supportData = null;
+let supportSortKey = 'smart_money_score', supportSortDir = -1;
+
+async function runSupportBounce(refresh = true) {
+  const btn = document.getElementById('supportBtn');
+  const mode = stockdayUniverseMode('supportUniverse');
+  btn.disabled = true; btn.textContent = refresh ? 'Scanning...' : 'Loading...';
+  if (refresh || !supportData) {
+    document.getElementById('supportTableWrap').innerHTML =
+      '<div class="loading">' + (refresh ? 'Scanning support touch/bounce + Smart Money buy zone…' : 'Loading startup cache…') + '</div>';
+  }
+  try {
+    let url = '/api/support_bounce?universe=' + encodeURIComponent(mode);
+    if (refresh) url += '&refresh=1';
+    supportData = await fetchJson(url);
+    const stamp = new Date(supportData.generated_at).toLocaleTimeString();
+    const src = supportData.cached ? 'startup cache' : 'fresh scan';
+    const label = supportData.universe_label || mode;
+    document.getElementById('supportMeta').textContent =
+      `${supportData.num_results} buy-zone · ${label} · scanned ${supportData.scanned}/${supportData.universe_size} · ${src} · ${stamp} · click Run Scan to refresh`;
+    updateMarketStatus(supportData.market_open);
+    renderSupportBounceTable();
+  } catch (e) {
+    document.getElementById('supportTableWrap').innerHTML = '<div class="empty">Scan failed: ' + (e.message || e) + '</div>';
+  }
+  btn.disabled = false; btn.textContent = 'Run Scan';
+}
+
+function setSupportSort(key) {
+  if (supportSortKey === key) { supportSortDir *= -1; } else { supportSortKey = key; supportSortDir = -1; }
+  renderSupportBounceTable();
+}
+window.setSupportSort = setSupportSort;
+
+function renderSupportBounceTable() {
+  if (!supportData || !supportData.results || !supportData.results.length) {
+    document.getElementById('supportTableWrap').innerHTML =
+      '<div class="empty">No stocks currently touching/bouncing from prior support in a Smart Money buy zone.</div>';
+    return;
+  }
+  const rows = genericSort(supportData.results, supportSortKey, supportSortDir);
+  const cols = [
+    ['support_type', 'Support type'], ['event', 'Event'],
+    ['previous_support', 'Support'], ['current_price', 'Price'],
+    ['distance_from_support_pct', 'Dist %'], ['touch_count', 'Touches'],
+    ['volume_trend', 'Volume'], ['market_structure', 'Structure'],
+    ['smart_money_signal', 'SM signal'], ['smart_money_score', 'SM score'],
+  ];
+  const numCols = new Set([
+    'previous_support', 'current_price', 'distance_from_support_pct', 'touch_count',
+    'smart_money_score',
+  ]);
+  let html = '<table><thead><tr><th></th>' + cols.map(([key, label]) =>
+    `<th class="${numCols.has(key) ? 'num' : ''}" onclick="setSupportSort('${key}')" style="cursor:pointer">${label}${sortIndicator(supportSortKey, key, supportSortDir)}</th>`
+  ).join('') + '</tr></thead><tbody>';
+  for (const s of rows) {
+    const chart = '/support-chart/' + encodeURIComponent(s.symbol);
+    const dist = Number(s.distance_from_support_pct);
+    const distCls = dist >= 0 ? 'pos' : 'neg';
+    const sig = smSignalPill(s);
+    const structCls = String(s.market_structure || '').startsWith('Bullish') ? 'pos'
+      : String(s.market_structure || '').startsWith('Bearish') ? 'neg' : '';
+    const stype = s.support_type || s.pattern || 'Support';
+    html += `<tr>
+      <td>${symbolWithChart(s)}</td>
+      <td style="color:var(--text-secondary)">${stype}</td>
+      <td style="color:var(--text-secondary)">${s.event || '—'}</td>
+      <td class="num">₹${Number(s.previous_support).toFixed(2)}</td>
+      <td class="num">₹${Number(s.current_price).toFixed(2)}</td>
+      <td class="num ${distCls}">${fmtPct(dist)}</td>
+      <td class="num">${s.touch_count ?? '—'}</td>
+      <td>${s.volume_trend || '—'}</td>
+      <td class="${structCls}">${s.market_structure || '—'}</td>
+      <td>${sig}</td>
+      <td class="num">${Number(s.smart_money_score).toFixed(0)}</td>
+    </tr>`;
+  }
+  html += '</tbody></table>';
+  document.getElementById('supportTableWrap').innerHTML = html;
+}
+
+// ---------------- Swing Trade (Weekly) ----------------
+let swingData = null;
+let swingSortKey = 'quality', swingSortDir = -1;
+
+async function runSwingTrade(refresh = true) {
+  const btn = document.getElementById('swingBtn');
+  const mode = stockdayUniverseMode('swingUniverse');
+  btn.disabled = true; btn.textContent = refresh ? 'Scanning...' : 'Loading...';
+  if (refresh || !swingData) {
+    document.getElementById('swingTableWrap').innerHTML =
+      '<div class="loading">' + (refresh ? 'Scanning weekly resistance breakouts + volume spikes…' : 'Loading startup cache…') + '</div>';
+  }
+  try {
+    let url = '/api/swing_trade?universe=' + encodeURIComponent(mode);
+    if (refresh) url += '&refresh=1';
+    swingData = await fetchJson(url);
+    const stamp = new Date(swingData.generated_at).toLocaleTimeString();
+    const src = swingData.cached ? 'startup cache' : 'fresh scan';
+    const label = swingData.universe_label || mode;
+    document.getElementById('swingMeta').textContent =
+      `${swingData.num_results} setup(s) · ${label} · scanned ${swingData.scanned}/${swingData.universe_size} · ${src} · ${stamp} · click Run Scan to refresh`;
+    updateMarketStatus(swingData.market_open);
+    renderSwingTradeTable();
+  } catch (e) {
+    document.getElementById('swingTableWrap').innerHTML = '<div class="empty">Scan failed: ' + (e.message || e) + '</div>';
+  }
+  btn.disabled = false; btn.textContent = 'Run Scan';
+}
+
+function setSwingSort(key) {
+  if (swingSortKey === key) { swingSortDir *= -1; } else { swingSortKey = key; swingSortDir = -1; }
+  renderSwingTradeTable();
+}
+window.setSwingSort = setSwingSort;
+
+function swingStatusPill(row) {
+  if (row.status === 'TRIGGERED') return '<span class="pill target_hit">TRIGGERED</span>';
+  if (row.status === 'CANDIDATE') return '<span class="pill" style="background:#3a2e14;color:#f0b429">CANDIDATE</span>';
+  return '<span class="pill" style="background:var(--surface-2);color:var(--text-muted)">WATCHING</span>';
+}
+
+function swingChartHref(symbol) {
+  return '/swing-chart/' + encodeURIComponent(symbol);
+}
+
+function renderSwingTradeTable() {
+  if (!swingData || !swingData.results || !swingData.results.length) {
+    document.getElementById('swingTableWrap').innerHTML =
+      '<div class="empty">No stocks currently show a weekly resistance breakout/setup right now.</div>';
+    return;
+  }
+  const rows = genericSort(swingData.results, swingSortKey, swingSortDir);
+  const cols = [
+    ['resistance_type', 'Resistance type'], ['status', 'Status'],
+    ['resistance_price', 'Resistance'], ['breakout_high', 'Breakout high'],
+    ['current_price', 'Price'], ['distance_from_breakout_high_pct', 'Dist. from BO high'],
+    ['volume_ratio', 'Vol vs Avg'], ['retest', 'Re-test'],
+    ['ema_bullish_cross', 'EMA cross'], ['quality', 'Score'],
+    ['risk_reward', 'R:R'], ['stop_loss', 'SL'], ['target', 'Target'],
+  ];
+  const numCols = new Set([
+    'resistance_price', 'breakout_high', 'current_price', 'distance_from_breakout_high_pct',
+    'volume_ratio', 'quality', 'risk_reward', 'stop_loss', 'target',
+  ]);
+  let html = '<table><thead><tr><th></th>' + cols.map(([key, label]) =>
+    `<th class="${numCols.has(key) ? 'num' : ''}" onclick="setSwingSort('${key}')" style="cursor:pointer">${label}${sortIndicator(swingSortKey, key, swingSortDir)}</th>`
+  ).join('') + '</tr></thead><tbody>';
+  for (const s of rows) {
+    const href = swingChartHref(s.symbol);
+    const dist = s.distance_from_breakout_high_pct;
+    const distCls = (dist ?? 0) >= 0 ? 'pos' : 'neg';
+    const breakoutHigh = s.breakout_high != null ? '₹' + Number(s.breakout_high).toFixed(2) : '—';
+    html += `<tr>
+      <td><a href="${href}" target="_blank" rel="noopener" style="color:var(--accent);font-weight:600">${s.symbol}</a></td>
+      <td style="color:var(--text-secondary)">${s.resistance_type || '—'}</td>
+      <td>${swingStatusPill(s)}</td>
+      <td class="num">₹${Number(s.resistance_price).toFixed(2)}</td>
+      <td class="num">${breakoutHigh}</td>
+      <td class="num">₹${Number(s.current_price).toFixed(2)}</td>
+      <td class="num ${distCls}">${dist != null ? fmtPct(dist) : '—'}</td>
+      <td class="num">${s.volume_ratio != null ? s.volume_ratio + 'x' : '—'}</td>
+      <td>${s.retest ? 'Yes' : 'No'}</td>
+      <td>${s.ema_bullish_cross ? 'Bullish' : '—'}</td>
+      <td class="num">${Number(s.quality).toFixed(0)}</td>
+      <td class="num">${Number(s.risk_reward).toFixed(2)}</td>
+      <td class="num neg">₹${Number(s.stop_loss).toFixed(2)}</td>
+      <td class="num pos">₹${Number(s.target).toFixed(2)}</td>
+    </tr>`;
+  }
+  html += '</tbody></table>';
+  document.getElementById('swingTableWrap').innerHTML = html;
 }
 
 // ---------------- Intraday Monitor ----------------
@@ -967,7 +953,7 @@ function renderIntradayStatus(data) {
         vol ${a.minute_volume.toFixed(0)} vs avg ${a.avg_minute_volume.toFixed(0)}, VWAP ₹${a.vwap.toFixed(2)}
         ${confluenceBadge}
         ${sourceText ? `<br><span style="color:var(--text-secondary); font-size:12px;">${sourceText}</span>` : ''}
-        <a href="${a.chart_url}" target="_blank" style="color:var(--accent); font-size:12px; margin-left:6px;">Open chart ↗</a>
+        <a href="${patternChartHref(a.symbol)}" target="_blank" style="color:var(--accent); font-size:12px; margin-left:6px;">Open chart ↗</a>
       </div>`;
     }).join('');
   }
@@ -996,7 +982,7 @@ function renderIntradayStatus(data) {
     const sources = (s.sources || []).map(sourceLabel).join(', ');
     const rowStyle = s.alerted ? ' style="animation: flash-highlight 1.5s ease-out 2;"' : '';
     html += `<tr${rowStyle}>
-      <td><a href="${s.chart_url}" target="_blank" style="color:var(--text);">${s.symbol}</a></td>
+      <td>${symbolWithChart(s)}</td>
       <td class="num">${s.ltp != null ? '₹' + s.ltp.toFixed(2) : '—'}</td>
       <td class="num">${s.opening_range_high != null ? '₹' + s.opening_range_high.toFixed(2) : '—'}</td>
       <td class="num">${s.opening_range_low != null ? '₹' + s.opening_range_low.toFixed(2) : '—'}</td>
@@ -1072,7 +1058,7 @@ function renderBacktest() {
   for (const t of rows) {
     const pnlCls = t.pnl_pct >= 0 ? 'pos' : 'neg';
     html += `<tr>
-      <td>${t.symbol}</td><td>${t.signal_date}</td><td>${t.entry_date}</td>
+      <td>${symbolWithChart(t)}</td><td>${t.signal_date}</td><td>${t.entry_date}</td>
       <td class="num">${t.entry_price.toFixed(2)}</td><td>${t.exit_date}</td>
       <td class="num">${t.exit_price.toFixed(2)}</td>
       <td class="num ${pnlCls}">${fmtPct(t.pnl_pct)}</td>
@@ -1084,10 +1070,13 @@ function renderBacktest() {
   document.getElementById('backtestWrap').innerHTML = html;
 }
 
-// No auto-scan on load. Keep the server running with: python .\app.py
-// Then click Run Scan on each tab for a fresh result.
+// Initial load: show startup-cached results on every scanner tab.
+// Run Scan buttons force a fresh refresh (?refresh=1).
 runSectorScan(false);
 runTrendingScan(false);
+runStockForDay(false);
+runSupportBounce(false);
+runSwingTrade(false);
 </script>
 </body>
 </html>

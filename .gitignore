@@ -1,0 +1,13 @@
+# Shared secrets / local credentials (see shared/config.py, shared/kite_auth.py)
+.env
+/cache/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+
+# Telethon / broker session state
+*.session
+*.session-journal

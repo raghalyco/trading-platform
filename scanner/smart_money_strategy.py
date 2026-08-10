@@ -1,16 +1,14 @@
 """
 Smart Money / GainzAlgo-style signal engine (Pine v5 port for NSE equities).
 
-Evaluates closed candles only. Entry requires ALL of:
-  - ATR-scaled bar momentum
-  - Higher-TF EMA20 + session VWAP trend alignment
-  - Lower-TF not opposing (and not neutral)
+Matches smart-money-structure.txt BUY / SELL / READY labels:
+  - Momentum (ATR-scaled % bar change)
+  - Higher-TF EMA20 + session VWAP trend
+  - Lower-TF not opposing and not neutral
   - Volume above long SMA with rising short SMA
   - Close break of prior N-bar high/low
-  - Recent CHoCH or BOS in the signal direction (structure confirmation)
-  - Min bars since last signal (caller can also de-dupe)
+  - Optional CHoCH/BOS confirmation (off by default — Pine draws structure separately)
 
-Unlike the original Pine overlay, CHoCH/BOS are required for entries here.
 TP/SL use ATR multiples (points don't translate across NSE price levels).
 """
 from __future__ import annotations
@@ -23,6 +21,7 @@ import pandas as pd
 
 import config
 import indicators as ind
+from charts import tradingview_chart_url
 
 
 TIMEFRAME_RULES = {
@@ -47,11 +46,13 @@ class SmartMoneySignal:
     conditions: dict
     atr: float
     chart_url: str = ""
+    structure: str = "Neutral"
 
     def to_dict(self) -> dict:
         d = asdict(self)
         if not d.get("chart_url"):
-            d["chart_url"] = f"https://www.tradingview.com/chart/?symbol=NSE:{self.symbol}"
+            d["chart_url"] = tradingview_chart_url(self.symbol)
+        d["smart_money_signal"] = d.get("signal")
         return d
 
 
@@ -129,6 +130,24 @@ def _structure_flags(df: pd.DataFrame, last_high: pd.Series, last_low: pd.Series
     return choch_buy, choch_sell, bos_buy, bos_sell
 
 
+def _structure_label(
+    choch_buy: pd.Series,
+    choch_sell: pd.Series,
+    bos_buy: pd.Series,
+    bos_sell: pd.Series,
+) -> str:
+    lookback = config.SMART_MONEY_STRUCTURE_LOOKBACK
+    if bool(choch_buy.iloc[-lookback:].any()):
+        return "Bullish CHoCH"
+    if bool(bos_buy.iloc[-lookback:].any()):
+        return "Bullish BOS"
+    if bool(choch_sell.iloc[-lookback:].any()):
+        return "Bearish CHoCH"
+    if bool(bos_sell.iloc[-lookback:].any()):
+        return "Bearish BOS"
+    return "Neutral"
+
+
 def _confidence_from_trends(trend_votes: list[int]) -> float:
     raw = sum(trend_votes)
     n = max(len(trend_votes), 1)
@@ -141,15 +160,13 @@ def _confidence_from_trends(trend_votes: list[int]) -> float:
     return 50.0
 
 
-def evaluate_symbol(
-    symbol: str,
+def _compute_gates(
     signal_df: pd.DataFrame,
-    sector: str = "",
     htf_df: Optional[pd.DataFrame] = None,
     ltf_df: Optional[pd.DataFrame] = None,
     daily_df: Optional[pd.DataFrame] = None,
-) -> Optional[SmartMoneySignal]:
-    """Return a signal for the latest *closed* bar if all conditions pass."""
+) -> Optional[dict]:
+    """Pine-style gate snapshot for the latest closed bar."""
     df = signal_df.dropna(subset=["open", "high", "low", "close"]).reset_index(drop=True)
     min_bars = max(
         config.SMART_MONEY_PIVOT_LENGTH * 2 + 5,
@@ -161,24 +178,26 @@ def evaluate_symbol(
 
     length = config.SMART_MONEY_PIVOT_LENGTH
     atr_s = ind.atr(df["high"], df["low"], df["close"], 14)
-    atr_val = float(atr_s.iloc[-1]) if pd.notna(atr_s.iloc[-1]) else float(df["high"].iloc[-1] - df["low"].iloc[-1])
+    atr_val = float(atr_s.iloc[-1]) if pd.notna(atr_s.iloc[-1]) else float(
+        df["high"].iloc[-1] - df["low"].iloc[-1]
+    )
     close = df["close"].astype(float)
     volatility_factor = atr_val / float(close.iloc[-1]) if close.iloc[-1] else 0.0
     momentum_threshold = config.SMART_MONEY_MOMENTUM_THRESHOLD_PCT * (1 + volatility_factor * 2)
+    pre_factor = getattr(config, "SMART_MONEY_PRE_MOMENTUM_FACTOR", 0.5) * (1 - volatility_factor * 0.5)
+    pre_momentum_threshold = momentum_threshold * max(pre_factor, 0.05)
 
     price_change = ((close - close.shift(1)) / close.shift(1).replace(0, np.nan) * 100)
     last_pc = float(price_change.iloc[-1]) if pd.notna(price_change.iloc[-1]) else 0.0
 
     last_high, last_low = _pivot_levels(df["high"], df["low"], length)
     choch_buy, choch_sell, bos_buy, bos_sell = _structure_flags(df, last_high, last_low)
-
     lookback = config.SMART_MONEY_STRUCTURE_LOOKBACK
     structure_buy = bool((choch_buy | bos_buy).iloc[-lookback:].any())
     structure_sell = bool((choch_sell | bos_sell).iloc[-lookback:].any())
+    structure = _structure_label(choch_buy, choch_sell, bos_buy, bos_sell)
 
-    # Multi-TF trends (use provided frames or resample from signal TF)
-    frames = {}
-    frames["signal"] = df
+    frames = {"signal": df}
     if htf_df is not None and not htf_df.empty:
         frames["htf"] = htf_df.reset_index(drop=True)
     else:
@@ -194,86 +213,259 @@ def evaluate_symbol(
     trend_htf = int(_trend_series(frames["htf"]).iloc[-1]) if len(frames["htf"]) else 0
     trend_ltf = int(_trend_series(frames["ltf"]).iloc[-1]) if len(frames["ltf"]) else 0
     trend_signal = int(_trend_series(df).iloc[-1])
-    trend_daily = int(_trend_series(frames["daily"]).iloc[-1]) if "daily" in frames and len(frames["daily"]) else 0
+    trend_daily = (
+        int(_trend_series(frames["daily"]).iloc[-1])
+        if "daily" in frames and len(frames["daily"]) else 0
+    )
 
-    votes = [t for t in (trend_ltf, trend_signal, trend_htf, trend_daily) if True]
+    votes = [trend_ltf, trend_signal, trend_htf, trend_daily]
     confidence = _confidence_from_trends(votes)
 
     vol_avg = ind.sma(df["volume"].astype(float), config.SMART_MONEY_VOLUME_LONG)
     vol_short = ind.sma(df["volume"].astype(float), config.SMART_MONEY_VOLUME_SHORT)
-    vol_ok = bool(
-        df["volume"].iloc[-1] > vol_avg.iloc[-1]
-        and (vol_short.iloc[-1] - vol_short.iloc[-2]) > 0
-    ) if pd.notna(vol_avg.iloc[-1]) and pd.notna(vol_short.iloc[-1]) and pd.notna(vol_short.iloc[-2]) else False
+    vol_ok = False
+    if (
+        pd.notna(vol_avg.iloc[-1]) and pd.notna(vol_short.iloc[-1])
+        and pd.notna(vol_short.iloc[-2])
+    ):
+        vol_ok = bool(
+            df["volume"].iloc[-1] > vol_avg.iloc[-1]
+            and (vol_short.iloc[-1] - vol_short.iloc[-2]) > 0
+        )
 
     highest = df["high"].rolling(config.SMART_MONEY_BREAKOUT_PERIOD).max().shift(1)
     lowest = df["low"].rolling(config.SMART_MONEY_BREAKOUT_PERIOD).min().shift(1)
     breakout_buy = bool(close.iloc[-1] > highest.iloc[-1]) if pd.notna(highest.iloc[-1]) else False
     breakout_sell = bool(close.iloc[-1] < lowest.iloc[-1]) if pd.notna(lowest.iloc[-1]) else False
 
+    # Pine: buy_lower_tf_ok = not bearish AND not neutral → must be bullish
+    #       sell_lower_tf_ok = not bullish AND not neutral → must be bearish
     momentum_buy = last_pc > momentum_threshold
     momentum_sell = last_pc < -momentum_threshold
     htf_buy = trend_htf == 1
     htf_sell = trend_htf == -1
-    ltf_buy = trend_ltf == 1  # not bearish and not neutral
+    ltf_buy = trend_ltf == 1
     ltf_sell = trend_ltf == -1
 
-    buy_ok = (
-        momentum_buy and htf_buy and ltf_buy and vol_ok
-        and breakout_buy and structure_buy
-    )
-    sell_ok = (
-        momentum_sell and htf_sell and ltf_sell and vol_ok
-        and breakout_sell and structure_sell
-    )
+    require_structure = bool(getattr(config, "SMART_MONEY_REQUIRE_STRUCTURE", False))
+    buy_core = momentum_buy and htf_buy and ltf_buy and vol_ok and breakout_buy
+    sell_core = momentum_sell and htf_sell and ltf_sell and vol_ok and breakout_sell
+    buy_ok = buy_core and (structure_buy if require_structure else True)
+    sell_ok = sell_core and (structure_sell if require_structure else True)
 
-    if not buy_ok and not sell_ok:
-        return None
-    if buy_ok and sell_ok:
-        # Prefer the side matching HTF if both somehow fire
-        side = "BUY" if trend_htf >= 0 else "SELL"
-    else:
-        side = "BUY" if buy_ok else "SELL"
+    # Pine get_ready: between pre-momentum and full momentum, other filters OK.
+    ready_buy = (
+        getattr(config, "SMART_MONEY_SHOW_GET_READY", True)
+        and (last_pc > pre_momentum_threshold) and (last_pc < momentum_threshold)
+        and htf_buy and ltf_buy and vol_ok and breakout_buy
+        and not buy_ok
+    )
+    ready_sell = (
+        getattr(config, "SMART_MONEY_SHOW_GET_READY", True)
+        and (last_pc < -pre_momentum_threshold) and (last_pc > -momentum_threshold)
+        and htf_sell and ltf_sell and vol_ok and breakout_sell
+        and not sell_ok
+    )
 
     entry = float(close.iloc[-1])
-    if side == "BUY":
-        stop = entry - config.SMART_MONEY_SL_ATR_MULT * atr_val
-        target = entry + config.SMART_MONEY_TP_ATR_MULT * atr_val
-    else:
-        stop = entry + config.SMART_MONEY_SL_ATR_MULT * atr_val
-        target = entry - config.SMART_MONEY_TP_ATR_MULT * atr_val
-
-    risk = abs(entry - stop)
-    reward = abs(target - entry)
-    rr = round(reward / risk, 2) if risk > 0 else 0.0
-
-    conditions = {
-        "momentum": True,
-        "htf_trend": True,
-        "ltf_trend": True,
-        "volume": vol_ok,
-        "breakout": breakout_buy if side == "BUY" else breakout_sell,
-        "structure_choch_bos": structure_buy if side == "BUY" else structure_sell,
-        "price_change_pct": round(last_pc, 4),
-        "momentum_threshold_pct": round(momentum_threshold, 4),
+    return {
+        "df": df,
+        "atr": atr_val,
+        "entry": entry,
+        "last_pc": last_pc,
+        "momentum_threshold": momentum_threshold,
+        "buy_ok": buy_ok,
+        "sell_ok": sell_ok,
+        "ready_buy": ready_buy,
+        "ready_sell": ready_sell,
+        "structure_buy": structure_buy,
+        "structure_sell": structure_sell,
+        "structure": structure,
+        "vol_ok": vol_ok,
+        "breakout_buy": breakout_buy,
+        "breakout_sell": breakout_sell,
         "trend_htf": trend_htf,
         "trend_ltf": trend_ltf,
         "trend_signal": trend_signal,
         "trend_daily": trend_daily,
+        "confidence": confidence,
     }
 
-    ts = pd.to_datetime(df["date"].iloc[-1])
+
+def classify_symbol(
+    symbol: str,
+    signal_df: pd.DataFrame,
+    sector: str = "",
+    htf_df: Optional[pd.DataFrame] = None,
+    ltf_df: Optional[pd.DataFrame] = None,
+    daily_df: Optional[pd.DataFrame] = None,
+) -> dict:
+    """Always return a Pine-style label for the latest bar.
+
+    smart_money_signal: BUY | SELL | READY | NEUTRAL
+    """
+    gates = _compute_gates(signal_df, htf_df=htf_df, ltf_df=ltf_df, daily_df=daily_df)
+    base = {
+        "symbol": symbol,
+        "sector": sector,
+        "smart_money_signal": "NEUTRAL",
+        "smart_money_side": None,
+        "signal": None,
+        "confidence": 0.0,
+        "structure": "Neutral",
+        "structure_buy": False,
+        "structure_sell": False,
+        "entry_price": None,
+        "stop_loss": None,
+        "target": None,
+        "risk_reward": None,
+        "atr": None,
+        "timestamp": None,
+        "conditions": {},
+        "chart_url": tradingview_chart_url(symbol),
+    }
+    if gates is None:
+        return base
+
+    atr_val = gates["atr"]
+    entry = gates["entry"]
+    if gates["buy_ok"] and gates["sell_ok"]:
+        side = "BUY" if gates["trend_htf"] >= 0 else "SELL"
+        label = side
+    elif gates["buy_ok"]:
+        side = label = "BUY"
+    elif gates["sell_ok"]:
+        side = label = "SELL"
+    elif gates["ready_buy"]:
+        side, label = "BUY", "READY"
+    elif gates["ready_sell"]:
+        side, label = "SELL", "READY"
+    else:
+        side, label = None, "NEUTRAL"
+
+    stop = target = rr = None
+    if side == "BUY":
+        stop = entry - config.SMART_MONEY_SL_ATR_MULT * atr_val
+        target = entry + config.SMART_MONEY_TP_ATR_MULT * atr_val
+    elif side == "SELL":
+        stop = entry + config.SMART_MONEY_SL_ATR_MULT * atr_val
+        target = entry - config.SMART_MONEY_TP_ATR_MULT * atr_val
+    if stop is not None and target is not None:
+        risk = abs(entry - stop)
+        reward = abs(target - entry)
+        rr = round(reward / risk, 2) if risk > 0 else 0.0
+
+    ts = pd.to_datetime(gates["df"]["date"].iloc[-1]).isoformat()
+    conditions = {
+        "momentum": gates["buy_ok"] or gates["sell_ok"] or gates["ready_buy"] or gates["ready_sell"],
+        "htf_trend": gates["trend_htf"],
+        "ltf_trend": gates["trend_ltf"],
+        "volume": gates["vol_ok"],
+        "breakout_buy": gates["breakout_buy"],
+        "breakout_sell": gates["breakout_sell"],
+        "structure_buy": gates["structure_buy"],
+        "structure_sell": gates["structure_sell"],
+        "price_change_pct": round(gates["last_pc"], 4),
+        "momentum_threshold_pct": round(gates["momentum_threshold"], 4),
+        "trend_htf": gates["trend_htf"],
+        "trend_ltf": gates["trend_ltf"],
+        "trend_signal": gates["trend_signal"],
+        "trend_daily": gates["trend_daily"],
+        "ready_buy": gates["ready_buy"],
+        "ready_sell": gates["ready_sell"],
+    }
+    return {
+        "symbol": symbol,
+        "sector": sector,
+        "smart_money_signal": label,
+        "smart_money_side": side,
+        "signal": label if label in ("BUY", "SELL") else None,
+        "confidence": float(gates["confidence"]),
+        "structure": gates["structure"],
+        "structure_buy": gates["structure_buy"],
+        "structure_sell": gates["structure_sell"],
+        "entry_price": round(entry, 2),
+        "stop_loss": round(stop, 2) if stop is not None else None,
+        "target": round(target, 2) if target is not None else None,
+        "risk_reward": rr,
+        "atr": round(atr_val, 2),
+        "timestamp": ts,
+        "conditions": conditions,
+        "chart_url": tradingview_chart_url(symbol),
+    }
+
+
+def evaluate_symbol(
+    symbol: str,
+    signal_df: pd.DataFrame,
+    sector: str = "",
+    htf_df: Optional[pd.DataFrame] = None,
+    ltf_df: Optional[pd.DataFrame] = None,
+    daily_df: Optional[pd.DataFrame] = None,
+) -> Optional[SmartMoneySignal]:
+    """Return a signal for the latest *closed* bar if BUY or SELL gates pass."""
+    label = classify_symbol(
+        symbol=symbol,
+        signal_df=signal_df,
+        sector=sector,
+        htf_df=htf_df,
+        ltf_df=ltf_df,
+        daily_df=daily_df,
+    )
+    side = label.get("smart_money_signal")
+    if side not in ("BUY", "SELL"):
+        return None
+    if label.get("entry_price") is None or label.get("stop_loss") is None:
+        return None
+
     return SmartMoneySignal(
         symbol=symbol,
         signal=side,
-        entry_price=round(entry, 2),
-        stop_loss=round(stop, 2),
-        target=round(target, 2),
-        risk_reward=rr,
-        timestamp=ts.isoformat(),
-        confidence=confidence,
+        entry_price=label["entry_price"],
+        stop_loss=label["stop_loss"],
+        target=label["target"],
+        risk_reward=label["risk_reward"] or 0.0,
+        timestamp=label["timestamp"] or "",
+        confidence=label["confidence"],
         sector=sector,
-        conditions=conditions,
-        atr=round(atr_val, 2),
-        chart_url=f"https://www.tradingview.com/chart/?symbol=NSE:{symbol}",
+        conditions=label.get("conditions") or {},
+        atr=label["atr"] or 0.0,
+        chart_url=label.get("chart_url") or tradingview_chart_url(symbol),
+        structure=label.get("structure") or "Neutral",
     )
+
+
+def attach_smart_money_label(
+    symbol: str,
+    daily: pd.DataFrame,
+    result: Optional[dict] = None,
+    htf_df: Optional[pd.DataFrame] = None,
+) -> dict:
+    """Stamp Pine BUY/SELL/READY/NEUTRAL fields onto a scanner result row."""
+    out = result if result is not None else {}
+    weekly = htf_df
+    if weekly is None and daily is not None and not daily.empty:
+        weekly = _resample_ohlcv(daily, "W-FRI")
+    label = classify_symbol(
+        symbol=symbol,
+        signal_df=daily,
+        htf_df=weekly,
+        ltf_df=daily,
+        daily_df=daily,
+    )
+    out["smart_money_signal"] = label.get("smart_money_signal") or "NEUTRAL"
+    out["smart_money_side"] = label.get("smart_money_side")
+    out["structure"] = label.get("structure")
+    out["market_structure"] = label.get("structure")
+    out["confidence"] = label.get("confidence")
+    # Don't overwrite scanner-specific entry/SL when already set from a full signal.
+    if out.get("entry_price") is None and label.get("entry_price") is not None:
+        out["entry_price"] = label["entry_price"]
+    if out.get("stop_loss") is None and label.get("stop_loss") is not None:
+        out["stop_loss"] = label["stop_loss"]
+    if out.get("target") is None and label.get("target") is not None:
+        out["target"] = label["target"]
+    if out.get("risk_reward") is None and label.get("risk_reward") is not None:
+        out["risk_reward"] = label["risk_reward"]
+    out["sm_conditions"] = label.get("conditions") or {}
+    return out

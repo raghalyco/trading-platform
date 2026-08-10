@@ -1,0 +1,215 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ symbol }} — Chart</title>
+<script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+<style>
+  :root {
+    --bg: #0d0d0c; --surface: #171715; --border: #2b2b27;
+    --text: #f2f1ec; --text-secondary: #9a998f; --text-muted: #6b6a64;
+    --accent: #5b8cff; --green: #22c58a; --red: #f0554a; --ready: #f0b429;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg); color: var(--text); min-height: 100vh;
+    display: flex; flex-direction: column;
+  }
+  header {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 12px 18px; border-bottom: 1px solid var(--border); background: var(--surface);
+    flex-wrap: wrap;
+  }
+  h1 { margin: 0; font-size: 17px; font-weight: 700; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .meta { font-size: 13px; color: var(--text-secondary); margin-top: 4px; }
+  .actions { display: flex; gap: 10px; align-items: center; }
+  a.btn {
+    color: var(--text); text-decoration: none; font-size: 13px; font-weight: 600;
+    padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border);
+    background: #1e1e1b;
+  }
+  a.btn.primary { background: var(--accent); border-color: transparent; color: #fff; }
+  .pill {
+    font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 6px;
+    letter-spacing: 0.02em;
+  }
+  .pill.buy { background: #0f2e24; color: var(--green); }
+  .pill.sell { background: #331815; color: var(--red); }
+  .pill.ready { background: #3a2e14; color: var(--ready); }
+  .pill.neutral { background: #1e1e1b; color: var(--text-muted); }
+  #legend {
+    display: flex; gap: 14px; flex-wrap: wrap; padding: 8px 18px; align-items: center;
+    font-size: 12px; color: var(--text-secondary); border-bottom: 1px solid var(--border);
+  }
+  .leg { display: inline-flex; align-items: center; gap: 6px; }
+  .swatch { width: 14px; height: 3px; border-radius: 2px; }
+  #chart { flex: 1; min-height: 480px; width: 100%; }
+  #status { padding: 24px 18px; color: var(--text-muted); font-size: 14px; }
+  #tradeLevels {
+    display: flex; gap: 22px; flex-wrap: wrap; padding: 10px 18px;
+    border-bottom: 1px solid var(--border); background: #14140f;
+  }
+  #tradeLevels .stat { display: flex; flex-direction: column; gap: 2px; }
+  #tradeLevels .stat .label { font-size: 11px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.04em; }
+  #tradeLevels .stat .value { font-size: 15px; font-weight: 700; }
+  #tradeLevels .stat .value.entry { color: var(--accent); }
+  #tradeLevels .stat .value.sl { color: var(--red); }
+  #tradeLevels .stat .value.target { color: var(--green); }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>
+      <span id="title">{{ symbol }}</span>
+      <span class="pill neutral" id="smPill">…</span>
+    </h1>
+    <div class="meta" id="subtitle">Loading chart…</div>
+  </div>
+  <div class="actions">
+    <a class="btn" href="/" >← Dashboard</a>
+    <a class="btn primary" id="tvLink" href="#" target="_blank" rel="noopener">TradingView ↗</a>
+  </div>
+</header>
+<div id="tradeLevels" hidden></div>
+<div id="legend"></div>
+<div id="status">Fetching chart data…</div>
+<div id="chart" hidden></div>
+<script>
+const SYMBOL = {{ symbol|tojson }};
+
+function smPillClass(sig) {
+  if (sig === 'BUY') return 'buy';
+  if (sig === 'SELL') return 'sell';
+  if (sig === 'READY') return 'ready';
+  return 'neutral';
+}
+
+function smPillText(data) {
+  const sig = data.smart_money_signal || 'NEUTRAL';
+  if (sig === 'READY' && data.smart_money_side) return 'READY ' + data.smart_money_side;
+  return sig;
+}
+
+async function load() {
+  const status = document.getElementById('status');
+  const chartEl = document.getElementById('chart');
+  try {
+    if (typeof LightweightCharts === 'undefined') {
+      status.textContent = 'Chart library failed to load (CDN). Check network and refresh.';
+      return;
+    }
+    const res = await fetch('/api/support_bounce/chart/' + encodeURIComponent(SYMBOL));
+    const data = await res.json();
+    if (!res.ok || data.error) {
+      status.textContent = data.error || ('HTTP ' + res.status);
+      return;
+    }
+    status.hidden = true;
+    chartEl.hidden = false;
+
+    const pattern = data.support_type || 'Chart';
+    document.getElementById('title').textContent = data.symbol + ' · ' + pattern;
+    const pill = document.getElementById('smPill');
+    pill.className = 'pill ' + smPillClass(data.smart_money_signal);
+    pill.textContent = smPillText(data);
+
+    const bits = [];
+    if (data.event) bits.push(data.event);
+    if (data.support_price != null) bits.push('support ₹' + Number(data.support_price).toFixed(2));
+    if (data.structure) bits.push(data.structure);
+    if (data.confidence != null) bits.push('conf ' + Number(data.confidence).toFixed(0) + '%');
+    document.getElementById('subtitle').textContent = bits.join(' · ') || 'Smart Money structure';
+
+    const tradeLevels = document.getElementById('tradeLevels');
+    if (data.entry_price != null && data.stop_loss != null && data.target != null) {
+      tradeLevels.hidden = false;
+      tradeLevels.innerHTML = `
+        <div class="stat"><span class="label">Entry</span><span class="value entry">₹${Number(data.entry_price).toFixed(2)}</span></div>
+        <div class="stat"><span class="label">Stop loss</span><span class="value sl">₹${Number(data.stop_loss).toFixed(2)}</span></div>
+        <div class="stat"><span class="label">Target</span><span class="value target">₹${Number(data.target).toFixed(2)}</span></div>
+        <div class="stat"><span class="label">R:R</span><span class="value">${Number(data.risk_reward).toFixed(2)}</span></div>
+      `;
+    } else {
+      tradeLevels.hidden = true;
+    }
+
+    if (data.tv_chart_url) {
+      document.getElementById('tvLink').href = data.tv_chart_url;
+    }
+
+    const legend = document.getElementById('legend');
+    let legendHtml = (data.lines || []).map(l =>
+      `<span class="leg"><span class="swatch" style="background:${l.color}"></span>${l.name}</span>`
+    ).join('');
+    if (data.smart_money_signal && data.smart_money_signal !== 'NEUTRAL') {
+      const c = data.smart_money_signal === 'BUY' ? '#22c58a'
+        : data.smart_money_signal === 'SELL' ? '#f0554a' : '#f0b429';
+      legendHtml += `<span class="leg"><span class="swatch" style="background:${c}"></span>SM ${smPillText(data)}</span>`;
+    }
+    if ((data.structure_markers || []).length) {
+      legendHtml += `<span class="leg"><span class="swatch" style="background:#22c58a"></span>HH/HL</span>`;
+      legendHtml += `<span class="leg"><span class="swatch" style="background:#f0554a"></span>LH/LL</span>`;
+    }
+    legend.innerHTML = legendHtml || '<span class="leg">No pattern lines — SM label only</span>';
+
+    const chart = LightweightCharts.createChart(chartEl, {
+      layout: {
+        background: { type: 'solid', color: '#0d0d0c' },
+        textColor: '#9a998f',
+      },
+      grid: {
+        vertLines: { color: '#1e1e1b' },
+        horzLines: { color: '#1e1e1b' },
+      },
+      rightPriceScale: { borderColor: '#2b2b27' },
+      timeScale: { borderColor: '#2b2b27', timeVisible: false },
+      crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+    });
+
+    const candleSeries = chart.addCandlestickSeries({
+      upColor: '#22c58a',
+      downColor: '#f0554a',
+      borderUpColor: '#22c58a',
+      borderDownColor: '#f0554a',
+      wickUpColor: '#22c58a',
+      wickDownColor: '#f0554a',
+    });
+    candleSeries.setData(data.candles || []);
+    const allMarkers = [...(data.markers || []), ...(data.structure_markers || [])]
+      .sort((a, b) => (a.time < b.time ? -1 : a.time > b.time ? 1 : 0));
+    if (allMarkers.length) {
+      candleSeries.setMarkers(allMarkers);
+    }
+
+    for (const line of (data.lines || [])) {
+      const series = chart.addLineSeries({
+        color: line.color,
+        lineWidth: line.lineWidth || 2,
+        lineStyle: line.dashed ? LightweightCharts.LineStyle.Dashed : LightweightCharts.LineStyle.Solid,
+        title: line.name,
+        priceLineVisible: false,
+        lastValueVisible: !line.dashed,
+      });
+      series.setData(line.points || []);
+    }
+
+    chart.timeScale().fitContent();
+    const resize = () => {
+      chart.applyOptions({
+        width: chartEl.clientWidth,
+        height: Math.max(480, window.innerHeight - 120),
+      });
+    };
+    resize();
+    window.addEventListener('resize', resize);
+  } catch (e) {
+    status.textContent = 'Failed to load chart: ' + (e.message || e);
+  }
+}
+load();
+</script>
+</body>
+</html>

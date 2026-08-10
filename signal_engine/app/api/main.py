@@ -26,7 +26,7 @@ from app.signal_engine.modes import (
     default_symbol_for_today,
     is_expiry_today,
 )
-from app.signal_engine.backtest import run_backtest
+from app.signal_engine.backtest import run_backtest, build_backtest_trade_chart
 from app.signal_engine import journal
 from app.signal_engine.target_monitor import check_and_alert_t1
 from app.signal_engine.live_capture import capture_entry, poll_open_positions
@@ -42,21 +42,27 @@ from app.telegram_alerts import (
 app = FastAPI(title="Trading Signal Engine")
 
 # --- shared state ---
-# If app/kite_session.json exists (created by scripts/generate_session.py),
-# use live Kite data. Otherwise fall back to the simulator so the app still
-# runs standalone. Run scripts/generate_session.py each morning to refresh
-# the token - Kite access tokens expire daily.
+# Preferred: authenticate through trading-platform/shared/kite_auth.py, the
+# one daily login shared with scanner/ and execution/ (run
+# `python -m shared.kite_auth` from the trading-platform root each morning).
+# Falls back to the legacy per-app kite_session.json if present, then to the
+# simulator so the app still runs standalone with neither.
 DATA_SOURCE = "simulator"
-if os.path.exists(SESSION_FILE):
-    try:
-        feed = KiteFeed.from_session_file()
-        DATA_SOURCE = "kite"
-    except Exception as e:
-        print(f"[warn] Found kite_session.json but failed to load it ({e}); "
-              f"falling back to simulator.")
+try:
+    feed = KiteFeed.from_shared_auth()
+    DATA_SOURCE = "kite"
+except Exception as shared_exc:
+    if os.path.exists(SESSION_FILE):
+        try:
+            feed = KiteFeed.from_session_file()
+            DATA_SOURCE = "kite"
+        except Exception as e:
+            print(f"[warn] Found kite_session.json but failed to load it ({e}); "
+                  f"falling back to simulator.")
+            feed = SimulatorFeed()
+    else:
+        print(f"[info] No shared Kite auth available ({shared_exc}); using simulator.")
         feed = SimulatorFeed()
-else:
-    feed = SimulatorFeed()
 
 risk_mgr = RiskManager()
 
@@ -270,6 +276,41 @@ def performance_report(
         return {"error": str(e), "data_source": DATA_SOURCE}
 
 
+@app.get("/api/report/performance/trade-chart")
+def performance_trade_chart(
+    trade_index: int = Query(..., ge=0),
+    symbol: str = Query("NIFTY"),
+    mode: str = Query("SCALP"),
+    months: int = Query(3, ge=1, le=6),
+    step_minutes: int = Query(15, ge=5, le=60),
+    mark_to_market: bool = Query(True),
+    min_score: int = Query(4, ge=0, le=9),
+):
+    """
+    Candles + entry/exit/target/stop overlay for one backtest trade, in the
+    same shape as /api/journal/{id}/chart so chart.html can render either.
+    Re-runs the walk-forward simulation with identical params to reproduce
+    the exact trade the caller saw in /api/report/performance's samples.
+    """
+    mode = mode.upper()
+    days = months * 30
+    try:
+        getter = getattr(feed, "get_ohlcv_history", None)
+        if getter is not None:
+            df = getter(symbol, days=days, interval="5minute")
+            bar_minutes = 5
+        else:
+            df = feed.get_ohlcv_1m(symbol, lookback_minutes=min(days * 75, 2000))
+            bar_minutes = 1
+        return build_backtest_trade_chart(
+            df, symbol=symbol, mode=mode, trade_index=trade_index,
+            step_minutes=step_minutes, bar_minutes=bar_minutes,
+            mark_to_market=mark_to_market, min_score=min_score,
+        )
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
 @app.post("/api/risk/record")
 def record_trade(result: TradeResult):
     risk_mgr.record_trade_result(result.pnl)
@@ -434,7 +475,7 @@ def live_exit(trade_id: int = Query(...)):
     symbol = trade["symbol"]
     side = trade["side"]
     strike = trade.get("strike")
-    lot_size = LOT_SIZES.get(symbol, 25)
+    lot_size = LOT_SIZES.get(symbol, 65)
 
     ltp = None
     quote = _live_option_quote(feed, symbol, strike, side) if strike else None
@@ -462,7 +503,7 @@ def journal_exit(trade: TradeExit):
     if existing and existing.get("entry_premium") is not None and existing.get("result") == "OPEN":
         # Keep lot multiplier from request, but pricing is premium-based in log_exit
         from app.signal_engine.live_capture import LOT_SIZES
-        lot = LOT_SIZES.get(existing.get("symbol") or "NIFTY", 25)
+        lot = LOT_SIZES.get(existing.get("symbol") or "NIFTY", 65)
         # If caller passed an index-looking exit (> 5x premium), reject
         ep = float(existing["entry_premium"])
         if trade.exit_price > ep * 5:

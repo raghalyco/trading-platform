@@ -9,6 +9,7 @@ Sends alerts to a Telegram chat via a bot. Setup (one-time):
 import requests
 
 import config
+from charts import tradingview_chart_url
 
 
 def send_telegram_message(text: str) -> bool:
@@ -40,13 +41,19 @@ def format_smart_money_alert(sig: dict) -> str:
     sector = sig.get("sector") or "—"
     conf = sig.get("confidence")
     conf_line = f"Confidence: {conf:.0f}%\n" if conf is not None else ""
-    chart_url = sig.get("chart_url") or f"https://www.tradingview.com/chart/?symbol=NSE:{sig['symbol']}"
+    chart_url = (
+        sig.get("tv_chart_url")
+        or tradingview_chart_url(sig["symbol"])
+    )
     rr = sig.get("risk_reward")
     rr_line = f"R:R: {rr:.2f}\n" if rr is not None else ""
+    pattern = sig.get("pattern") or sig.get("support_type")
+    pattern_line = f"Pattern: {pattern}\n" if pattern else ""
 
     return (
         f"{emoji} <b>{sig['symbol']}</b> — Smart Money <b>{side}</b>\n"
         f"Sector: {sector}\n"
+        f"{pattern_line}"
         f"Entry: ₹{sig['entry_price']:.2f}\n"
         f"Stop-loss: ₹{sig['stop_loss']:.2f}\n"
         f"Target: ₹{sig['target']:.2f}\n"
@@ -68,7 +75,10 @@ def format_intraday_alert(trigger: dict) -> str:
         f"Confluence: {' + '.join(source_lines)}\n" if len(source_lines) > 1
         else (f"Source: {source_lines[0]}\n" if source_lines else "")
     )
-    chart_url = trigger.get("chart_url", f"https://www.tradingview.com/chart/?symbol=NSE:{trigger['symbol']}")
+    chart_url = (
+        trigger.get("tv_chart_url")
+        or tradingview_chart_url(trigger["symbol"], interval="5")
+    )
 
     return (
         f"🚨 <b>{trigger['symbol']}</b> — Opening Range Breakout\n"

@@ -92,7 +92,7 @@ def capture_entry(
             "recommendation": rec,
         }
 
-    lot_size = LOT_SIZES.get(symbol, 25)
+    lot_size = LOT_SIZES.get(symbol, 65)
     trade_id = journal.log_entry(
         symbol=symbol,
         side=side,
@@ -199,7 +199,7 @@ def poll_open_positions(feed, auto_exit: bool = True) -> list[dict]:
 
         status["hit"] = hit
         if hit and auto_exit:
-            lot_size = LOT_SIZES.get(symbol, 25)
+            lot_size = LOT_SIZES.get(symbol, 65)
             exit_info = journal.log_exit(
                 trade["id"],
                 exit_price=float(ltp),

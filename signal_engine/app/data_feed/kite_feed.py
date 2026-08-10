@@ -29,19 +29,39 @@ INSTRUMENT_TOKENS = {
 
 
 class KiteFeed(DataFeed):
-    def __init__(self, api_key: str, access_token: str):
-        if KiteConnect is None:
-            raise RuntimeError("kiteconnect not installed - pip install kiteconnect")
-        self.kite = KiteConnect(api_key=api_key)
-        self.kite.set_access_token(access_token)
+    def __init__(self, api_key: str = None, access_token: str = None, kite=None):
+        if kite is not None:
+            self.kite = kite
+        else:
+            if KiteConnect is None:
+                raise RuntimeError("kiteconnect not installed - pip install kiteconnect")
+            self.kite = KiteConnect(api_key=api_key)
+            self.kite.set_access_token(access_token)
         self._nfo_instruments = None  # cached lazily on first get_option_ltp() call
+
+    @classmethod
+    def from_shared_auth(cls) -> "KiteFeed":
+        """
+        Preferred path: authenticates through trading-platform/shared/kite_auth.py,
+        the one daily login shared with scanner/ and execution/. Raises whatever
+        shared.kite_auth.get_kite_client() raises if no fresh cached token exists.
+        """
+        import os
+        import sys
+
+        repo_root = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+        if repo_root not in sys.path:
+            sys.path.insert(0, repo_root)
+        from shared.kite_auth import get_kite_client
+
+        return cls(kite=get_kite_client())
 
     @classmethod
     def from_session_file(cls, path: str = SESSION_FILE) -> "KiteFeed":
         """
-        Loads {"api_key": ..., "access_token": ...} written by
+        Legacy fallback: loads {"api_key": ..., "access_token": ...} written by
         scripts/generate_session.py. Raises FileNotFoundError if no session
-        exists yet (e.g. you haven't run the morning login script today).
+        exists. Prefer from_shared_auth() - see there for the current auth path.
         """
         with open(path) as f:
             session = json.load(f)

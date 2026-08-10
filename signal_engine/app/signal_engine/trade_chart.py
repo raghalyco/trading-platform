@@ -56,7 +56,7 @@ def _fmt_ist(dt: datetime | None) -> str | None:
     return dt.astimezone(IST).strftime("%d %b '%y %H:%M")
 
 
-def _candles_to_list(df: pd.DataFrame) -> list[dict]:
+def candles_to_list(df: pd.DataFrame) -> list[dict]:
     out = []
     for _, row in df.iterrows():
         ts = row["timestamp"]
@@ -126,7 +126,7 @@ def build_trade_chart(feed, trade_id: int) -> dict:
         try:
             df = getter(symbol, expiry_iso, int(strike), side, from_dt, to_dt)
             if df is not None and len(df) > 0:
-                candles = _candles_to_list(df)
+                candles = candles_to_list(df)
                 source = "kite"
         except Exception as e:
             note = str(e)

@@ -16,6 +16,8 @@ from kiteconnect import KiteTicker
 import config
 import shortlist as shortlist_mod
 import telegram_alerts
+from charts import tradingview_chart_url
+from support_bounce import local_chart_url
 from intraday_state import SymbolState
 
 
@@ -158,7 +160,8 @@ class IntradayEngine:
                     "vol_vs_avg": vol_vs_avg,
                     "alerted": s.alerted_today,
                     "sources": s.sources,
-                    "chart_url": f"https://www.tradingview.com/chart/?symbol=NSE:{s.symbol}",
+                    "chart_url": local_chart_url(s.symbol),
+                    "tv_chart_url": tradingview_chart_url(s.symbol, interval="5"),
                 })
 
             return {

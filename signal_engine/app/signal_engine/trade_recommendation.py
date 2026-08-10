@@ -14,12 +14,21 @@ from app.signal_engine.strike_selector import pick_strike, STRIKE_STEP
 from app.signal_engine.option_pricing import estimate_premium
 from app.signal_engine.modes import current_expiry_date, current_expiry_date_iso
 
-# NSE equity-index option lot sizes (tune in one place if exchange changes them)
+# NSE/BSE index F&O lot sizes - sourced from Zerodha's official support page
+# (support.zerodha.com, "What are the lot sizes for Index F&O contracts?"),
+# fetched and verified against a live official source. Previous values in
+# this dict were stale/wrong across the board - lot sizes get revised by
+# the exchanges periodically, so re-verify this against the same page (or
+# your broker's contract note) if trades start sizing oddly.
 LOT_SIZES = {
-    "NIFTY": 25,
-    "SENSEX": 10,
-    "BANKNIFTY": 15,
-    "FINNIFTY": 25,
+    "NIFTY": 65,
+    "BANKNIFTY": 30,
+    "FINNIFTY": 60,
+    "MIDCPNIFTY": 120,
+    "NIFTYNXT50": 25,
+    "SENSEX": 20,
+    "BANKEX": 30,
+    "SENSEX50": 75,
 }
 
 

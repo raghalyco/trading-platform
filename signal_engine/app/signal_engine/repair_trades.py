@@ -58,7 +58,7 @@ def repair_premium_trade(feed, trade_id: int) -> dict:
     entry = float(trade["entry_premium"])
     sl = trade.get("sl_premium")
     t1 = trade.get("t1_premium")
-    lot = LOT_SIZES.get(trade.get("symbol") or "NIFTY", 25)
+    lot = LOT_SIZES.get(trade.get("symbol") or "NIFTY", 65)
     recorded_exit = trade.get("exit_price")
     entry_dt = _parse_dt(trade.get("entry_time"))
     exit_dt = _parse_dt(trade.get("exit_time")) or entry_dt

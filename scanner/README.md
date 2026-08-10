@@ -223,9 +223,6 @@ End-to-end flow matching the trading requirement:
 
 ```bash
 python test_smart_money_strategy.py   # offline unit tests
-python smart_money_monitor.py         # one-shot scan (+ Telegram)
-python smart_money_monitor.py --loop  # re-scan during market hours
-python smart_money_monitor.py --no-telegram
 ```
 
 API: `GET/POST /api/smart_money/scan` (add `?telegram=0` to skip Telegram).
@@ -259,7 +256,6 @@ WebSocket watchlist tracks the same top-sector leaders.
 | `shortlist.py` | Builds the intraday watchlist (momentum + top-sector leaders) |
 | `smart_money_strategy.py` | Pine-style multi-TF / CHoCH-BOS / momentum / volume / breakout gates |
 | `smart_money_pipeline.py` | Top sectors → leaders → strategy → signals |
-| `smart_money_monitor.py` | CLI runner for the Smart Money pipeline |
 | `intraday_state.py` | Per-symbol tick to candle state machine + trigger logic |
 | `intraday_engine.py` | Start/stop-able WebSocket engine, embedded in the Flask app |
 | `intraday_monitor.py` | Standalone CLI wrapper around the same engine |

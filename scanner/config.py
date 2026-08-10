@@ -168,7 +168,10 @@ SMART_MONEY_MIN_SIGNAL_DISTANCE = 5       # bars between signals (same symbol)
 SMART_MONEY_VOLUME_LONG = 50
 SMART_MONEY_VOLUME_SHORT = 5
 SMART_MONEY_BREAKOUT_PERIOD = 5
-SMART_MONEY_STRUCTURE_LOOKBACK = 3        # CHoCH/BOS must fire within last N bars
+SMART_MONEY_PRE_MOMENTUM_FACTOR = 0.5     # Pine pre_momentum_factor_base for READY
+SMART_MONEY_STRUCTURE_LOOKBACK = 3        # CHoCH/BOS lookback for structure labels
+SMART_MONEY_REQUIRE_STRUCTURE = False     # Pine: BUY/SELL gates do not require CHoCH/BOS
+SMART_MONEY_SHOW_GET_READY = True         # surface READY when near full signal (Pine get_ready)
 SMART_MONEY_HTF_INTERVAL = "15minute"     # higher-TF trend filter
 SMART_MONEY_LTF_INTERVAL = "5minute"      # lower-TF alignment filter
 SMART_MONEY_SL_ATR_MULT = 1.5             # stop distance = ATR(14) * mult
@@ -176,11 +179,89 @@ SMART_MONEY_TP_ATR_MULT = 3.0             # target distance = ATR(14) * mult
 SMART_MONEY_SCAN_INTERVAL_SEC = 300       # CLI loop delay between full scans
 SMART_MONEY_SEND_TELEGRAM = True
 
-# Stock for day — Smart Money BUY screen on a focused index list
+# Stock for day — Smart Money BUY/SELL screen on a focused index list
 STOCK_FOR_DAY_UNIVERSE = "nifty100"       # "nifty50" | "nifty100" | "nifty200" | "nifty500"
-STOCK_FOR_DAY_LOOKBACK_DAYS = 200         # daily history warmup
+STOCK_FOR_DAY_LOOKBACK_DAYS = 400         # daily history (patterns need multi-month swings)
 STOCK_FOR_DAY_SEND_TELEGRAM = False       # list in UI by default; opt-in alerts
 STOCK_FOR_DAY_BACKTEST_MONTHS = 3         # success-rate window for Stock for day backtest
+STOCK_FOR_DAY_INCLUDE_SELL = True         # show Pine-style SELL labels alongside BUY
+
+# Previous Support Bounce — trendlines, bottoms, wedges, triangles, flags, cup&handle
+SUPPORT_BOUNCE_UNIVERSE = "nifty100"      # "nifty50" | "nifty100" | "nifty200" | "nifty500"
+SUPPORT_BOUNCE_LOOKBACK_DAYS = 400        # need multi-month swing history (chart-style)
+SUPPORT_BOUNCE_PIVOT_LENGTH = 5           # short swing pivot
+SUPPORT_BOUNCE_MAJOR_PIVOT_LENGTH = 12    # major swing lows for trendlines
+SUPPORT_BOUNCE_TOUCH_PCT = 2.0            # % band around support / trendline
+SUPPORT_BOUNCE_ATR_TOUCH_MULT = 0.6       # also allow ATR-scaled touch band
+SUPPORT_BOUNCE_MAX_DIST_PCT = 5.0         # max distance above support if only touching
+SUPPORT_BOUNCE_MAX_BOUNCE_DIST_PCT = 12.0 # after a bounce, allow farther extension
+SUPPORT_BOUNCE_BOUNCE_BARS = 35           # lookback for probe + bounce (~5-7 weeks)
+SUPPORT_BOUNCE_MIN_TRENDLINE_SEP = 25     # min bars between trendline anchors
+SUPPORT_BOUNCE_MAX_PIVOTS_FOR_LINE = 10   # recent swing lows considered for lines
+SUPPORT_BOUNCE_MIN_HORIZONTAL_TOUCHES = 2
+SUPPORT_BOUNCE_BREAK_CLOSES = 3           # closes below support => line invalidated
+SUPPORT_BOUNCE_MIN_SCORE = 50             # soft buy-zone score floor (0-100)
+SUPPORT_BOUNCE_REQUIRE_SM_BUY = False     # True = only full Smart Money BUY signals
+SUPPORT_BOUNCE_WEDGE_MIN_SEP = 20         # min bars between wedge anchors
+SUPPORT_BOUNCE_WEDGE_MAX_PIVOTS = 8
+SUPPORT_BOUNCE_BOTTOM_TOL_PCT = 2.0       # bottoms must match within this %
+SUPPORT_BOUNCE_BOTTOM_MIN_SEP = 15        # min bars between consecutive bottoms
+SUPPORT_BOUNCE_BOTTOM_MAX_UP_PCT = 5.0    # only freshly bounced (≤5% above bottoms)
+SUPPORT_BOUNCE_BOTTOM_MAX_PIVOTS = 10     # recent swing lows scanned for W/triple
+SUPPORT_BOUNCE_PATTERN_MIN_SEP = 18       # min bars between triangle/flag anchors
+SUPPORT_BOUNCE_PATTERN_MAX_PIVOTS = 6
+SUPPORT_BOUNCE_TRIANGLE_FLAT_SLOPE = 0.00012  # "flat" side of ascending/descending triangle
+SUPPORT_BOUNCE_FLAG_POLE_LOOKBACK = 60
+SUPPORT_BOUNCE_FLAG_POLE_MIN_PCT = 8.0    # min prior rally to qualify as pole
+SUPPORT_BOUNCE_FLAG_MIN_SEP = 8
+SUPPORT_BOUNCE_FLAG_MAX_BARS = 40         # max consolidation length after pole
+SUPPORT_BOUNCE_CUP_MIN_BARS = 40
+SUPPORT_BOUNCE_CUP_MAX_BARS = 160
+SUPPORT_BOUNCE_CUP_MAX_UP_PCT = 8.0       # handle bounce still near handle low
+
+# Breakout-pattern quality (triangles/wedges/flags/pennants breaking above
+# resistance): require either a re-test of the broken level, or that price
+# hasn't run too far without one — avoids surfacing stocks that already
+# moved away with no re-test to anchor a stop against. Also rewards a
+# high-volume, strong-close breakout bar.
+SUPPORT_BOUNCE_VOLUME_SMA_PERIOD = 20
+SUPPORT_BOUNCE_MAX_BREAKOUT_DIST_PCT = 15.0   # exclude un-retested breakouts extended past this
+SUPPORT_BOUNCE_RETEST_MAX_BARS = 25           # bars allowed for a re-test after breakout (~5 weeks)
+SUPPORT_BOUNCE_RETEST_BAND_PCT = 3.0          # % band around the broken level for a re-test
+SUPPORT_BOUNCE_MIN_CLOSE_STRENGTH = 0.6       # close in the top 40% of the bar's range = "strong"
+SUPPORT_BOUNCE_VOLUME_SPIKE_MULT = 1.5        # breakout volume >= this x SMA counts as "high volume"
+
+# ---------------------------------------------------------------------------
+# Swing Trade (Weekly) — resistance breakout (descending trendline or
+# horizontal box) confirmed by a volume spike, mirrors Previous Support
+# Bounce's trendline/horizontal detection but flipped to breakout-above and
+# run on weekly candles instead of daily.
+# ---------------------------------------------------------------------------
+SWING_TRADE_UNIVERSE = "nifty200"         # "nifty50" | "nifty100" | "nifty200" | "nifty500"
+SWING_TRADE_LOOKBACK_DAYS = 750           # ~3y daily -> enough weekly bars for long bases
+SWING_TRADE_PIVOT_LENGTH = 3              # weekly swing pivot (bars each side)
+SWING_TRADE_MAJOR_PIVOT_LENGTH = 6
+SWING_TRADE_MIN_TREND_SEP = 8             # min weeks between trendline anchors
+SWING_TRADE_MAX_PIVOTS_FOR_LINE = 8       # recent swing highs considered for trendlines
+SWING_TRADE_MIN_HORIZONTAL_TOUCHES = 2
+SWING_TRADE_TOUCH_PCT = 2.5               # % band around resistance / trendline
+SWING_TRADE_ATR_TOUCH_MULT = 0.6          # also allow ATR-scaled touch band
+SWING_TRADE_BREAKOUT_LOOKBACK_WEEKS = 6   # recent weekly bars scanned for a breakout candle
+SWING_TRADE_VOLUME_SMA_WEEKS = 20
+SWING_TRADE_VOLUME_MULT = 2.0             # breakout week volume >= this x the SMA (hard gate)
+SWING_TRADE_BREAKOUT_BUFFER_PCT = 0.5     # close must clear resistance by this % to count
+SWING_TRADE_RETEST_MAX_WEEKS = 6          # re-test must land within N weeks of the breakout
+SWING_TRADE_RETEST_BAND_PCT = 3.0         # % band around old resistance for a re-test
+SWING_TRADE_TRIGGER_MAX_WEEKS = 8         # recency cap — stale breakouts drop off the list
+SWING_TRADE_EMA_FAST = 10                 # informational only, never gates a result
+SWING_TRADE_EMA_SLOW = 20
+SWING_TRADE_SL_ATR_MULT = 1.5             # stop distance = weekly ATR(14) * mult
+SWING_TRADE_TP_ATR_MULT = 3.0             # target distance = weekly ATR(14) * mult
+SWING_TRADE_MIN_SCORE = 45                # soft quality-score floor (0-100) — CANDIDATE/TRIGGERED
+SWING_TRADE_WATCH_BAND_PCT = 6.0          # % below (or just at) resistance still counted as "pressing"
+SWING_TRADE_MIN_SCORE_WATCHING = 25       # lower floor — WATCHING rows have no breakout/volume bonus yet
+SWING_TRADE_MAX_EXTENSION_PCT = 15.0      # drop TRIGGERED rows already this far past the breakout high
+SWING_TRADE_SEND_TELEGRAM = False
 
 # ---------------------------------------------------------------------------
 # Trade simulation rules
@@ -200,3 +281,16 @@ CACHE_DIR = "cache"
 ACCESS_TOKEN_FILE = "cache/access_token.json"
 
 RESULTS_DIR = "results"
+
+# TradingView chart links (opened from the dashboard / Telegram)
+# interval: "D" = daily (matches most scanners). Use "5" / "15" for intraday.
+# Optional TRADINGVIEW_CHART_ID = your saved layout id from the TV URL
+#   https://in.tradingview.com/chart/<THIS_ID>/
+# so zoom, indicators, and theme from that layout are reused.
+TRADINGVIEW_BASE_URL = "https://in.tradingview.com/chart/"
+TRADINGVIEW_INTERVAL = "D"
+# Leave empty for a public chart link (works without owning a layout).
+# Set only if the layout is yours and you'll stay logged into TradingView,
+# or if you've enabled sharing / published it.
+TRADINGVIEW_CHART_ID = ""
+

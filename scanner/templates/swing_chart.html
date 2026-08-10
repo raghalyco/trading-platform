@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ symbol }} — Weekly Chart</title>
+<script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+<style>
+  :root {
+    --bg: #0d0d0c; --surface: #171715; --border: #2b2b27;
+    --text: #f2f1ec; --text-secondary: #9a998f; --text-muted: #6b6a64;
+    --accent: #5b8cff; --green: #22c58a; --red: #f0554a; --ready: #f0b429;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg); color: var(--text); min-height: 100vh;
+    display: flex; flex-direction: column;
+  }
+  header {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 12px 18px; border-bottom: 1px solid var(--border); background: var(--surface);
+    flex-wrap: wrap;
+  }
+  h1 { margin: 0; font-size: 17px; font-weight: 700; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .meta { font-size: 13px; color: var(--text-secondary); margin-top: 4px; }
+  .actions { display: flex; gap: 10px; align-items: center; }
+  a.btn {
+    color: var(--text); text-decoration: none; font-size: 13px; font-weight: 600;
+    padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border);
+    background: #1e1e1b;
+  }
+  a.btn.primary { background: var(--accent); border-color: transparent; color: #fff; }
+  .pill {
+    font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 6px;
+    letter-spacing: 0.02em;
+  }
+  .pill.triggered { background: #0f2e24; color: var(--green); }
+  .pill.candidate { background: #3a2e14; color: var(--ready); }
+  .pill.neutral { background: #1e1e1b; color: var(--text-muted); }
+  #legend {
+    display: flex; gap: 14px; flex-wrap: wrap; padding: 8px 18px; align-items: center;
+    font-size: 12px; color: var(--text-secondary); border-bottom: 1px solid var(--border);
+  }
+  .leg { display: inline-flex; align-items: center; gap: 6px; }
+  .swatch { width: 14px; height: 3px; border-radius: 2px; }
+  #chart { flex: 1; min-height: 560px; width: 100%; }
+  #status { padding: 24px 18px; color: var(--text-muted); font-size: 14px; }
+  #banner {
+    padding: 10px 18px; font-size: 14px; font-weight: 700; text-align: center;
+    background: #3a2e14; color: var(--ready); border-bottom: 1px solid var(--border);
+  }
+  #banner.triggered { background: #0f2e24; color: var(--green); }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>
+      <span id="title">{{ symbol }}</span>
+      <span class="pill neutral" id="statusPill">…</span>
+    </h1>
+    <div class="meta" id="subtitle">Loading chart…</div>
+  </div>
+  <div class="actions">
+    <a class="btn" href="/" >← Dashboard</a>
+    <a class="btn primary" id="tvLink" href="#" target="_blank" rel="noopener">TradingView ↗</a>
+  </div>
+</header>
+<div id="banner" hidden></div>
+<div id="legend"></div>
+<div id="status">Fetching chart data…</div>
+<div id="chart" hidden></div>
+<script>
+const SYMBOL = {{ symbol|tojson }};
+
+function statusPillClass(status) {
+  if (status === 'TRIGGERED') return 'triggered';
+  if (status === 'CANDIDATE') return 'candidate';
+  return 'neutral';
+}
+
+async function load() {
+  const status = document.getElementById('status');
+  const chartEl = document.getElementById('chart');
+  try {
+    if (typeof LightweightCharts === 'undefined') {
+      status.textContent = 'Chart library failed to load (CDN). Check network and refresh.';
+      return;
+    }
+    const res = await fetch('/api/swing_trade/chart/' + encodeURIComponent(SYMBOL));
+    const data = await res.json();
+    if (!res.ok || data.error) {
+      status.textContent = data.error || ('HTTP ' + res.status);
+      return;
+    }
+    status.hidden = true;
+    chartEl.hidden = false;
+
+    const rtype = data.resistance_type || 'Weekly chart';
+    document.getElementById('title').textContent = data.symbol + ' · ' + rtype;
+    const pill = document.getElementById('statusPill');
+    pill.className = 'pill ' + statusPillClass(data.status);
+    pill.textContent = data.status || 'WATCHING';
+
+    const bits = [];
+    if (data.resistance_price != null) bits.push('resistance ₹' + Number(data.resistance_price).toFixed(2));
+    if (data.breakout_high != null) bits.push('breakout high ₹' + Number(data.breakout_high).toFixed(2));
+    if (data.volume_ratio != null) bits.push('vol ' + Number(data.volume_ratio).toFixed(2) + 'x avg');
+    if (data.retest) bits.push('re-tested');
+    document.getElementById('subtitle').textContent = bits.join(' · ') || 'Weekly resistance breakout';
+
+    const banner = document.getElementById('banner');
+    if (data.status_message) {
+      banner.hidden = false;
+      banner.className = data.status === 'TRIGGERED' ? 'triggered' : '';
+      banner.textContent = (data.status === 'CANDIDATE' ? '🚀 ' : '✅ ') + data.status_message;
+    } else {
+      banner.hidden = true;
+    }
+
+    if (data.tv_chart_url) {
+      document.getElementById('tvLink').href = data.tv_chart_url;
+    }
+
+    const legend = document.getElementById('legend');
+    let legendHtml = (data.lines || []).map(l =>
+      `<span class="leg"><span class="swatch" style="background:${l.color}"></span>${l.name}</span>`
+    ).join('');
+    if ((data.markers || []).length) {
+      if (data.markers.some(m => m.text === 'Resistance')) {
+        legendHtml += `<span class="leg"><span class="swatch" style="background:#f0554a"></span>Resistance touch</span>`;
+      }
+      legendHtml += `<span class="leg"><span class="swatch" style="background:#f0b429"></span>BREAKOUT + VOL SPIKE</span>`;
+      if (data.markers.some(m => m.text === 'RE-TEST')) {
+        legendHtml += `<span class="leg"><span class="swatch" style="background:#3d8bfd"></span>RE-TEST</span>`;
+      }
+      if (data.markers.some(m => m.text === 'CONTINUATION')) {
+        legendHtml += `<span class="leg"><span class="swatch" style="background:#22c58a"></span>CONTINUATION</span>`;
+      }
+    }
+    if ((data.structure_markers || []).length) {
+      legendHtml += `<span class="leg"><span class="swatch" style="background:#22c58a"></span>HH/HL</span>`;
+      legendHtml += `<span class="leg"><span class="swatch" style="background:#f0554a"></span>LH/LL</span>`;
+    }
+    legend.innerHTML = legendHtml || '<span class="leg">No pattern lines yet</span>';
+
+    const chart = LightweightCharts.createChart(chartEl, {
+      layout: {
+        background: { type: 'solid', color: '#0d0d0c' },
+        textColor: '#9a998f',
+      },
+      grid: {
+        vertLines: { color: '#1e1e1b' },
+        horzLines: { color: '#1e1e1b' },
+      },
+      rightPriceScale: {
+        borderColor: '#2b2b27',
+        scaleMargins: { top: 0.1, bottom: 0.3 },
+      },
+      timeScale: { borderColor: '#2b2b27', timeVisible: false },
+      crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+    });
+
+    const candleSeries = chart.addCandlestickSeries({
+      upColor: '#22c58a',
+      downColor: '#f0554a',
+      borderUpColor: '#22c58a',
+      borderDownColor: '#f0554a',
+      wickUpColor: '#22c58a',
+      wickDownColor: '#f0554a',
+    });
+    candleSeries.setData(data.candles || []);
+    const allMarkers = [...(data.markers || []), ...(data.structure_markers || [])]
+      .sort((a, b) => (a.time < b.time ? -1 : a.time > b.time ? 1 : 0));
+    if (allMarkers.length) {
+      candleSeries.setMarkers(allMarkers);
+    }
+
+    for (const line of (data.lines || [])) {
+      const series = chart.addLineSeries({
+        color: line.color,
+        lineWidth: line.lineWidth || 2,
+        lineStyle: line.dashed ? LightweightCharts.LineStyle.Dashed : LightweightCharts.LineStyle.Solid,
+        title: line.name,
+        priceLineVisible: false,
+        lastValueVisible: !line.dashed,
+      });
+      series.setData(line.points || []);
+    }
+
+    if (data.volume && data.volume.length) {
+      const volumeSeries = chart.addHistogramSeries({
+        priceFormat: { type: 'volume' },
+        priceScaleId: 'volume',
+      });
+      volumeSeries.priceScale().applyOptions({
+        scaleMargins: { top: 0.78, bottom: 0 },
+      });
+      volumeSeries.setData(data.volume);
+    }
+
+    chart.timeScale().fitContent();
+    const resize = () => {
+      chart.applyOptions({
+        width: chartEl.clientWidth,
+        height: Math.max(560, window.innerHeight - 120),
+      });
+    };
+    resize();
+    window.addEventListener('resize', resize);
+  } catch (e) {
+    status.textContent = 'Failed to load chart: ' + (e.message || e);
+  }
+}
+load();
+</script>
+</body>
+</html>

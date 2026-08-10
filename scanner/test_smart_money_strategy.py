@@ -115,7 +115,7 @@ def test_signal_dataclass_fields():
     d = sig.to_dict()
     assert d["signal"] == "BUY"
     assert d["risk_reward"] == 2.0
-    assert "NSE:RELIANCE" in d["chart_url"]
+    assert "NSE:RELIANCE" in d["chart_url"] or "NSE%3ARELIANCE" in d["chart_url"]
 
 
 def test_resample_preserves_ohlc():

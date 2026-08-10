@@ -18,6 +18,7 @@ import sys
 import datetime as dt
 from datetime import datetime, time as dtime
 from pathlib import Path
+from typing import Optional
 
 from dotenv import load_dotenv
 load_dotenv(dotenv_path=Path(__file__).resolve().parent / ".env")
@@ -32,6 +33,8 @@ import universe as universe_mod
 import intraday_engine
 import smart_money_pipeline
 import smart_money_backtest
+import support_bounce
+import swing_trade
 from kite_auth import get_kite_session
 from kite_client import KiteDataClient
 
@@ -96,11 +99,74 @@ print(f"Building universe (mode={config.UNIVERSE_MODE})...")
 _universe_df = universe_mod.build_universe(_client)
 print(f"Universe ready: {len(_universe_df)} symbols.")
 
-_last_scan_cache = {"generated_at": None, "results": []}
+_last_scan_cache = {"generated_at": None, "payload": None}
+_ema10_cache = {"generated_at": None, "payload": None}
+_nday_cache = {}  # lookback -> {generated_at, payload}
 _sector_cache = {"generated_at": None, "results": []}
 _trending_cache = {"generated_at": None, "sectors": {}}
 # Per-universe cache: mode -> {generated_at, payload}
 _stock_for_day_cache: dict = {}
+_support_bounce_cache: dict = {}
+_swing_trade_cache: dict = {}
+
+
+def _enrich_hits(hits):
+    if _is_market_open():
+        return live_scan.enrich_with_live_quotes(_client, hits)
+    for h in hits:
+        h["ltp"] = h["close"]
+    return hits
+
+
+def _hits_payload(hits, generated_at=None, extra=None):
+    hits = list(hits)
+    up = sum(1 for h in hits if (h.get("pct_change") or 0) > 0)
+    down = sum(1 for h in hits if (h.get("pct_change") or 0) < 0)
+    payload = {
+        "generated_at": generated_at or datetime.now().isoformat(),
+        "market_open": _is_market_open(),
+        "universe_size": len(_universe_df),
+        "num_signals": len(hits),
+        "up": up,
+        "down": down,
+        "results": hits,
+        "charts": support_bounce.charts_snapshot([h["symbol"] for h in hits if h.get("symbol")]),
+    }
+    if extra:
+        payload.update(extra)
+    return payload
+
+
+def _refresh_scan_cache():
+    print("Warming 13-rule Breakout Scanner cache...")
+    hits = _enrich_hits(live_scan.run_scan(_client, _universe_df))
+    hits.sort(key=lambda h: h["rsi14"], reverse=True)
+    payload = _hits_payload(hits)
+    _last_scan_cache["generated_at"] = payload["generated_at"]
+    _last_scan_cache["payload"] = payload
+    print(f"Breakout Scanner ready: {len(hits)} signal(s).")
+    return payload
+
+
+def _refresh_ema10_cache():
+    print("Warming EMA10 Pullback Scanner cache...")
+    hits = _enrich_hits(live_scan.run_ema10_scan(_client, _universe_df))
+    hits.sort(key=lambda h: h["distance_from_ema10_pct"])
+    payload = _hits_payload(hits)
+    _ema10_cache["generated_at"] = payload["generated_at"]
+    _ema10_cache["payload"] = payload
+    print(f"EMA10 Scanner ready: {len(hits)} signal(s).")
+    return payload
+
+
+def _refresh_nday_cache(lookback: int):
+    print(f"Warming N-Day BO cache (lookback={lookback})...")
+    hits = _enrich_hits(live_scan.run_nday_scan(_client, _universe_df, lookback))
+    hits.sort(key=lambda h: h["signal_date"], reverse=True)
+    payload = _hits_payload(hits, extra={"lookback": lookback})
+    _nday_cache[lookback] = {"generated_at": payload["generated_at"], "payload": payload}
+    print(f"N-Day BO ({lookback}D) ready: {len(hits)} signal(s).")
+    return payload
 
 
 def _refresh_sector_cache():
@@ -121,6 +187,103 @@ def _refresh_trending_cache():
     return _trending_cache
 
 
+def _rehydrate_payload_charts(payload: Optional[dict]) -> None:
+    if not payload:
+        return
+    support_bounce.rehydrate_charts(payload.get("charts"))
+
+
+def _find_cached_chart(symbol: str):
+    """Look up chart geometry across all scanner caches."""
+    symbol = str(symbol).upper()
+    payload = support_bounce.get_chart_payload(symbol)
+    if payload is not None:
+        return payload
+    caches = []
+    for cached in _support_bounce_cache.values():
+        caches.append(cached.get("payload") or {})
+    for cached in _stock_for_day_cache.values():
+        caches.append(cached.get("payload") or {})
+    if _last_scan_cache.get("payload"):
+        caches.append(_last_scan_cache["payload"])
+    if _ema10_cache.get("payload"):
+        caches.append(_ema10_cache["payload"])
+    for cached in _nday_cache.values():
+        caches.append(cached.get("payload") or {})
+    for payload in caches:
+        charts = payload.get("charts") or {}
+        if symbol in charts:
+            support_bounce.store_chart_payload(symbol, charts[symbol])
+            return charts[symbol]
+    return None
+
+
+def _refresh_stock_for_day_cache(mode=None):
+    mode = mode or (config.STOCK_FOR_DAY_UNIVERSE or "nifty100")
+    try:
+        mode = universe_mod.normalize_nifty_mode(mode)
+    except ValueError:
+        mode = "nifty100"
+    print(f"Warming Stock for day cache ({mode})...")
+    payload = smart_money_pipeline.scan_stock_for_day(
+        _client,
+        _universe_df,
+        send_telegram=False,
+        universe_mode=mode,
+    )
+    _stock_for_day_cache[mode] = {
+        "generated_at": payload["generated_at"],
+        "payload": payload,
+    }
+    support_bounce.rehydrate_charts(payload.get("charts"))
+    print(f"Stock for day ready: {payload.get('num_buys', 0)} BUY / {payload.get('num_sells', 0)} SELL on {payload.get('universe_label', mode)}.")
+    return payload
+
+
+def _refresh_support_bounce_cache(mode=None):
+    mode = mode or (config.SUPPORT_BOUNCE_UNIVERSE or "nifty100")
+    try:
+        mode = universe_mod.normalize_nifty_mode(mode)
+    except ValueError:
+        mode = "nifty100"
+    print(f"Warming Previous Support Bounce cache ({mode})...")
+    payload = support_bounce.scan_support_bounce(
+        _client, _universe_df, universe_mode=mode
+    )
+    _support_bounce_cache[mode] = {
+        "generated_at": payload["generated_at"],
+        "payload": payload,
+    }
+    support_bounce.rehydrate_charts(payload.get("charts"))
+    print(
+        f"Support Bounce ready: {payload.get('num_results', 0)} hit(s) on "
+        f"{payload.get('universe_label', mode)}."
+    )
+    return payload
+
+
+def _refresh_swing_trade_cache(mode=None):
+    mode = mode or (config.SWING_TRADE_UNIVERSE or "nifty200")
+    try:
+        mode = universe_mod.normalize_nifty_mode(mode)
+    except ValueError:
+        mode = "nifty200"
+    print(f"Warming Swing Trade (Weekly) cache ({mode})...")
+    payload = swing_trade.scan_swing_trade(
+        _client, _universe_df, universe_mode=mode
+    )
+    _swing_trade_cache[mode] = {
+        "generated_at": payload["generated_at"],
+        "payload": payload,
+    }
+    swing_trade.rehydrate_charts(payload.get("charts"))
+    print(
+        f"Swing Trade ready: {payload.get('num_results', 0)} hit(s) on "
+        f"{payload.get('universe_label', mode)}."
+    )
+    return payload
+
+
 def _want_refresh() -> bool:
     """POST always refreshes; GET refreshes only with ?refresh=1."""
     from flask import request
@@ -129,7 +292,14 @@ def _want_refresh() -> bool:
     return request.args.get("refresh", "0") in ("1", "true", "True")
 
 
-# Precompute Sector + Trending so the dashboard can paint immediately.
+def _is_market_open() -> bool:
+    now = datetime.now()
+    if now.weekday() >= 5:  # Sat/Sun
+        return False
+    return dtime(9, 15) <= now.time() <= dtime(15, 30)
+
+
+# Precompute scanner caches so every tab can paint immediately.
 # With Flask's reloader: warm only in the child (WERKZEUG_RUN_MAIN=true).
 # With debug off: warm in this process. API handlers also fill an empty cache
 # on first request as a safety net.
@@ -140,74 +310,51 @@ if (
 ):
     _refresh_sector_cache()
     _refresh_trending_cache()
-
-
-def _is_market_open() -> bool:
-    now = datetime.now()
-    if now.weekday() >= 5:  # Sat/Sun
-        return False
-    return dtime(9, 15) <= now.time() <= dtime(15, 30)
+    _refresh_stock_for_day_cache()
+    _refresh_support_bounce_cache()
+    _refresh_swing_trade_cache()
 
 
 @app.route("/")
 def index():
-    return render_template("index.html", universe_size=len(_universe_df),
-                            universe_mode=config.UNIVERSE_MODE,
-                            ema10_max_distance=config.EMA10_MAX_DISTANCE_PCT,
-                            nday_proximity=config.NDAY_PROXIMITY_PCT)
+    return render_template(
+        "index.html",
+        universe_size=len(_universe_df),
+        universe_mode=config.UNIVERSE_MODE,
+        ema10_max_distance=config.EMA10_MAX_DISTANCE_PCT,
+        nday_proximity=config.NDAY_PROXIMITY_PCT,
+        stock_for_day_universe=config.STOCK_FOR_DAY_UNIVERSE or "nifty100",
+        support_bounce_universe=config.SUPPORT_BOUNCE_UNIVERSE or "nifty100",
+        swing_trade_universe=config.SWING_TRADE_UNIVERSE or "nifty200",
+    )
 
 
 @app.route("/api/scan", methods=["POST", "GET"])
 def api_scan():
-    hits = live_scan.run_scan(_client, _universe_df)
-    if _is_market_open():
-        hits = live_scan.enrich_with_live_quotes(_client, hits)
+    refresh = _want_refresh()
+    if refresh or not _last_scan_cache["generated_at"]:
+        payload = _refresh_scan_cache()
     else:
-        for h in hits:
-            h["ltp"] = h["close"]
-
-    hits.sort(key=lambda h: h["rsi14"], reverse=True)
-    _last_scan_cache["generated_at"] = datetime.now().isoformat()
-    _last_scan_cache["results"] = hits
-
-    up = sum(1 for h in hits if (h.get("pct_change") or 0) > 0)
-    down = sum(1 for h in hits if (h.get("pct_change") or 0) < 0)
-
-    return jsonify({
-        "generated_at": _last_scan_cache["generated_at"],
-        "market_open": _is_market_open(),
-        "universe_size": len(_universe_df),
-        "num_signals": len(hits),
-        "up": up,
-        "down": down,
-        "results": hits,
-    })
+        payload = dict(_last_scan_cache["payload"] or {})
+    out = dict(payload)
+    _rehydrate_payload_charts(out)
+    out["market_open"] = _is_market_open()
+    out["cached"] = not refresh
+    return jsonify(out)
 
 
 @app.route("/api/scan_ema10", methods=["POST", "GET"])
 def api_scan_ema10():
-    hits = live_scan.run_ema10_scan(_client, _universe_df)
-    if _is_market_open():
-        hits = live_scan.enrich_with_live_quotes(_client, hits)
+    refresh = _want_refresh()
+    if refresh or not _ema10_cache["generated_at"]:
+        payload = _refresh_ema10_cache()
     else:
-        for h in hits:
-            h["ltp"] = h["close"]
-
-    hits.sort(key=lambda h: h["distance_from_ema10_pct"])
-    generated_at = datetime.now().isoformat()
-
-    up = sum(1 for h in hits if (h.get("pct_change") or 0) > 0)
-    down = sum(1 for h in hits if (h.get("pct_change") or 0) < 0)
-
-    return jsonify({
-        "generated_at": generated_at,
-        "market_open": _is_market_open(),
-        "universe_size": len(_universe_df),
-        "num_signals": len(hits),
-        "up": up,
-        "down": down,
-        "results": hits,
-    })
+        payload = dict(_ema10_cache["payload"] or {})
+    out = dict(payload)
+    _rehydrate_payload_charts(out)
+    out["market_open"] = _is_market_open()
+    out["cached"] = not refresh
+    return jsonify(out)
 
 
 @app.route("/api/scan_nday", methods=["POST", "GET"])
@@ -217,29 +364,17 @@ def api_scan_nday():
     if lookback not in config.NDAY_LOOKBACKS:
         return jsonify({"error": f"lookback must be one of {config.NDAY_LOOKBACKS}"}), 400
 
-    hits = live_scan.run_nday_scan(_client, _universe_df, lookback)
-    if _is_market_open():
-        hits = live_scan.enrich_with_live_quotes(_client, hits)
+    refresh = _want_refresh()
+    cached = _nday_cache.get(lookback) or {}
+    if refresh or not cached.get("generated_at"):
+        payload = _refresh_nday_cache(lookback)
     else:
-        for h in hits:
-            h["ltp"] = h["close"]
-
-    hits.sort(key=lambda h: h["signal_date"], reverse=True)
-    generated_at = datetime.now().isoformat()
-
-    up = sum(1 for h in hits if (h.get("pct_change") or 0) > 0)
-    down = sum(1 for h in hits if (h.get("pct_change") or 0) < 0)
-
-    return jsonify({
-        "lookback": lookback,
-        "generated_at": generated_at,
-        "market_open": _is_market_open(),
-        "universe_size": len(_universe_df),
-        "num_signals": len(hits),
-        "up": up,
-        "down": down,
-        "results": hits,
-    })
+        payload = dict(cached.get("payload") or {})
+    out = dict(payload)
+    _rehydrate_payload_charts(out)
+    out["market_open"] = _is_market_open()
+    out["cached"] = not refresh
+    return jsonify(out)
 
 
 @app.route("/api/scan_sector", methods=["POST", "GET"])
@@ -312,6 +447,26 @@ def _stock_for_day_universe_arg() -> str:
         return "nifty100"
 
 
+def _support_bounce_universe_arg() -> str:
+    from flask import request
+    import universe as universe_mod
+    raw = (request.args.get("universe") or config.SUPPORT_BOUNCE_UNIVERSE or "nifty100")
+    try:
+        return universe_mod.normalize_nifty_mode(raw)
+    except ValueError:
+        return "nifty100"
+
+
+def _swing_trade_universe_arg() -> str:
+    from flask import request
+    import universe as universe_mod
+    raw = (request.args.get("universe") or config.SWING_TRADE_UNIVERSE or "nifty200")
+    try:
+        return universe_mod.normalize_nifty_mode(raw)
+    except ValueError:
+        return "nifty200"
+
+
 @app.route("/api/stock_for_day", methods=["POST", "GET"])
 def api_stock_for_day():
     """Smart Money structure scan on selected Nifty universe — BUY-eligible only."""
@@ -330,6 +485,11 @@ def api_stock_for_day():
             cached = {"generated_at": payload["generated_at"], "payload": payload}
             _stock_for_day_cache[mode] = cached
         out = dict(cached.get("payload") or {})
+        support_bounce.rehydrate_charts(out.get("charts"))
+        for row in out.get("buys") or []:
+            sym = row.get("symbol")
+            if sym:
+                row["chart_url"] = support_bounce.local_chart_url(sym)
         out["market_open"] = _is_market_open()
         out["cached"] = not refresh
         return jsonify(out)
@@ -338,6 +498,147 @@ def api_stock_for_day():
         import traceback
         traceback.print_exc()
         return jsonify({"error": str(e), "buys": [], "num_buys": 0}), 500
+
+
+@app.route("/api/support_bounce", methods=["POST", "GET"])
+def api_support_bounce():
+    """Previous support touch/bounce filtered by Smart Money buy zone."""
+    try:
+        mode = _support_bounce_universe_arg()
+        refresh = _want_refresh()
+        cached = _support_bounce_cache.get(mode) or {}
+        if refresh or not cached.get("generated_at"):
+            print(f"Running Support Bounce scan ({mode})...")
+            payload = support_bounce.scan_support_bounce(
+                _client, _universe_df, universe_mode=mode
+            )
+            cached = {"generated_at": payload["generated_at"], "payload": payload}
+            _support_bounce_cache[mode] = cached
+        out = dict(cached.get("payload") or {})
+        # Keep chart geometry available even after a reloader restart / cold cache.
+        support_bounce.rehydrate_charts(out.get("charts"))
+        for row in out.get("results") or []:
+            sym = row.get("symbol")
+            if sym:
+                row["chart_url"] = support_bounce.local_chart_url(sym)
+        out["market_open"] = _is_market_open()
+        out["cached"] = not refresh
+        return jsonify(out)
+    except Exception as e:
+        print(f"[support_bounce] failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e), "results": [], "num_results": 0}), 500
+
+
+@app.route("/support-chart/<path:symbol>")
+def support_chart_page(symbol):
+    """Local candlestick chart with detected support / wedge lines drawn."""
+    return render_template("support_chart.html", symbol=str(symbol).upper())
+
+
+@app.route("/api/support_bounce/chart/<path:symbol>")
+def api_support_bounce_chart(symbol):
+    """OHLC + plot lines + Smart Money BUY/SELL marker for any scanner chart."""
+    symbol = str(symbol).upper()
+    try:
+        payload = _find_cached_chart(symbol)
+        need_refresh = (
+            payload is None
+            or not payload.get("candles")
+            or not payload.get("smart_money_signal")
+            or "markers" not in payload
+        )
+        if need_refresh:
+            row = _universe_df[_universe_df["tradingsymbol"] == symbol]
+            if row.empty:
+                return jsonify({"error": f"Unknown symbol {symbol}"}), 404
+            token = int(row.iloc[0]["instrument_token"])
+            today = datetime.now().date()
+            from_date = today - dt.timedelta(days=config.SUPPORT_BOUNCE_LOOKBACK_DAYS)
+            daily = _client.get_daily_history(token, symbol, from_date, today)
+            if daily is None or daily.empty or len(daily) < 30:
+                return jsonify({"error": f"No history for {symbol}"}), 404
+            # Rebuild pattern + always attach Pine BUY/SELL label/markers.
+            support_bounce.annotate_result_with_pattern(symbol, daily, {"symbol": symbol})
+            payload = support_bounce.get_chart_payload(symbol)
+            if payload is None:
+                # Still return OHLC + SM label even without a pattern event.
+                payload = support_bounce.build_chart_payload(symbol, daily, {
+                    "smart_money_signal": None,
+                })
+                support_bounce.store_chart_payload(symbol, payload)
+        return jsonify(payload)
+    except Exception as e:
+        print(f"[support_bounce/chart] failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/swing_trade", methods=["POST", "GET"])
+def api_swing_trade():
+    """Weekly resistance-breakout scan (descending trendline / horizontal box)
+    confirmed by a volume spike."""
+    try:
+        mode = _swing_trade_universe_arg()
+        refresh = _want_refresh()
+        cached = _swing_trade_cache.get(mode) or {}
+        if refresh or not cached.get("generated_at"):
+            print(f"Running Swing Trade scan ({mode})...")
+            payload = swing_trade.scan_swing_trade(
+                _client, _universe_df, universe_mode=mode
+            )
+            cached = {"generated_at": payload["generated_at"], "payload": payload}
+            _swing_trade_cache[mode] = cached
+        out = dict(cached.get("payload") or {})
+        swing_trade.rehydrate_charts(out.get("charts"))
+        for row in out.get("results") or []:
+            sym = row.get("symbol")
+            if sym:
+                row["chart_url"] = swing_trade.local_chart_url(sym)
+        out["market_open"] = _is_market_open()
+        out["cached"] = not refresh
+        return jsonify(out)
+    except Exception as e:
+        print(f"[swing_trade] failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e), "results": [], "num_results": 0}), 500
+
+
+@app.route("/swing-chart/<path:symbol>")
+def swing_chart_page(symbol):
+    """Weekly candlestick chart with resistance line/box + breakout markers."""
+    return render_template("swing_chart.html", symbol=str(symbol).upper())
+
+
+@app.route("/api/swing_trade/chart/<path:symbol>")
+def api_swing_trade_chart(symbol):
+    """Weekly OHLC + volume + resistance geometry + BREAKOUT/RE-TEST markers."""
+    symbol = str(symbol).upper()
+    try:
+        payload = swing_trade.get_chart_payload(symbol)
+        need_refresh = payload is None or not payload.get("candles")
+        if need_refresh:
+            row = _universe_df[_universe_df["tradingsymbol"] == symbol]
+            if row.empty:
+                return jsonify({"error": f"Unknown symbol {symbol}"}), 404
+            token = int(row.iloc[0]["instrument_token"])
+            today = datetime.now().date()
+            from_date = today - dt.timedelta(days=config.SWING_TRADE_LOOKBACK_DAYS)
+            daily = _client.get_daily_history(token, symbol, from_date, today)
+            if daily is None or daily.empty or len(daily) < 150:
+                return jsonify({"error": f"No history for {symbol}"}), 404
+            payload = swing_trade.rebuild_chart_for_symbol(symbol, daily)
+            if payload is None:
+                return jsonify({"error": f"Not enough weekly history for {symbol}"}), 404
+        return jsonify(payload)
+    except Exception as e:
+        print(f"[swing_trade/chart] failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/stock_for_day/backtest", methods=["POST", "GET"])

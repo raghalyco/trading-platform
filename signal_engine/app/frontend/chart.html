@@ -5,12 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Trade chart</title>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<script src="https://unpkg.com/lightweight-charts/dist/lightweight-charts.standalone.production.js"></script>
 <style>
 :root{
   --bg:#131722; --panel:#1e222d; --text:#d1d4dc; --muted:#787b86;
-  --green:#26a69a; --green-bg:rgba(38,166,154,.22);
-  --red:#ef5350; --red-bg:rgba(239,83,80,.22);
-  --blue:#2962ff; --line:#2a2e39;
+  --green:#26a69a; --red:#ef5350; --blue:#2962ff; --line:#2a2e39;
   --font:Inter,-apple-system,sans-serif;
 }
 *{box-sizing:border-box;}
@@ -26,14 +25,21 @@ body{
 .sub{font-size:12px; color:var(--muted);}
 .badge{
   font-size:11px; font-weight:700; padding:4px 8px; border-radius:6px;
-  background:var(--panel); color:var(--muted);
+  background:var(--panel); color:var(--muted); white-space:nowrap;
 }
 .badge.win{color:var(--green); background:rgba(38,166,154,.15);}
 .badge.loss{color:var(--red); background:rgba(239,83,80,.15);}
-.wrap{position:relative; height:calc(100vh - 64px); width:100%;}
-canvas{display:block; width:100%; height:100%;}
-.err{padding:24px; color:var(--red);}
 .note{padding:0 14px 8px; font-size:11px; color:var(--muted);}
+.wrap{position:relative; height:calc(100vh - 64px); width:100%;}
+#chart{width:100%; height:100%;}
+.pnl-card{
+  position:absolute; top:12px; left:12px; z-index:5;
+  padding:8px 12px; border-radius:8px; font-family:var(--font);
+  text-align:left; pointer-events:none;
+}
+.pnl-card .amt{font-size:15px; font-weight:700; color:#fff;}
+.pnl-card .meta{font-size:10px; color:rgba(255,255,255,.85); margin-top:2px;}
+.err{padding:24px; color:var(--red);}
 </style>
 </head>
 <body>
@@ -45,28 +51,92 @@ canvas{display:block; width:100%; height:100%;}
     <span class="badge" id="resultBadge">—</span>
   </div>
   <div class="note" id="note"></div>
-  <div class="wrap"><canvas id="c"></canvas></div>
+  <div class="wrap">
+    <div id="chart"></div>
+    <div class="pnl-card" id="pnlCard" style="display:none;"></div>
+  </div>
 <script>
 const params = new URLSearchParams(location.search);
 const tradeId = params.get('id') || params.get('trade_id');
-
-function parseTs(iso){
-  if (!iso) return null;
-  const d = new Date(iso);
-  return Number.isNaN(d.getTime()) ? null : d.getTime();
-}
+const isBacktest = params.get('bt') === '1';
 
 function fmtNum(n, dig=2){
   if (n == null || Number.isNaN(Number(n))) return '—';
   return Number(n).toFixed(dig);
 }
 
+function toChartTime(iso){
+  // lightweight-charts wants unix seconds (UTC) - it renders the axis using
+  // the browser's local zone by default, so we shift the value by the IST
+  // offset and tell the chart to treat it as UTC. That way the axis always
+  // reads true IST wall-clock time regardless of the viewer's own timezone.
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  const IST_OFFSET_MIN = 5.5 * 60;
+  const localOffsetMin = -d.getTimezoneOffset();
+  const shiftMin = IST_OFFSET_MIN - localOffsetMin;
+  return Math.floor((d.getTime() + shiftMin * 60000) / 1000);
+}
+
+function fmtAxisIst(unixSeconds){
+  const d = new Date(unixSeconds * 1000);
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const hh = String(d.getUTCHours()).padStart(2,'0');
+  const mm = String(d.getUTCMinutes()).padStart(2,'0');
+  return `${d.getUTCDate()} ${months[d.getUTCMonth()]} ${hh}:${mm}`;
+}
+
+let chart, candleSeries, markerApi;
+
+function buildChart(){
+  const wrap = document.getElementById('chart');
+  chart = LightweightCharts.createChart(wrap, {
+    width: wrap.clientWidth,
+    height: wrap.clientHeight,
+    layout: { background: { color: '#131722' }, textColor: '#d1d4dc', fontFamily: 'Inter,-apple-system,sans-serif' },
+    grid: { vertLines: { color: '#1e222d' }, horzLines: { color: '#1e222d' } },
+    rightPriceScale: { borderColor: '#2a2e39' },
+    timeScale: {
+      borderColor: '#2a2e39',
+      timeVisible: true,
+      secondsVisible: false,
+      tickMarkFormatter: fmtAxisIst,
+    },
+    crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+    localization: {
+      timeFormatter: fmtAxisIst,
+      priceFormatter: (p) => fmtNum(p),
+    },
+  });
+  candleSeries = chart.addSeries(LightweightCharts.CandlestickSeries, {
+    upColor: '#26a69a', downColor: '#ef5350', borderVisible: false,
+    wickUpColor: '#26a69a', wickDownColor: '#ef5350',
+  });
+  window.addEventListener('resize', () => {
+    chart.resize(wrap.clientWidth, wrap.clientHeight);
+  });
+}
+
 async function load(){
-  if (!tradeId) {
+  let url;
+  if (isBacktest) {
+    const q = new URLSearchParams({
+      trade_index: params.get('idx') || '0',
+      symbol: params.get('symbol') || 'NIFTY',
+      mode: params.get('mode') || 'SCALP',
+      months: params.get('months') || '3',
+      step_minutes: params.get('step_minutes') || '15',
+      mark_to_market: params.get('mark_to_market') || 'true',
+      min_score: params.get('min_score') || '4',
+    });
+    url = `/api/report/performance/trade-chart?${q.toString()}`;
+  } else if (tradeId) {
+    url = `/api/journal/${tradeId}/chart`;
+  } else {
     document.getElementById('title').textContent = 'Missing trade id';
     return;
   }
-  const res = await fetch(`/api/journal/${tradeId}/chart`);
+  const res = await fetch(url);
   const d = await res.json();
   if (!d.ok) {
     document.getElementById('title').textContent = d.error || 'Failed';
@@ -88,189 +158,94 @@ async function load(){
 }
 
 function draw(d){
-  const canvas = document.getElementById('c');
-  const wrap = canvas.parentElement;
-  const dpr = window.devicePixelRatio || 1;
-  const W = wrap.clientWidth;
-  const H = wrap.clientHeight;
-  canvas.width = W * dpr;
-  canvas.height = H * dpr;
-  canvas.style.width = W + 'px';
-  canvas.style.height = H + 'px';
-  const ctx = canvas.getContext('2d');
-  ctx.scale(dpr, dpr);
+  const candles = (d.candles || [])
+    .map(c => ({ time: toChartTime(c.time), open: c.open, high: c.high, low: c.low, close: c.close }))
+    .filter(c => c.time != null)
+    .sort((a, b) => a.time - b.time);
 
-  const candles = d.candles || [];
   if (!candles.length) {
-    ctx.fillStyle = '#ef5350';
-    ctx.font = '14px Inter';
-    ctx.fillText('No candle data', 20, 40);
+    document.getElementById('chart').innerHTML = '<div class="err">No candle data</div>';
     return;
   }
 
-  const padL = 12, padR = 64, padT = 28, padB = 48;
-  const plotW = W - padL - padR;
-  const plotH = H - padT - padB;
+  buildChart();
+  candleSeries.setData(candles);
 
   const entry = d.entry?.price;
   const exitPx = d.exit?.price ?? d.target;
-  const target = d.target ?? exitPx;
+  const target = d.target;
   const stop = d.stop;
+  const entryTime = toChartTime(d.entry?.time) ?? candles[0].time;
+  const exitTime = toChartTime(d.exit?.time) ?? candles[candles.length - 1].time;
 
-  let minP = Math.min(...candles.map(c => c.low), entry || Infinity, stop || Infinity, target || Infinity);
-  let maxP = Math.max(...candles.map(c => c.high), entry || 0, stop || 0, target || 0, exitPx || 0);
-  const span = Math.max(1, maxP - minP);
-  minP -= span * 0.08;
-  maxP += span * 0.12;
+  // Price lines: entry / target / stop
+  if (entry != null) {
+    candleSeries.createPriceLine({
+      price: entry, color: '#787b86', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed,
+      axisLabelVisible: true, title: 'Entry',
+    });
+  }
+  if (target != null) {
+    candleSeries.createPriceLine({
+      price: target, color: '#26a69a', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed,
+      axisLabelVisible: true, title: 'Target',
+    });
+  }
+  if (stop != null) {
+    candleSeries.createPriceLine({
+      price: stop, color: '#ef5350', lineWidth: 1, lineStyle: LightweightCharts.LineStyle.Dashed,
+      axisLabelVisible: true, title: 'Stop',
+    });
+  }
 
-  const t0 = parseTs(candles[0].time);
-  const t1 = parseTs(candles[candles.length-1].time);
-  const tSpan = Math.max(1, t1 - t0);
+  // Entry -> exit trend line (actual line series, like drawing a trendline)
+  if (exitPx != null && exitTime !== entryTime) {
+    const trendSeries = chart.addSeries(LightweightCharts.LineSeries, {
+      color: exitPx >= entry ? '#26a69a' : '#ef5350',
+      lineWidth: 2, lineStyle: LightweightCharts.LineStyle.Dashed,
+      pointMarkersVisible: false, lastValueVisible: false, priceLineVisible: false,
+      crosshairMarkerVisible: false,
+    });
+    trendSeries.setData([{ time: entryTime, value: entry }, { time: exitTime, value: exitPx }]);
+  }
 
-  const xOf = (t) => padL + ((t - t0) / tSpan) * plotW;
-  const yOf = (p) => padT + ((maxP - p) / (maxP - minP)) * plotH;
-
-  // background
-  ctx.fillStyle = '#131722';
-  ctx.fillRect(0, 0, W, H);
-
-  const entryT = parseTs(d.entry?.time) || t0;
-  const exitT = parseTs(d.exit?.time) || t1;
-  const yEntry = yOf(entry);
-  const yTarget = yOf(target);
-  const yStop = stop != null ? yOf(stop) : yEntry + 40;
-  const xEntry = xOf(Math.max(t0, Math.min(t1, entryT)));
-  const xExit = xOf(Math.max(t0, Math.min(t1, exitT)));
-
-  // Profit / loss zones (long option premium)
-  const zoneRight = Math.max(xEntry + 40, xExit);
-  ctx.fillStyle = 'rgba(38,166,154,0.20)';
-  ctx.fillRect(xEntry, Math.min(yEntry, yTarget), zoneRight - xEntry, Math.abs(yTarget - yEntry));
-  ctx.fillStyle = 'rgba(239,83,80,0.18)';
-  ctx.fillRect(xEntry, Math.min(yEntry, yStop), zoneRight - xEntry, Math.abs(yStop - yEntry));
-
-  // Candles
-  const cw = Math.max(2, (plotW / candles.length) * 0.7);
-  candles.forEach(c => {
-    const x = xOf(parseTs(c.time));
-    const up = c.close >= c.open;
-    ctx.strokeStyle = up ? '#26a69a' : '#ef5350';
-    ctx.fillStyle = up ? '#26a69a' : '#ef5350';
-    ctx.beginPath();
-    ctx.moveTo(x, yOf(c.high));
-    ctx.lineTo(x, yOf(c.low));
-    ctx.stroke();
-    const y1 = yOf(c.open), y2 = yOf(c.close);
-    ctx.fillRect(x - cw/2, Math.min(y1,y2), cw, Math.max(1, Math.abs(y2-y1)));
-  });
-
-  // Diagonal entry -> exit
+  // Entry / exit markers on the candlestick series
+  const markers = [];
+  if (entry != null) {
+    markers.push({ time: entryTime, position: 'belowBar', color: '#2962ff', shape: 'arrowUp', text: 'Entry ' + fmtNum(entry) });
+  }
   if (exitPx != null) {
-    ctx.setLineDash([6, 5]);
-    ctx.strokeStyle = '#26a69a';
-    ctx.lineWidth = 1.5;
-    ctx.beginPath();
-    ctx.moveTo(xEntry, yEntry);
-    ctx.lineTo(xExit, yOf(exitPx));
-    ctx.stroke();
-    ctx.setLineDash([]);
+    const won = d.result === 'WIN' || (exitPx >= entry && d.result !== 'LOSS');
+    markers.push({
+      time: exitTime,
+      position: exitPx >= entry ? 'aboveBar' : 'belowBar',
+      color: won ? '#26a69a' : '#ef5350',
+      shape: exitPx >= entry ? 'arrowDown' : 'arrowUp',
+      text: 'Exit ' + fmtNum(exitPx),
+    });
+  }
+  if (markers.length) {
+    markers.sort((a, b) => a.time - b.time);
+    LightweightCharts.createSeriesMarkers(candleSeries, markers);
   }
 
-  // Entry / exit markers
-  ctx.strokeStyle = '#2962ff';
-  ctx.lineWidth = 2;
-  ctx.beginPath();
-  ctx.arc(xEntry, yEntry, 7, 0, Math.PI*2);
-  ctx.stroke();
-  if (exitPx != null) {
-    ctx.fillStyle = '#26a69a';
-    ctx.beginPath();
-    ctx.arc(xExit, yOf(exitPx), 5, 0, Math.PI*2);
-    ctx.fill();
-  }
-
-  // Price labels on right
-  function priceTag(price, color, bg){
-    if (price == null) return;
-    const y = yOf(price);
-    ctx.fillStyle = bg;
-    ctx.fillRect(W - padR + 4, y - 9, padR - 8, 18);
-    ctx.fillStyle = color;
-    ctx.font = '600 11px Inter';
-    ctx.textAlign = 'left';
-    ctx.fillText(fmtNum(price), W - padR + 8, y + 4);
-  }
-  priceTag(target, '#26a69a', 'rgba(38,166,154,.25)');
-  priceTag(entry, '#d1d4dc', 'rgba(120,123,134,.35)');
-  priceTag(stop, '#ef5350', 'rgba(239,83,80,.25)');
-  if (exitPx != null && Math.abs(exitPx - (target||0)) > 0.2) {
-    priceTag(exitPx, '#26a69a', 'rgba(38,166,154,.35)');
-  }
-
-  // Target / Stop captions
-  ctx.textAlign = 'left';
-  ctx.font = '600 11px Inter';
-  if (target != null && entry) {
-    const pts = (target - entry);
-    const pct = entry ? (pts / entry) * 100 : 0;
-    ctx.fillStyle = '#26a69a';
-    ctx.fillText(`Target: ${fmtNum(pts)} (${fmtNum(pct)}%)`, xEntry + 8, Math.min(yEntry, yTarget) + 14);
-  }
-  if (stop != null && entry) {
-    const pts = Math.abs(entry - stop);
-    const pct = entry ? (pts / entry) * 100 : 0;
-    ctx.fillStyle = '#ef5350';
-    ctx.fillText(`Stop: ${fmtNum(pts)} (${fmtNum(pct)}%)`, xEntry + 8, Math.max(yEntry, yStop) - 8);
-  }
+  chart.timeScale().fitContent();
 
   // Center P&L card
   const pnl = d.pnl_points;
+  const card = document.getElementById('pnlCard');
   if (pnl != null) {
-    const boxW = 110, boxH = 54;
-    const bx = (xEntry + xExit) / 2 - boxW / 2;
-    const by = (yEntry + yOf(exitPx ?? target)) / 2 - boxH / 2;
-    ctx.fillStyle = pnl >= 0 ? '#1b5e20' : '#7f1d1d';
-    roundRect(ctx, bx, by, boxW, boxH, 6);
-    ctx.fill();
-    ctx.fillStyle = '#fff';
-    ctx.font = '700 14px Inter';
-    ctx.textAlign = 'center';
-    ctx.fillText((pnl >= 0 ? '+' : '') + fmtNum(pnl), bx + boxW/2, by + 20);
-    ctx.font = '500 10px Inter';
-    ctx.fillStyle = 'rgba(255,255,255,.85)';
+    card.style.display = 'block';
+    card.style.background = pnl >= 0 ? '#1b5e20' : '#7f1d1d';
     const rr = d.rr != null ? `R:R ${d.rr}` : '';
     const pct = d.pnl_pct != null ? `${d.pnl_pct}%` : '';
-    ctx.fillText([pct, rr].filter(Boolean).join(' · ') || 'P&L', bx + boxW/2, by + 38);
+    card.innerHTML = `<div class="amt">${pnl >= 0 ? '+' : ''}${fmtNum(pnl)}</div>` +
+      `<div class="meta">${[pct, rr].filter(Boolean).join(' · ') || 'P&L'}</div>`;
+  } else {
+    card.style.display = 'none';
   }
-
-  // Time labels under axis
-  ctx.fillStyle = '#2962ff';
-  ctx.font = '600 11px Inter';
-  ctx.textAlign = 'center';
-  if (d.entry?.time_label) {
-    ctx.fillText(d.entry.time_label, xEntry, H - 18);
-  }
-  if (d.exit?.time_label) {
-    ctx.fillText(d.exit.time_label, xExit, H - 18);
-  }
-
-  ctx.textAlign = 'left';
 }
 
-function roundRect(ctx, x, y, w, h, r){
-  ctx.beginPath();
-  ctx.moveTo(x+r, y);
-  ctx.arcTo(x+w, y, x+w, y+h, r);
-  ctx.arcTo(x+w, y+h, x, y+h, r);
-  ctx.arcTo(x, y+h, x, y, r);
-  ctx.arcTo(x, y, x+w, y, r);
-  ctx.closePath();
-}
-
-window.addEventListener('resize', () => {
-  // simple reload redraw
-  load();
-});
 load();
 </script>
 </body>

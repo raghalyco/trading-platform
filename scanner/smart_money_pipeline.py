@@ -7,7 +7,7 @@ Requirement flow orchestrator:
   4. Emit signals when all entry gates pass
   5. (Optional) Telegram notify
 
-Used by smart_money_monitor.py and /api/smart_money/scan.
+Used by /api/smart_money/scan and Stock for day.
 """
 from __future__ import annotations
 
@@ -20,6 +20,7 @@ from tqdm import tqdm
 import config
 import live_scan
 import smart_money_strategy as sms
+import support_bounce as sb
 import telegram_alerts
 
 # Suppress repeat Telegram/API noise for the same symbol+side+bar timestamp
@@ -78,7 +79,7 @@ def evaluate_leaders(kite_client, leaders: list) -> list:
 
     to_dt = datetime.now()
     from_dt = to_dt - timedelta(days=config.SMART_MONEY_HISTORY_DAYS)
-    daily_from = (to_dt - timedelta(days=120)).date()
+    daily_from = (to_dt - timedelta(days=config.SUPPORT_BOUNCE_LOOKBACK_DAYS)).date()
     daily_to = to_dt.date()
 
     signals = []
@@ -106,7 +107,12 @@ def evaluate_leaders(kite_client, leaders: list) -> list:
         )
         if sig is None:
             continue
-        signals.append(sig.to_dict())
+        row = sig.to_dict()
+        if daily_df is not None and not daily_df.empty:
+            sb.annotate_result_with_pattern(symbol, daily_df, row)
+        else:
+            row["chart_url"] = sb.local_chart_url(symbol)
+        signals.append(row)
 
     return signals
 
@@ -210,8 +216,10 @@ def scan_stock_for_day(
     from_date = today - timedelta(days=config.STOCK_FOR_DAY_LOOKBACK_DAYS)
 
     buys = []
+    sells = []
     scanned = 0
     label = universe_mod.nifty_mode_label(mode)
+    include_sell = bool(getattr(config, "STOCK_FOR_DAY_INCLUDE_SELL", True))
     print(f"Stock for day: scanning {label} ({len(scan_df)} symbols) with Smart Money structure...")
 
     for _, row in tqdm(scan_df.iterrows(), total=len(scan_df), desc=f"Stock for day ({label})"):
@@ -231,22 +239,45 @@ def scan_stock_for_day(
                 ltf_df=daily,
                 daily_df=daily,
             )
-            if sig is None or sig.signal != "BUY":
+            if sig is None:
                 continue
-            buys.append(sig.to_dict())
+            if sig.signal == "SELL" and not include_sell:
+                continue
+            if sig.signal not in ("BUY", "SELL"):
+                continue
+            row_out = sig.to_dict()
+            sb.annotate_result_with_pattern(symbol, daily, row_out)
+            # Prefer the full strategy signal over soft annotate overwrite.
+            row_out["smart_money_signal"] = sig.signal
+            row_out["signal"] = sig.signal
+            if sig.signal == "BUY":
+                buys.append(row_out)
+            else:
+                sells.append(row_out)
         except Exception as e:
             print(f"  [warn] stock-for-day skipped {symbol}: {e}")
             continue
 
-    buys.sort(key=lambda s: (s.get("confidence") or 0, s.get("risk_reward") or 0), reverse=True)
-    print(f"Stock for day: {len(buys)} BUY-eligible of {scanned} scanned ({label})")
+    results = buys + sells
+    results.sort(
+        key=lambda s: (
+            1 if s.get("signal") == "BUY" else 0,
+            s.get("confidence") or 0,
+            s.get("risk_reward") or 0,
+        ),
+        reverse=True,
+    )
+    print(
+        f"Stock for day: {len(buys)} BUY + {len(sells)} SELL of {scanned} scanned ({label})"
+    )
 
     if send_telegram:
-        for sig in buys:
+        for sig in results:
             telegram_alerts.send_telegram_message(
                 telegram_alerts.format_smart_money_alert(sig)
             )
 
+    charts = sb.charts_snapshot([r["symbol"] for r in results])
     return {
         "generated_at": datetime.now().isoformat(),
         "universe_mode": mode,
@@ -254,5 +285,9 @@ def scan_stock_for_day(
         "universe_size": len(scan_df),
         "scanned": scanned,
         "num_buys": len(buys),
-        "buys": buys,
+        "num_sells": len(sells),
+        "buys": results,  # UI table: BUY + SELL together (legacy key name)
+        "sells": sells,
+        "results": results,
+        "charts": charts,
     }

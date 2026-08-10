@@ -237,7 +237,8 @@ def run_dry_run_test():
         print(f"✅ Success! Logged into account user: {profile.get('user_id')} ({profile.get('user_name')})\n")
     except Exception as e:
         print(f"❌ Failed! Authentication layer broke down: {e}")
-        print("Please verify your credentials inside config.txt\n")
+        print("Verify KITE_API_KEY/KITE_API_SECRET in trading-platform/.env, "
+              "then run `python -m shared.kite_auth` from the trading-platform root.\n")
         return
 
     # 3. Verify Your Telegram Pattern-Matching Regex

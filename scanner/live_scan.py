@@ -4,6 +4,8 @@ universe and returns only the ones passing its conditions today —
 your "Chartink-style" daily scan result. Supports both scanners:
   - run_scan(): the main 13-condition breakout scanner
   - run_ema10_scan(): the simpler "just above EMA10, not extended" scanner
+
+Hits are annotated with classic chart patterns + local chart URLs.
 """
 from datetime import date, timedelta
 
@@ -15,6 +17,7 @@ import ema10_scanner
 import nday_scanner
 import scanner
 import sector_scanner
+import support_bounce as sb
 import trending_scanner
 
 
@@ -59,6 +62,7 @@ def run_scan(kite_client, universe_df: pd.DataFrame) -> list:
                 "volume": int(last["volume"]),
                 "vol_vs_avg": round(float(last["volume"] / last["vol_sma20"]), 2) if last["vol_sma20"] else None,
             })
+            sb.annotate_result_with_pattern(symbol, daily, hits[-1])
         except Exception as e:
             print(f"  [warn] scan skipped {symbol}: {e}")
             continue
@@ -70,10 +74,7 @@ def run_ema10_scan(kite_client, universe_df: pd.DataFrame) -> list:
     """Returns a list of dicts for symbols currently trading above their
     10 EMA but not extended more than EMA10_MAX_DISTANCE_PCT beyond it."""
     today = date.today()
-    # This scanner only needs EMA10 to warm up — much less history required
-    # than the main scanner's EMA200, so a shorter warmup is plenty and
-    # keeps this scan fast.
-    from_date = today - timedelta(days=200)
+    from_date = today - timedelta(days=max(200, config.SUPPORT_BOUNCE_LOOKBACK_DAYS))
 
     hits = []
     for _, row in tqdm(universe_df.iterrows(), total=len(universe_df), desc="Scanning (EMA10)"):
@@ -101,6 +102,7 @@ def run_ema10_scan(kite_client, universe_df: pd.DataFrame) -> list:
                 "distance_from_ema10_pct": round(float(last["distance_from_ema10_pct"]), 2),
                 "volume": int(last["volume"]),
             })
+            sb.annotate_result_with_pattern(symbol, daily, hits[-1])
         except Exception as e:
             print(f"  [warn] ema10 scan skipped {symbol}: {e}")
             continue
@@ -113,7 +115,7 @@ def run_nday_scan(kite_client, universe_df: pd.DataFrame, lookback: int) -> list
     (direction='near_high') or N-day low (direction='near_low'), matching
     TradeBrahma's '10 Day BO' / '50 Day BO' panels."""
     today = date.today()
-    from_date = today - timedelta(days=max(200, lookback * 5))
+    from_date = today - timedelta(days=max(200, lookback * 5, config.SUPPORT_BOUNCE_LOOKBACK_DAYS))
 
     hits = []
     for _, row in tqdm(universe_df.iterrows(), total=len(universe_df),
@@ -146,6 +148,7 @@ def run_nday_scan(kite_client, universe_df: pd.DataFrame, lookback: int) -> list
                     "distance_pct": round(float(last["distance_from_high_pct"]), 2),
                     "reference_price": round(float(last["nday_high"]), 2),
                 })
+                sb.annotate_result_with_pattern(symbol, daily, hits[-1])
             elif bool(last["near_low"]):
                 hits.append({
                     **base,
@@ -153,6 +156,7 @@ def run_nday_scan(kite_client, universe_df: pd.DataFrame, lookback: int) -> list
                     "distance_pct": round(float(last["distance_from_low_pct"]), 2),
                     "reference_price": round(float(last["nday_low"]), 2),
                 })
+                sb.annotate_result_with_pattern(symbol, daily, hits[-1])
         except Exception as e:
             print(f"  [warn] nday scan skipped {symbol}: {e}")
             continue

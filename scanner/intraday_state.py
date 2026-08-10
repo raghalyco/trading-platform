@@ -19,6 +19,8 @@ debug logging):
 from datetime import datetime, timedelta
 
 import config
+from charts import tradingview_chart_url
+from support_bounce import local_chart_url
 
 
 class SymbolState:
@@ -137,6 +139,7 @@ class SymbolState:
                 "avg_minute_volume": self.opening_range_avg_minute_volume,
                 "time": self.current_minute.strftime("%H:%M:%S") if self.current_minute else "",
                 "sources": self.sources,
-                "chart_url": f"https://www.tradingview.com/chart/?symbol=NSE:{self.symbol}",
+                "chart_url": local_chart_url(self.symbol),
+                "tv_chart_url": tradingview_chart_url(self.symbol, interval="5"),
             }
         return None

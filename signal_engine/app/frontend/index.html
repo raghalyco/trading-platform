@@ -144,6 +144,7 @@ table.trades tr.open td:first-child{box-shadow:inset 3px 0 0 var(--blue);}
 .bt-run:disabled{opacity:.5;}
 .bt-note{font-size:11px; color:var(--muted); margin-bottom:8px;}
 .bt-warn{font-size:11px; color:var(--amber); margin-bottom:6px;}
+.chart-title{font-size:11px; font-weight:700; color:var(--soft); margin-bottom:6px; text-transform:uppercase; letter-spacing:.03em;}
 .bottom-nav{position:fixed; left:50%; transform:translateX(-50%); bottom:0; width:100%; max-width:420px; background:var(--card); border-top:1px solid var(--line); display:flex; padding:4px 6px calc(4px + env(safe-area-inset-bottom)); z-index:40;}
 .nav-item{flex:1; background:none; border:none; font-family:var(--font); font-size:11px; font-weight:600; color:var(--muted); padding:6px; cursor:pointer; border-radius:8px;}
 .nav-item.active{color:var(--blue); background:#eff6ff;}
@@ -288,9 +289,10 @@ table.trades tr.open td:first-child{box-shadow:inset 3px 0 0 var(--blue);}
       <div class="kpi"><div class="lbl">Wins</div><div class="val green" id="btWins">—</div></div>
       <div class="kpi"><div class="lbl">Timeouts</div><div class="val amber" id="btTimeouts">—</div></div>
     </div>
+
     <div class="table-card" id="btTableWrap" style="display:none;">
       <table class="trades">
-        <thead><tr><th>Time</th><th>Side</th><th>Entry</th><th>T1</th><th>Result</th></tr></thead>
+        <thead><tr><th>Entry (IST)</th><th>Side</th><th>Entry</th><th>T1</th><th>Result</th><th></th></tr></thead>
         <tbody id="btBody"></tbody>
       </table>
     </div>
@@ -719,13 +721,17 @@ async function runBacktest(){
     document.getElementById('btTimeouts').textContent = d.timeouts;
     const body = document.getElementById('btBody');
     const samples = d.samples || [];
-    body.innerHTML = samples.slice(0, 80).map(t => {
+    body.innerHTML = samples.slice(0, 80).map((t, i) => {
       const cls = t.result === 'WIN' ? 'win' : t.result === 'LOSS' ? 'loss' : 'open';
       const sideCls = t.side === 'CE' ? 'side-ce' : 'side-pe';
-      const ts = fmtDateShort(t.entry_ts);
+      const ts = t.entry_time_ist ? t.entry_time_ist + ' IST' : fmtDateShort(t.entry_ts);
+      const chartQ = new URLSearchParams({
+        bt: '1', idx: i, symbol, mode, months,
+      });
       return `<tr class="${cls}"><td>${ts}</td><td class="${sideCls}">${t.side}</td>
-        <td>${t.entry}</td><td>${t.target1}</td><td>${t.result}</td></tr>`;
-    }).join('') || '<tr><td colspan="5" class="empty">No samples</td></tr>';
+        <td>${t.entry}</td><td>${t.target1}</td><td>${t.result}</td>
+        <td><a class="chart-link" href="/chart?${chartQ.toString()}" target="_blank" rel="noopener">Chart</a></td></tr>`;
+    }).join('') || '<tr><td colspan="6" class="empty">No samples</td></tr>';
     document.getElementById('btTableWrap').style.display = 'block';
   } catch (e) {
     status.textContent = 'Request failed: ' + e;
