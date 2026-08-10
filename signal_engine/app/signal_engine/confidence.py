@@ -4,7 +4,7 @@ caution-list generator (choppy market, expiry day, high SL risk, etc).
 """
 
 import pandas as pd
-from app.indicators.core import candle_range_pct, relative_choppiness
+from app.indicators.core import candle_range_pct
 from app.config import CONFIG
 
 
@@ -23,13 +23,32 @@ def confidence_label(pct: int) -> str:
     return "HIGH - ENTER"
 
 
+def _partial_tf_cautions(df_1m: pd.DataFrame) -> list:
+    """A 5m/15m candle is only "closed" on its last constituent 1-min bar
+    (minute % 5 == 4, minute % 15 == 14) - any other minute means that
+    higher-TF vote in the 7-point scorer is still being built and can
+    still flip before the candle closes."""
+    if df_1m is None or df_1m.empty:
+        return []
+    minute = pd.Timestamp(df_1m["timestamp"].iloc[-1]).minute
+    cautions = []
+    if minute % 5 != 4:
+        cautions.append("5M candle still forming - 5M signal may change")
+    if minute % 15 != 14:
+        cautions.append("15M candle still forming - trend may shift")
+    return cautions
+
+
 def build_cautions(df_1m: pd.DataFrame, is_expiry_day: bool, sl_points: float,
                     spot: float) -> list:
     cautions = []
 
-    choppiness_ratio = relative_choppiness(df_1m)
-    if choppiness_ratio < 0.5:
-        cautions.append(f"Choppy - candle range {round(choppiness_ratio*100)}% of recent average")
+    cfg = CONFIG.signal
+    latest_range_pct = candle_range_pct(df_1m).iloc[-1]
+    if latest_range_pct < cfg.caution_range_pct:
+        cautions.append(f"Choppy - range <{cfg.caution_range_pct}%")
+
+    cautions.extend(_partial_tf_cautions(df_1m))
 
     if is_expiry_day:
         cautions.append("Expiry day - trade with caution")
