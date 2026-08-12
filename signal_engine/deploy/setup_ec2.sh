@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # One-time EC2 t3.micro setup for signal_engine, with the phone-login page.
-# Tested against Ubuntu 22.04/24.04 AMIs. Run as the ubuntu user (not root).
+# Works against any Ubuntu LTS release (22.04+) - uses the distro's default
+# python3 rather than pinning a specific minor version. Run as the ubuntu
+# user (not root).
 #
 # Usage (from your local machine, after the instance is up):
-#   scp -r trading-platform ubuntu@<EC2_PUBLIC_IP>:~/trading-platform
+#   git clone https://github.com/raghalyco/trading-platform.git
 #   ssh ubuntu@<EC2_PUBLIC_IP>
 #   cd ~/trading-platform && bash signal_engine/deploy/setup_ec2.sh
 set -euo pipefail
@@ -13,7 +15,10 @@ cd "$REPO_ROOT"
 
 echo "== 1. System packages =="
 sudo apt-get update -y
-sudo apt-get install -y python3.11 python3.11-venv python3-pip
+# Use whatever python3 the distro ships (3.10+ all work per requirements.txt)
+# rather than pinning a specific minor version that may not exist on newer
+# Ubuntu releases.
+sudo apt-get install -y python3 python3-venv python3-pip
 
 echo "== 2. t3.micro has only 1GB RAM - add a 1GB swap file so pandas/numpy =="
 echo "==    scans don't OOM-kill the process during a burst. =="
@@ -27,7 +32,7 @@ fi
 
 echo "== 3. Python venv + deps (signal_engine only) =="
 cd signal_engine
-python3.11 -m venv .venv
+python3 -m venv .venv
 source .venv/bin/activate
 pip install --upgrade pip
 pip install -r requirements.txt

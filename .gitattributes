@@ -1,0 +1,14 @@
+# Normalize line endings: text files stored as LF in the repo, checked out
+# using each platform's native line ending. Stops Git's "LF will be
+# replaced by CRLF" warnings on Windows without changing anything committed.
+* text=auto
+
+# Explicit binary types - never touch line endings, avoid corruption.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.pdf binary
+*.parquet binary
+*.db binary
+*.pyc binary
