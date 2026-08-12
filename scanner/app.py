@@ -35,6 +35,8 @@ import smart_money_pipeline
 import smart_money_backtest
 import support_bounce
 import swing_trade
+import darvax
+import trade_tracker
 from kite_auth import get_kite_session
 from kite_client import KiteDataClient
 
@@ -108,6 +110,7 @@ _trending_cache = {"generated_at": None, "sectors": {}}
 _stock_for_day_cache: dict = {}
 _support_bounce_cache: dict = {}
 _swing_trade_cache: dict = {}
+_darvax_cache: dict = {}
 
 
 def _enrich_hits(hits):
@@ -284,6 +287,26 @@ def _refresh_swing_trade_cache(mode=None):
     return payload
 
 
+def _refresh_darvax_cache(mode=None):
+    mode = mode or (config.DARVAX_UNIVERSE or "nifty200")
+    try:
+        mode = universe_mod.normalize_nifty_mode(mode)
+    except ValueError:
+        mode = "nifty200"
+    print(f"Warming DarvaX cache ({mode})...")
+    payload = darvax.scan_darvax(_client, _universe_df, universe_mode=mode)
+    _darvax_cache[mode] = {
+        "generated_at": payload["generated_at"],
+        "payload": payload,
+    }
+    darvax.rehydrate_charts(payload.get("charts"))
+    print(
+        f"DarvaX ready: {payload.get('num_results', 0)} hit(s) on "
+        f"{payload.get('universe_label', mode)}."
+    )
+    return payload
+
+
 def _want_refresh() -> bool:
     """POST always refreshes; GET refreshes only with ?refresh=1."""
     from flask import request
@@ -313,6 +336,7 @@ if (
     _refresh_stock_for_day_cache()
     _refresh_support_bounce_cache()
     _refresh_swing_trade_cache()
+    _refresh_darvax_cache()
 
 
 @app.route("/")
@@ -326,6 +350,7 @@ def index():
         stock_for_day_universe=config.STOCK_FOR_DAY_UNIVERSE or "nifty100",
         support_bounce_universe=config.SUPPORT_BOUNCE_UNIVERSE or "nifty100",
         swing_trade_universe=config.SWING_TRADE_UNIVERSE or "nifty200",
+        darvax_universe=config.DARVAX_UNIVERSE or "nifty200",
     )
 
 
@@ -641,6 +666,79 @@ def api_swing_trade_chart(symbol):
         return jsonify({"error": str(e)}), 500
 
 
+def _darvax_timeframe_arg() -> str:
+    from flask import request
+    tf = (request.args.get("timeframe") or request.args.get("tf") or "daily").strip().lower()
+    return "weekly" if tf == "weekly" else "daily"
+
+
+@app.route("/api/darvax", methods=["POST", "GET"])
+def api_darvax():
+    """Darvas Box breakout scan (3-session-stall box construction,
+    volume-confirmed breakout, near-ATH bias) - daily or weekly candles."""
+    try:
+        mode = _swing_trade_universe_arg()  # same nifty50/100/200/500 selector pattern
+        timeframe = _darvax_timeframe_arg()
+        refresh = _want_refresh()
+        cache_key = f"{mode}_{timeframe}"
+        cached = _darvax_cache.get(cache_key) or {}
+        if refresh or not cached.get("generated_at"):
+            print(f"Running DarvaX scan ({mode}, {timeframe})...")
+            payload = darvax.scan_darvax(_client, _universe_df, universe_mode=mode, timeframe=timeframe)
+            cached = {"generated_at": payload["generated_at"], "payload": payload}
+            _darvax_cache[cache_key] = cached
+        out = dict(cached.get("payload") or {})
+        darvax.rehydrate_charts(out.get("charts"))
+        for row in out.get("results") or []:
+            sym = row.get("symbol")
+            if sym:
+                row["chart_url"] = darvax.local_chart_url(sym, timeframe)
+        out["market_open"] = _is_market_open()
+        out["cached"] = not refresh
+        return jsonify(out)
+    except Exception as e:
+        print(f"[darvax] failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e), "results": [], "num_results": 0}), 500
+
+
+@app.route("/darvax-chart/<path:symbol>")
+def darvax_chart_page(symbol):
+    """Candlestick chart with Darvas box, entry/exit/averaging basis."""
+    return render_template("darvax_chart.html", symbol=str(symbol).upper())
+
+
+@app.route("/api/darvax/chart/<path:symbol>")
+def api_darvax_chart(symbol):
+    symbol = str(symbol).upper()
+    timeframe = _darvax_timeframe_arg()
+    try:
+        payload = darvax.get_chart_payload(symbol, timeframe=timeframe)
+        need_refresh = payload is None or not payload.get("candles")
+        if need_refresh:
+            row = _universe_df[_universe_df["tradingsymbol"] == symbol]
+            if row.empty:
+                return jsonify({"error": f"Unknown symbol {symbol}"}), 404
+            token = int(row.iloc[0]["instrument_token"])
+            today = datetime.now().date()
+            lookback = config.DARVAX_WEEKLY_LOOKBACK_DAYS if timeframe == "weekly" else config.DARVAX_LOOKBACK_DAYS
+            from_date = today - dt.timedelta(days=lookback)
+            daily = _client.get_daily_history(token, symbol, from_date, today)
+            min_bars = 300 if timeframe == "weekly" else 60
+            if daily is None or daily.empty or len(daily) < min_bars:
+                return jsonify({"error": f"No history for {symbol}"}), 404
+            payload = darvax.rebuild_chart_for_symbol(symbol, daily, timeframe=timeframe)
+            if payload is None:
+                return jsonify({"error": f"No Darvas box found for {symbol}"}), 404
+        return jsonify(payload)
+    except Exception as e:
+        print(f"[darvax/chart] failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e)}), 500
+
+
 @app.route("/api/stock_for_day/backtest", methods=["POST", "GET"])
 def api_stock_for_day_backtest():
     """3-month Smart Money success-rate backtest on selected Nifty universe."""
@@ -676,6 +774,68 @@ def api_backtest():
         "summary": summary,
         "trades": trades,
     })
+
+
+@app.route("/api/tracked", methods=["GET", "POST"])
+def api_tracked():
+    """GET: list tracked trades (with a live LTP/P&L refresh).
+    POST: track a new trade — {symbol, source, entry_price, stop_loss,
+    target, chart_url} — the shared 'Track' button on every screener table."""
+    from flask import request
+    if request.method == "POST":
+        try:
+            body = request.get_json(force=True) or {}
+            symbol = body.get("symbol")
+            entry_price = body.get("entry_price")
+            if not symbol or entry_price is None:
+                return jsonify({"error": "symbol and entry_price are required"}), 400
+            trade_id = trade_tracker.track_trade(
+                symbol=symbol,
+                source=body.get("source") or "unknown",
+                entry_price=float(entry_price),
+                stop_loss=float(body["stop_loss"]) if body.get("stop_loss") is not None else None,
+                target=float(body["target"]) if body.get("target") is not None else None,
+                chart_url=body.get("chart_url"),
+                notes=body.get("notes"),
+            )
+            return jsonify({"ok": True, "trade_id": trade_id})
+        except Exception as e:
+            return jsonify({"error": str(e)}), 500
+
+    try:
+        trade_tracker.refresh_prices(_client, _universe_df)
+        status = request.args.get("status")
+        trades = trade_tracker.list_tracked(status)
+        return jsonify({"trades": trades, "num_trades": len(trades)})
+    except Exception as e:
+        print(f"[tracked] failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e), "trades": []}), 500
+
+
+@app.route("/api/tracked/<int:trade_id>/close", methods=["POST"])
+def api_tracked_close(trade_id):
+    from flask import request
+    try:
+        body = request.get_json(silent=True) or {}
+        exit_price = body.get("exit_price")
+        trade = trade_tracker.close_trade(
+            trade_id, exit_price=float(exit_price) if exit_price is not None else None
+        )
+        if trade is None:
+            return jsonify({"error": f"No tracked trade with id {trade_id}"}), 404
+        return jsonify({"ok": True, "trade": trade})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/tracked/<int:trade_id>", methods=["DELETE"])
+def api_tracked_delete(trade_id):
+    ok = trade_tracker.untrack(trade_id)
+    if not ok:
+        return jsonify({"error": f"No tracked trade with id {trade_id}"}), 404
+    return jsonify({"ok": True})
 
 
 if __name__ == "__main__":

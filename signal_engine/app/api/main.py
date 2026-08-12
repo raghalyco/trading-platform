@@ -10,10 +10,12 @@ Endpoints:
 """
 
 from fastapi import FastAPI, Query
-from fastapi.responses import FileResponse, Response
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 import os
+import secrets
+import sys
 
 from app.data_feed.simulator import SimulatorFeed
 from app.data_feed.kite_feed import KiteFeed, SESSION_FILE
@@ -39,7 +41,26 @@ from app.telegram_alerts import (
     telegram_configured,
 )
 
+# Repo root on sys.path so `shared.kite_auth` (the same daily-login module
+# used by scanner/ and execution/) is importable - mirrors the same trick
+# KiteFeed.from_shared_auth() already does internally.
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+from shared import kite_auth as shared_kite_auth  # noqa: E402
+
 app = FastAPI(title="Trading Signal Engine")
+
+# Phone-friendly daily re-login: Kite access tokens expire every day, and
+# this app deliberately does NOT automate the actual login (Zerodha's bot
+# detection can block automated logins) - a human still completes it in a
+# real browser each morning. This just moves "paste the token back" off of
+# SSH and onto a bookmarked URL on your phone.
+#
+# MUST be set via env (e.g. in trading-platform/.env as
+# SIGNAL_ENGINE_ADMIN_TOKEN=<a long random string>) - fails closed (404) if
+# unset, rather than falling back to a guessable default.
+ADMIN_TOKEN = os.environ.get("SIGNAL_ENGINE_ADMIN_TOKEN", "")
 
 # --- shared state ---
 # Preferred: authenticate through trading-platform/shared/kite_auth.py, the
@@ -67,6 +88,10 @@ except Exception as shared_exc:
 risk_mgr = RiskManager()
 
 FRONTEND_DIR = os.path.join(os.path.dirname(__file__), "..", "frontend")
+
+
+class AdminLoginRequest(BaseModel):
+    pasted: str  # request_token, or the full Kite redirect URL
 
 
 class TradeResult(BaseModel):
@@ -567,6 +592,101 @@ def reset_day():
 @app.get("/")
 def dashboard():
     return FileResponse(os.path.join(FRONTEND_DIR, "index.html"))
+
+
+def _admin_login_page(message: str = "", is_error: bool = False) -> str:
+    login_url = ""
+    login_url_error = ""
+    try:
+        login_url = shared_kite_auth.get_manual_login_url()
+    except Exception as e:
+        login_url_error = str(e)
+
+    banner = ""
+    if message:
+        color = "#f0554a" if is_error else "#22c58a"
+        banner = f'<p style="color:{color};font-weight:600">{message}</p>'
+
+    return f"""<!DOCTYPE html>
+<html><head><meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Signal Engine — Daily Login</title>
+<style>
+  body {{ font-family: -apple-system, sans-serif; background:#0d0d0c; color:#f2f1ec;
+    max-width:480px; margin:0 auto; padding:24px 16px; }}
+  h1 {{ font-size:18px; }}
+  a.btn {{ display:block; text-align:center; background:#5b8cff; color:#fff;
+    text-decoration:none; padding:14px; border-radius:10px; font-weight:700; margin:16px 0; }}
+  input {{ width:100%; padding:12px; border-radius:8px; border:1px solid #2b2b27;
+    background:#171715; color:#f2f1ec; font-size:15px; box-sizing:border-box; margin-bottom:10px; }}
+  button {{ width:100%; padding:14px; border-radius:10px; border:none; background:#22c58a;
+    color:#03110b; font-weight:700; font-size:15px; }}
+  p.hint {{ color:#9a998f; font-size:13px; line-height:1.5; }}
+</style></head>
+<body>
+  <h1>Signal Engine — Daily Kite Login</h1>
+  {banner}
+  {'<p style="color:#f0554a">Could not build login URL: ' + login_url_error + '</p>' if login_url_error else f'<a class="btn" href="{login_url}" target="_blank" rel="noopener">1. Open Kite Login ↗</a>'}
+  <p class="hint">Log in with your Zerodha user ID, password, and TOTP as usual.
+  You'll land on a blank/error redirect page — that's expected. Copy the
+  FULL URL from your browser's address bar (or just the request_token
+  value) and paste it below.</p>
+  <input id="pasted" placeholder="Paste redirect URL or request_token" autocomplete="off">
+  <button onclick="submitLogin()">2. Complete Login</button>
+  <p class="hint" id="status"></p>
+<script>
+async function submitLogin() {{
+  const pasted = document.getElementById('pasted').value.trim();
+  const statusEl = document.getElementById('status');
+  if (!pasted) {{ statusEl.textContent = 'Paste the redirect URL or request_token first.'; return; }}
+  statusEl.textContent = 'Submitting…';
+  try {{
+    const res = await fetch(window.location.pathname, {{
+      method: 'POST', headers: {{'Content-Type': 'application/json'}},
+      body: JSON.stringify({{pasted}}),
+    }});
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || ('HTTP ' + res.status));
+    statusEl.style.color = '#22c58a';
+    statusEl.textContent = '✓ Logged in — live Kite data is now active.';
+  }} catch (e) {{
+    statusEl.style.color = '#f0554a';
+    statusEl.textContent = 'Failed: ' + (e.message || e);
+  }}
+}}
+</script>
+</body></html>"""
+
+
+@app.get("/admin/{token}/login", response_class=HTMLResponse)
+def admin_login_page(token: str):
+    if not ADMIN_TOKEN or not secrets.compare_digest(token, ADMIN_TOKEN):
+        return HTMLResponse("Not found", status_code=404)
+    return _admin_login_page()
+
+
+@app.post("/admin/{token}/login")
+def admin_login_submit(token: str, req: AdminLoginRequest):
+    if not ADMIN_TOKEN or not secrets.compare_digest(token, ADMIN_TOKEN):
+        return HTMLResponse("Not found", status_code=404)
+
+    global feed, DATA_SOURCE
+    try:
+        shared_kite_auth.exchange_request_token(req.pasted)
+    except Exception as e:
+        return {"error": str(e)}
+
+    # The running process's `feed` object has the OLD token baked into its
+    # KiteConnect client - writing the new token to disk alone does nothing
+    # for an already-running process. Re-resolve it now so this request
+    # actually starts using live data immediately, not after a restart.
+    try:
+        feed = KiteFeed.from_shared_auth()
+        DATA_SOURCE = "kite"
+    except Exception as e:
+        return {"error": f"Token saved, but failed to activate live feed: {e}"}
+
+    return {"ok": True, "data_source": DATA_SOURCE}
 
 
 app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")

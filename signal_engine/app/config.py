@@ -76,6 +76,11 @@ class AutoTradeConfig:
     send_telegram: bool = True
     # Skip auto-entry in these session labels
     skip_sessions: tuple = ("MARKET CLOSED", "DEAD ZONE")
+    # Fixed OPTION PREMIUM points target (NOT index points) - overrides the
+    # ATR-derived target1 for auto-captured trades only. Applies equally to
+    # CE and PE since premium always rises in the buyer's favor regardless
+    # of side; a captured trade exits at entry_premium + this many points.
+    target_premium_points: float = 12.0
 
 
 @dataclass

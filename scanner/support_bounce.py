@@ -1217,6 +1217,9 @@ def _buy_zone_context(df: pd.DataFrame, htf_df: pd.DataFrame, support_event: dic
     ):
         vol_ok = bool(vol.iloc[-1] > vol_avg.iloc[-1] and (vol_short.iloc[-1] - vol_short.iloc[-2]) > 0)
 
+    dist_now_pct = (close - support) / support * 100.0 if support else 99.0
+    near_support = abs(dist_now_pct) <= config.SUPPORT_BOUNCE_BUY_ZONE_MAX_PCT
+
     score = float(confidence)
     if support_event.get("bounce"):
         score += 12
@@ -1241,14 +1244,23 @@ def _buy_zone_context(df: pd.DataFrame, htf_df: pd.DataFrame, support_event: dic
     elif support_event.get("support_type") == "Cup and handle":
         score += 15
     score += min(support_event.get("touch_count", 0), 4) * 3
+    # Proximity to support is the primary lever the user asked to prioritize
+    # ("closer to support" beats "better pattern but already extended") — a
+    # steep, uncapped-below-zero penalty so distance dominates the ranking
+    # rather than getting drowned out by pattern-type bonuses.
+    score -= abs(dist_now_pct) * config.SUPPORT_BOUNCE_PROXIMITY_PENALTY_MULT
     if abs(support_event.get("distance_from_support_pct") or 99) <= config.SUPPORT_BOUNCE_TOUCH_PCT:
         score += 5
+    # Positive market structure confirmation - weighted up from 10 -> 18,
+    # since this is one of the explicit priorities: prefer setups where
+    # structure has actually turned (CHoCH/BOS bullish), not just "near a
+    # line" with no confirmation.
     if structure_buy:
-        score += 10
+        score += 18
     if trend_htf == 1:
         score += 10
     elif trend_htf == -1:
-        score -= 15
+        score -= 20
     if vol_ok:
         score += 8
     score = max(0.0, min(100.0, score))
@@ -1260,9 +1272,10 @@ def _buy_zone_context(df: pd.DataFrame, htf_df: pd.DataFrame, support_event: dic
     reward = abs(target - entry)
     rr = round(reward / risk, 2) if risk > 0 else 0.0
 
+    non_bearish = trend_htf >= 0 or not config.SUPPORT_BOUNCE_REQUIRE_NON_BEARISH_TREND
     buy_zone = (
-        trend_htf >= 0
-        and close >= support * (1 - config.SUPPORT_BOUNCE_TOUCH_PCT / 150.0)
+        near_support
+        and non_bearish
         and score >= config.SUPPORT_BOUNCE_MIN_SCORE
         and (
             structure_buy
@@ -1274,6 +1287,8 @@ def _buy_zone_context(df: pd.DataFrame, htf_df: pd.DataFrame, support_event: dic
 
     return {
         "buy_zone": buy_zone,
+        "near_support": near_support,
+        "distance_from_support_now_pct": round(dist_now_pct, 2),
         "score": round(score, 1),
         "confidence": confidence,
         "structure_buy": structure_buy,
@@ -1335,12 +1350,28 @@ def evaluate_symbol_support_bounce(
     )
     zone = _buy_zone_context(daily, weekly, event)
 
+    # Hard, uniform gate applied to EVERY path — including a raw Pine Smart
+    # Money BUY/SELL signal, which has no notion of "distance from previous
+    # support" on its own. Without this, a stock Pine likes for unrelated
+    # momentum reasons but that's already 20%+ past its support could still
+    # slip through; this is what the user asked to fix ("avoid stocks that
+    # already had a large breakout/move").
+    if not zone["near_support"]:
+        return None
+
     sm_buy = sm is not None and sm.signal == "BUY"
     sm_sell = sm is not None and sm.signal == "SELL"
     if config.SUPPORT_BOUNCE_REQUIRE_SM_BUY and not sm_buy:
         return None
     # Bounce scanner is long-biased; keep buy-zone / BUY, still surface SELL if Pine fires.
     if not sm_buy and not sm_sell and not zone["buy_zone"]:
+        return None
+
+    # A "Bearish CHoCH" structure label directly contradicts a long/buy-zone
+    # thesis - drop it. Not applied to sm_sell rows, where a bearish CHoCH
+    # is the CONFIRMING signal, not noise to filter out.
+    structure_label = label.get("structure") or _structure_status(daily)
+    if structure_label == "Bearish CHoCH" and not sm_sell:
         return None
 
     if sm_buy or sm_sell:
@@ -1393,6 +1424,8 @@ def evaluate_symbol_support_bounce(
         "previous_support": event["support_price"],
         "current_price": round(float(daily["close"].iloc[-1]), 2),
         "distance_from_support_pct": event["distance_from_support_pct"],
+        "near_support": zone["near_support"],
+        "structure_confirmed": zone["structure_buy"],
         "touch_count": event.get("touch_count", 1),
         "retest": event.get("retest", False),
         "breakout_volume_ratio": event.get("volume_ratio"),
@@ -1469,10 +1502,11 @@ def scan_support_bounce(
 
     results.sort(
         key=lambda r: (
+            1 if r.get("structure_confirmed") else 0,
             1 if r.get("smart_money_signal") == "BUY" else 0,
             r.get("smart_money_score") or 0,
-            r.get("touch_count") or 0,
             -(abs(r.get("distance_from_support_pct") or 99)),
+            r.get("touch_count") or 0,
             r.get("risk_reward") or 0,
         ),
         reverse=True,

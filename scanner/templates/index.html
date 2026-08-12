@@ -87,6 +87,14 @@
   .pill.stop_loss { background: var(--red-bg); color: var(--red); }
   .empty { color: var(--text-muted); font-size: 13px; padding: 2rem 0; text-align: center; }
   .loading { color: var(--text-muted); font-size: 13px; padding: 2rem 0; text-align: center; }
+  .track-btn {
+    font-size: 11px; font-weight: 600; padding: 4px 8px; border-radius: 6px;
+    border: 1px solid var(--border); background: #1e1e1b; color: var(--text-secondary);
+    cursor: pointer; white-space: nowrap;
+  }
+  .track-btn:hover { color: var(--ready, #f0b429); border-color: var(--ready, #f0b429); }
+  .track-btn:disabled { opacity: 0.5; cursor: default; }
+  .pill.open_trade { background: var(--surface-2); color: var(--text-secondary); }
   .section-title { font-size: 13px; color: var(--text-secondary); margin: 0 0 10px; font-weight: 600; }
   .nday-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
   @media (max-width: 900px) { .nday-grid { grid-template-columns: 1fr; } }
@@ -121,6 +129,8 @@
   <div class="nav-item sub" data-tab="stockday-bt">↳ Backtest (3M)</div>
   <div class="nav-item" data-tab="support">Previous Support Bounce</div>
   <div class="nav-item" data-tab="swing">Swing Trade (Weekly)</div>
+  <div class="nav-item" data-tab="darvax">DarvaX (Darvas Box)</div>
+  <div class="nav-item" data-tab="mytrades">My Trades</div>
   <div class="nav-item" data-tab="intraday">Intraday Monitor</div>
   <div class="nav-item" data-tab="backtest">Performance / Backtest</div>
 </div>
@@ -243,6 +253,55 @@
     </div>
   </div>
 
+  <!-- ============ TAB: DarvaX (Darvas Box) ============ -->
+  <div class="tab-page" id="page-darvax">
+    <div class="topbar">
+      <div>
+        <h1>DarvaX (Darvas Box)</h1>
+        <p class="meta" id="darvaxMeta">Daily Darvas box breakout (3-session-stall top/bottom) + volume spike · loading…</p>
+      </div>
+      <div class="topbar-actions">
+        <select class="universe-select" id="darvaxTimeframe" title="Box timeframe">
+          <option value="daily">Daily</option>
+          <option value="weekly">Weekly (higher conviction)</option>
+        </select>
+        <select class="universe-select" id="darvaxUniverse" title="Index universe">
+          <option value="nifty50" {% if darvax_universe == 'nifty50' %}selected{% endif %}>Nifty 50</option>
+          <option value="nifty100" {% if darvax_universe == 'nifty100' %}selected{% endif %}>Nifty 100</option>
+          <option value="nifty200" {% if darvax_universe == 'nifty200' %}selected{% endif %}>Nifty 200</option>
+          <option value="nifty500" {% if darvax_universe == 'nifty500' %}selected{% endif %}>Nifty 500</option>
+        </select>
+        <button class="primary" id="darvaxBtn" onclick="runDarvax(true)">Run Scan</button>
+      </div>
+    </div>
+    <div class="card">
+      <div id="darvaxTableWrap"><div class="loading">Loading startup cache…</div></div>
+    </div>
+  </div>
+
+  <!-- ============ TAB: My Trades ============ -->
+  <div class="tab-page" id="page-mytrades">
+    <div class="topbar">
+      <div>
+        <h1>My Trades</h1>
+        <p class="meta" id="mytradesMeta">Trades tracked from any screener — click "☆ Track" on a row to add it here · loading…</p>
+      </div>
+      <div class="topbar-actions">
+        <select class="universe-select" id="mytradesStatus" title="Status filter" onchange="runMyTrades()">
+          <option value="">All</option>
+          <option value="OPEN">Open</option>
+          <option value="TARGET_HIT">Target hit</option>
+          <option value="STOPPED_OUT">Stopped out</option>
+          <option value="CLOSED">Closed</option>
+        </select>
+        <button class="primary" id="mytradesBtn" onclick="runMyTrades()">Refresh</button>
+      </div>
+    </div>
+    <div class="card">
+      <div id="mytradesTableWrap"><div class="loading">Loading…</div></div>
+    </div>
+  </div>
+
   <!-- ============ TAB: Intraday Monitor ============ -->
   <div class="tab-page" id="page-intraday">
     <div class="topbar">
@@ -285,10 +344,10 @@ function serverDownMsg() {
   return 'Server not reachable. In the terminal run: <code>python .\\app.py</code> then click Run Scan again.';
 }
 
-async function fetchJson(url) {
+async function fetchJson(url, options) {
   let res;
   try {
-    res = await fetch(url);
+    res = await fetch(url, options);
   } catch (e) {
     throw new Error(serverDownMsg());
   }
@@ -373,6 +432,7 @@ function switchTab(tab) {
   // keep the server running via: python .\app.py
   if (tab === 'intraday') { pollIntradayStatus(); startIntradayPolling(); }
   else { stopIntradayPolling(); }
+  if (tab === 'mytrades') runMyTrades();
 }
 
 document.querySelectorAll('.nav-item').forEach(el => {
@@ -553,7 +613,7 @@ function renderStockForDayTable() {
   const numCols = new Set(['stop_loss', 'target', 'risk_reward', 'confidence']);
   let html = '<table><thead><tr><th></th>' + cols.map(([key, label]) =>
     `<th class="${numCols.has(key) ? 'num' : ''}" onclick="setStockdaySort('${key}')" style="cursor:pointer">${label}${sortIndicator(stockdaySortKey, key, stockdaySortDir)}</th>`
-  ).join('') + '</tr></thead><tbody>';
+  ).join('') + '<th></th></tr></thead><tbody>';
   for (const s of rows) {
     const ts = s.timestamp ? new Date(s.timestamp).toLocaleString() : '—';
     const struct = s.structure || s.market_structure || '—';
@@ -569,6 +629,7 @@ function renderStockForDayTable() {
       <td class="num">${Number(s.risk_reward).toFixed(2)}</td>
       <td class="num">${Number(s.confidence).toFixed(0)}%</td>
       <td style="color:var(--text-secondary)">${ts}</td>
+      <td>${trackBtnHtml('stockday', s.symbol, s.entry_price, s.stop_loss, s.target, s.chart_url)}</td>
     </tr>`;
   }
   html += '</tbody></table>';
@@ -709,7 +770,7 @@ function renderSupportBounceTable() {
   ]);
   let html = '<table><thead><tr><th></th>' + cols.map(([key, label]) =>
     `<th class="${numCols.has(key) ? 'num' : ''}" onclick="setSupportSort('${key}')" style="cursor:pointer">${label}${sortIndicator(supportSortKey, key, supportSortDir)}</th>`
-  ).join('') + '</tr></thead><tbody>';
+  ).join('') + '<th></th></tr></thead><tbody>';
   for (const s of rows) {
     const chart = '/support-chart/' + encodeURIComponent(s.symbol);
     const dist = Number(s.distance_from_support_pct);
@@ -730,6 +791,7 @@ function renderSupportBounceTable() {
       <td class="${structCls}">${s.market_structure || '—'}</td>
       <td>${sig}</td>
       <td class="num">${Number(s.smart_money_score).toFixed(0)}</td>
+      <td>${trackBtnHtml('support_bounce', s.symbol, s.entry_price ?? s.current_price, s.stop_loss, s.target, s.chart_url || chart)}</td>
     </tr>`;
   }
   html += '</tbody></table>';
@@ -802,7 +864,7 @@ function renderSwingTradeTable() {
   ]);
   let html = '<table><thead><tr><th></th>' + cols.map(([key, label]) =>
     `<th class="${numCols.has(key) ? 'num' : ''}" onclick="setSwingSort('${key}')" style="cursor:pointer">${label}${sortIndicator(swingSortKey, key, swingSortDir)}</th>`
-  ).join('') + '</tr></thead><tbody>';
+  ).join('') + '<th></th></tr></thead><tbody>';
   for (const s of rows) {
     const href = swingChartHref(s.symbol);
     const dist = s.distance_from_breakout_high_pct;
@@ -823,10 +885,206 @@ function renderSwingTradeTable() {
       <td class="num">${Number(s.risk_reward).toFixed(2)}</td>
       <td class="num neg">₹${Number(s.stop_loss).toFixed(2)}</td>
       <td class="num pos">₹${Number(s.target).toFixed(2)}</td>
+      <td>${trackBtnHtml('swing_trade', s.symbol, s.entry_price ?? s.current_price, s.stop_loss, s.target, href)}</td>
     </tr>`;
   }
   html += '</tbody></table>';
   document.getElementById('swingTableWrap').innerHTML = html;
+}
+
+// ---------------- DarvaX (Darvas Box) ----------------
+let darvaxData = null;
+let darvaxSortKey = 'quality', darvaxSortDir = -1;
+
+async function runDarvax(refresh = true) {
+  const btn = document.getElementById('darvaxBtn');
+  const mode = stockdayUniverseMode('darvaxUniverse');
+  const timeframe = document.getElementById('darvaxTimeframe').value;
+  btn.disabled = true; btn.textContent = refresh ? 'Scanning...' : 'Loading...';
+  if (refresh || !darvaxData) {
+    document.getElementById('darvaxTableWrap').innerHTML =
+      '<div class="loading">' + (refresh ? `Scanning ${timeframe} Darvas boxes + volume spikes…` : 'Loading startup cache…') + '</div>';
+  }
+  try {
+    let url = '/api/darvax?universe=' + encodeURIComponent(mode) + '&timeframe=' + encodeURIComponent(timeframe);
+    if (refresh) url += '&refresh=1';
+    darvaxData = await fetchJson(url);
+    const stamp = new Date(darvaxData.generated_at).toLocaleTimeString();
+    const src = darvaxData.cached ? 'startup cache' : 'fresh scan';
+    const label = darvaxData.universe_label || mode;
+    document.getElementById('darvaxMeta').textContent =
+      `${darvaxData.num_results} setup(s) · ${label} · ${timeframe} · scanned ${darvaxData.scanned}/${darvaxData.universe_size} · ${src} · ${stamp} · click Run Scan to refresh`;
+    updateMarketStatus(darvaxData.market_open);
+    renderDarvaxTable();
+  } catch (e) {
+    document.getElementById('darvaxTableWrap').innerHTML = '<div class="empty">Scan failed: ' + (e.message || e) + '</div>';
+  }
+  btn.disabled = false; btn.textContent = 'Run Scan';
+}
+
+document.getElementById('darvaxTimeframe').addEventListener('change', () => runDarvax(true));
+
+function setDarvaxSort(key) {
+  if (darvaxSortKey === key) { darvaxSortDir *= -1; } else { darvaxSortKey = key; darvaxSortDir = -1; }
+  renderDarvaxTable();
+}
+window.setDarvaxSort = setDarvaxSort;
+
+function darvaxStatusPill(row) {
+  if (row.status === 'INVALIDATED') return '<span class="pill" style="background:#3a1414;color:#f0554a">INVALIDATED</span>';
+  if (row.status === 'TRIGGERED') return '<span class="pill target_hit">TRIGGERED</span>';
+  return '<span class="pill" style="background:#0f2e24;color:#22c58a">BREAKOUT</span>';
+}
+
+function darvaxChartHref(symbol) {
+  const timeframe = document.getElementById('darvaxTimeframe').value;
+  return '/darvax-chart/' + encodeURIComponent(symbol) + (timeframe === 'weekly' ? '?tf=weekly' : '');
+}
+
+function renderDarvaxTable() {
+  if (!darvaxData || !darvaxData.results || !darvaxData.results.length) {
+    document.getElementById('darvaxTableWrap').innerHTML =
+      '<div class="empty">No stocks currently show a Darvas box breakout right now.</div>';
+    return;
+  }
+  const rows = genericSort(darvaxData.results, darvaxSortKey, darvaxSortDir);
+  const cols = [
+    ['status', 'Status'], ['box_top', 'Box top'], ['box_bottom', 'Box bottom (SL)'],
+    ['box_height_pct', 'Box height %'], ['breakout_date', 'Breakout date'],
+    ['breakout_close', 'Breakout close'], ['current_close', 'Price'],
+    ['volume_ratio', 'Vol vs Avg'], ['dist_from_ath_pct', '% off high'],
+    ['box_formed_bars', 'Box days'], ['quality', 'Score'],
+  ];
+  const numCols = new Set([
+    'box_top', 'box_bottom', 'box_height_pct', 'breakout_close', 'current_close',
+    'volume_ratio', 'dist_from_ath_pct', 'box_formed_bars', 'quality',
+  ]);
+  let html = '<table><thead><tr><th></th>' + cols.map(([key, label]) =>
+    `<th class="${numCols.has(key) ? 'num' : ''}" onclick="setDarvaxSort('${key}')" style="cursor:pointer">${label}${sortIndicator(darvaxSortKey, key, darvaxSortDir)}</th>`
+  ).join('') + '<th></th></tr></thead><tbody>';
+  for (const s of rows) {
+    const href = darvaxChartHref(s.symbol);
+    html += `<tr>
+      <td><a href="${href}" target="_blank" rel="noopener" style="color:var(--accent);font-weight:600">${s.symbol}</a></td>
+      <td>${darvaxStatusPill(s)}</td>
+      <td class="num neg">₹${Number(s.box_top).toFixed(2)}</td>
+      <td class="num neg">₹${Number(s.box_bottom).toFixed(2)}</td>
+      <td class="num">${Number(s.box_height_pct).toFixed(2)}%</td>
+      <td>${s.breakout_date || '—'}</td>
+      <td class="num">₹${Number(s.breakout_close).toFixed(2)}</td>
+      <td class="num pos">₹${Number(s.current_close).toFixed(2)}</td>
+      <td class="num">${s.volume_ratio != null ? s.volume_ratio + 'x' : '—'}</td>
+      <td class="num">${s.dist_from_ath_pct != null ? s.dist_from_ath_pct + '%' : '—'}</td>
+      <td class="num">${s.box_formed_bars}</td>
+      <td class="num">${Number(s.quality).toFixed(0)}</td>
+      <td>${trackBtnHtml('darvax', s.symbol, s.current_close, s.box_bottom, null, href)}</td>
+    </tr>`;
+  }
+  html += '</tbody></table>';
+  document.getElementById('darvaxTableWrap').innerHTML = html;
+}
+
+// ---------------- My Trades (shared "Track" button, all screeners) ----------------
+function trackBtnHtml(source, symbol, entry, stop, target, chartUrl) {
+  if (entry == null || isNaN(Number(entry))) return '';
+  const e = Number(entry);
+  const s = (stop != null && !isNaN(Number(stop))) ? Number(stop) : null;
+  const t = (target != null && !isNaN(Number(target))) ? Number(target) : null;
+  const url = (chartUrl || '').replace(/'/g, "\\'");
+  return `<button class="track-btn" onclick="trackTrade('${source}','${symbol}',${e},${s},${t},'${url}',this)" title="Track this trade">☆ Track</button>`;
+}
+
+async function trackTrade(source, symbol, entry, stop, target, chartUrl, btn) {
+  if (btn) { btn.disabled = true; btn.textContent = 'Tracking…'; }
+  try {
+    const res = await fetchJson('/api/tracked', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        symbol, source, entry_price: entry, stop_loss: stop, target, chart_url: chartUrl,
+      }),
+    });
+    if (btn) { btn.textContent = '✓ Tracked'; }
+  } catch (e) {
+    if (btn) { btn.disabled = false; btn.textContent = '☆ Track'; }
+    alert('Failed to track ' + symbol + ': ' + (e.message || e));
+  }
+}
+window.trackTrade = trackTrade;
+
+let myTradesData = null;
+
+async function runMyTrades() {
+  const status = document.getElementById('mytradesStatus').value;
+  document.getElementById('mytradesTableWrap').innerHTML = '<div class="loading">Loading…</div>';
+  try {
+    let url = '/api/tracked';
+    if (status) url += '?status=' + encodeURIComponent(status);
+    myTradesData = await fetchJson(url);
+    document.getElementById('mytradesMeta').textContent =
+      `${myTradesData.num_trades} tracked trade(s) · live P&L refreshed on load`;
+    renderMyTradesTable();
+  } catch (e) {
+    document.getElementById('mytradesTableWrap').innerHTML = '<div class="empty">Failed to load: ' + (e.message || e) + '</div>';
+  }
+}
+
+function mytradesStatusPill(status) {
+  if (status === 'TARGET_HIT') return '<span class="pill target_hit">TARGET HIT</span>';
+  if (status === 'STOPPED_OUT') return '<span class="pill stop_hit">STOPPED OUT</span>';
+  if (status === 'CLOSED') return '<span class="pill time_stop">CLOSED</span>';
+  return '<span class="pill open_trade">OPEN</span>';
+}
+
+async function closeTrackedTrade(id) {
+  if (!confirm('Close this tracked trade at its current price?')) return;
+  await fetchJson('/api/tracked/' + id + '/close', { method: 'POST' });
+  runMyTrades();
+}
+window.closeTrackedTrade = closeTrackedTrade;
+
+async function untrackTrade(id) {
+  if (!confirm('Remove this trade from tracking?')) return;
+  await fetch('/api/tracked/' + id, { method: 'DELETE' });
+  runMyTrades();
+}
+window.untrackTrade = untrackTrade;
+
+function renderMyTradesTable() {
+  const trades = (myTradesData && myTradesData.trades) || [];
+  if (!trades.length) {
+    document.getElementById('mytradesTableWrap').innerHTML =
+      '<div class="empty">No tracked trades yet — click "☆ Track" on any row in Stock for day, Previous Support Bounce, Swing Trade, or DarvaX.</div>';
+    return;
+  }
+  let html = `<table><thead><tr>
+    <th>Symbol</th><th>Source</th><th>Status</th>
+    <th class="num">Entry</th><th class="num">Stop</th><th class="num">Target</th>
+    <th class="num">Current</th><th class="num">P&amp;L %</th><th>Tracked at</th><th>Chart</th><th></th>
+  </tr></thead><tbody>`;
+  for (const t of trades) {
+    const pnlCls = (t.pnl_pct ?? 0) >= 0 ? 'pos' : 'neg';
+    const trackedAt = t.tracked_at ? new Date(t.tracked_at).toLocaleString() : '—';
+    const chartHref = t.chart_url || '#';
+    html += `<tr>
+      <td style="font-weight:600">${t.symbol}</td>
+      <td style="color:var(--text-secondary)">${t.source}</td>
+      <td>${mytradesStatusPill(t.status)}</td>
+      <td class="num">₹${Number(t.entry_price).toFixed(2)}</td>
+      <td class="num neg">${t.stop_loss != null ? '₹' + Number(t.stop_loss).toFixed(2) : '—'}</td>
+      <td class="num pos">${t.target != null ? '₹' + Number(t.target).toFixed(2) : '—'}</td>
+      <td class="num">${t.current_price != null ? '₹' + Number(t.current_price).toFixed(2) : '—'}</td>
+      <td class="num ${pnlCls}">${t.pnl_pct != null ? Number(t.pnl_pct).toFixed(2) + '%' : '—'}</td>
+      <td style="color:var(--text-secondary)">${trackedAt}</td>
+      <td>${t.chart_url ? `<a href="${chartHref}" target="_blank" rel="noopener" style="color:var(--accent)">Chart ↗</a>` : '—'}</td>
+      <td style="white-space:nowrap">
+        ${t.status !== 'CLOSED' ? `<button class="track-btn" onclick="closeTrackedTrade(${t.id})">Close</button>` : ''}
+        <button class="track-btn" onclick="untrackTrade(${t.id})">Remove</button>
+      </td>
+    </tr>`;
+  }
+  html += '</tbody></table>';
+  document.getElementById('mytradesTableWrap').innerHTML = html;
 }
 
 // ---------------- Intraday Monitor ----------------
@@ -1077,6 +1335,8 @@ runTrendingScan(false);
 runStockForDay(false);
 runSupportBounce(false);
 runSwingTrade(false);
+runDarvax(false);
+runMyTrades();
 </script>
 </body>
 </html>

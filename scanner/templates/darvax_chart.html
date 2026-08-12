@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ symbol }} — DarvaX Box</title>
+<script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+<style>
+  :root {
+    --bg: #0d0d0c; --surface: #171715; --border: #2b2b27;
+    --text: #f2f1ec; --text-secondary: #9a998f; --text-muted: #6b6a64;
+    --accent: #5b8cff; --green: #22c58a; --red: #f0554a; --ready: #f0b429;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--bg); color: var(--text); min-height: 100vh;
+    display: flex; flex-direction: column;
+  }
+  header {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    padding: 12px 18px; border-bottom: 1px solid var(--border); background: var(--surface);
+    flex-wrap: wrap;
+  }
+  h1 { margin: 0; font-size: 17px; font-weight: 700; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .meta { font-size: 13px; color: var(--text-secondary); margin-top: 4px; }
+  .actions { display: flex; gap: 10px; align-items: center; }
+  a.btn {
+    color: var(--text); text-decoration: none; font-size: 13px; font-weight: 600;
+    padding: 8px 12px; border-radius: 8px; border: 1px solid var(--border);
+    background: #1e1e1b;
+  }
+  a.btn.primary { background: var(--accent); border-color: transparent; color: #fff; }
+  .pill { font-size: 12px; font-weight: 700; padding: 4px 10px; border-radius: 6px; letter-spacing: 0.02em; }
+  .pill.active { background: #0f2e24; color: var(--green); }
+  .pill.invalidated { background: #3a1414; color: var(--red); }
+  .pill.neutral { background: #1e1e1b; color: var(--text-muted); }
+  #legend {
+    display: flex; gap: 14px; flex-wrap: wrap; padding: 8px 18px; align-items: center;
+    font-size: 12px; color: var(--text-secondary); border-bottom: 1px solid var(--border);
+  }
+  .leg { display: inline-flex; align-items: center; gap: 6px; }
+  .swatch { width: 14px; height: 3px; border-radius: 2px; }
+  #chart { min-height: 480px; width: 100%; }
+  #status { padding: 24px 18px; color: var(--text-muted); font-size: 14px; }
+  #banner {
+    padding: 10px 18px; font-size: 14px; font-weight: 700; text-align: center;
+    background: #0f2e24; color: var(--green); border-bottom: 1px solid var(--border);
+  }
+  #banner.invalidated { background: #3a1414; color: var(--red); }
+  #info { display: none; padding: 16px 18px 32px; }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; margin-top: 4px; }
+  .card {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    padding: 14px 16px;
+  }
+  .card h2 { margin: 0 0 10px; font-size: 13px; font-weight: 700; letter-spacing: 0.02em;
+    color: var(--text-secondary); text-transform: uppercase; }
+  .card ul { margin: 0; padding-left: 18px; }
+  .card li { margin: 6px 0; font-size: 13.5px; line-height: 1.5; color: var(--text); }
+  .card p { margin: 0; font-size: 13.5px; line-height: 1.6; color: var(--text); }
+  .card.entry { border-color: #2a4a2f; }
+  .card.exit { border-color: #4a2a2a; }
+  .card.avg { border-color: #4a3a1a; }
+  .ema-table { width: 100%; border-collapse: collapse; margin-top: 6px; font-size: 13px; }
+  .ema-table td { padding: 4px 0; color: var(--text-secondary); }
+  .ema-table td:last-child { text-align: right; color: var(--text); font-weight: 600; }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>
+      <span id="title">{{ symbol }}</span>
+      <span class="pill neutral" id="statusPill">…</span>
+    </h1>
+    <div class="meta" id="subtitle">Loading chart…</div>
+  </div>
+  <div class="actions">
+    <a class="btn" href="/">← Dashboard</a>
+    <a class="btn primary" id="tvLink" href="#" target="_blank" rel="noopener">TradingView ↗</a>
+  </div>
+</header>
+<div id="banner" hidden></div>
+<div id="legend"></div>
+<div id="status">Fetching chart data…</div>
+<div id="chart" hidden></div>
+
+<div id="info">
+  <div class="cards">
+    <div class="card entry">
+      <h2>Entry basis — why this call</h2>
+      <ul id="entryBasisList"></ul>
+      <p id="entryRule" style="margin-top:10px; padding-top:10px; border-top:1px solid var(--border); color: var(--text-secondary);"></p>
+    </div>
+    <div class="card exit">
+      <h2>Exit / stop-loss</h2>
+      <p id="exitRule"></p>
+      <table class="ema-table" id="emaTable"></table>
+    </div>
+    <div class="card avg">
+      <h2>Averaging</h2>
+      <p id="avgRule"></p>
+    </div>
+  </div>
+</div>
+
+<script>
+const SYMBOL = {{ symbol|tojson }};
+const TF = new URLSearchParams(window.location.search).get('tf') === 'weekly' ? 'weekly' : 'daily';
+
+function statusPillClass(status) {
+  if (status === 'INVALIDATED') return 'invalidated';
+  if (status === 'BREAKOUT' || status === 'TRIGGERED') return 'active';
+  return 'neutral';
+}
+
+async function load() {
+  const status = document.getElementById('status');
+  const chartEl = document.getElementById('chart');
+  try {
+    if (typeof LightweightCharts === 'undefined') {
+      status.textContent = 'Chart library failed to load (CDN). Check network and refresh.';
+      return;
+    }
+    const res = await fetch('/api/darvax/chart/' + encodeURIComponent(SYMBOL) + '?tf=' + TF);
+    const data = await res.json();
+    if (!res.ok || data.error) {
+      status.textContent = data.error || ('HTTP ' + res.status);
+      return;
+    }
+    status.hidden = true;
+    chartEl.hidden = false;
+    document.getElementById('info').style.display = 'block';
+
+    document.getElementById('title').textContent = data.symbol + ' · Darvas Box (' + (TF === 'weekly' ? 'Weekly' : 'Daily') + ')';
+    const pill = document.getElementById('statusPill');
+    pill.className = 'pill ' + statusPillClass(data.status);
+    pill.textContent = data.status || '—';
+
+    const bits = [];
+    if (data.box_top != null) bits.push('box top ₹' + Number(data.box_top).toFixed(2));
+    if (data.box_bottom != null) bits.push('box bottom ₹' + Number(data.box_bottom).toFixed(2));
+    if (data.box_height_pct != null) bits.push('height ' + data.box_height_pct + '%');
+    if (data.volume_ratio != null) bits.push('vol ' + Number(data.volume_ratio).toFixed(2) + 'x avg');
+    if (data.dist_from_ath_pct != null) bits.push(data.dist_from_ath_pct + '% off high');
+    document.getElementById('subtitle').textContent = bits.join(' · ') || 'Darvas box breakout';
+
+    const banner = document.getElementById('banner');
+    if (data.status_message) {
+      banner.hidden = false;
+      banner.className = data.status === 'INVALIDATED' ? 'invalidated' : '';
+      banner.textContent = (data.status === 'INVALIDATED' ? '⛔ ' : '✅ ') + data.status_message;
+    } else {
+      banner.hidden = true;
+    }
+
+    if (data.tv_chart_url) document.getElementById('tvLink').href = data.tv_chart_url;
+
+    const legend = document.getElementById('legend');
+    legend.innerHTML = `
+      <span class="leg"><span class="swatch" style="background:#f0554a"></span>Box top (resistance)</span>
+      <span class="leg"><span class="swatch" style="background:#3d8bfd"></span>Box bottom (stop-loss)</span>
+      <span class="leg"><span class="swatch" style="background:#f0b429"></span>ENTRY + vol spike</span>
+      ${data.status === 'INVALIDATED' ? '<span class="leg"><span class="swatch" style="background:#f0554a"></span>EXIT — invalidated</span>' : ''}
+    `;
+
+    document.getElementById('entryBasisList').innerHTML =
+      (data.entry_basis || []).map(b => `<li>${b}</li>`).join('');
+    document.getElementById('entryRule').textContent = data.entry_rule || '';
+    document.getElementById('exitRule').textContent = data.exit_rule || '';
+    document.getElementById('avgRule').textContent = data.averaging_rule || '';
+
+    const emaTable = document.getElementById('emaTable');
+    const tiers = data.ema_sl_tiers || {};
+    const tierLabels = { very_short_term: 'Very short-term (5 EMA)', swing: 'Swing (10 EMA)',
+                          positional: 'Positional (20 EMA)', investor: 'Investor (200 EMA)' };
+    emaTable.innerHTML = Object.keys(tierLabels).map(k => {
+      const v = tiers[k];
+      return `<tr><td>${tierLabels[k]}</td><td>${v != null ? '₹' + Number(v).toFixed(2) : '—'}</td></tr>`;
+    }).join('');
+
+    const chart = LightweightCharts.createChart(chartEl, {
+      layout: { background: { type: 'solid', color: '#0d0d0c' }, textColor: '#9a998f' },
+      grid: { vertLines: { color: '#1e1e1b' }, horzLines: { color: '#1e1e1b' } },
+      rightPriceScale: { borderColor: '#2b2b27', scaleMargins: { top: 0.1, bottom: 0.3 } },
+      timeScale: { borderColor: '#2b2b27', timeVisible: false },
+      crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+    });
+
+    const candleSeries = chart.addCandlestickSeries({
+      upColor: '#22c58a', downColor: '#f0554a', borderUpColor: '#22c58a',
+      borderDownColor: '#f0554a', wickUpColor: '#22c58a', wickDownColor: '#f0554a',
+    });
+    candleSeries.setData(data.candles || []);
+    if ((data.markers || []).length) candleSeries.setMarkers(data.markers);
+
+    for (const line of (data.lines || [])) {
+      const series = chart.addLineSeries({
+        color: line.color, lineWidth: line.lineWidth || 2,
+        lineStyle: line.dashed ? LightweightCharts.LineStyle.Dashed : LightweightCharts.LineStyle.Solid,
+        title: line.name, priceLineVisible: false, lastValueVisible: true,
+      });
+      series.setData(line.points || []);
+    }
+
+    if (data.volume && data.volume.length) {
+      const volumeSeries = chart.addHistogramSeries({ priceFormat: { type: 'volume' }, priceScaleId: 'volume' });
+      volumeSeries.priceScale().applyOptions({ scaleMargins: { top: 0.78, bottom: 0 } });
+      volumeSeries.setData(data.volume);
+    }
+
+    chart.timeScale().fitContent();
+    const resize = () => {
+      chart.applyOptions({ width: chartEl.clientWidth, height: Math.max(480, window.innerHeight * 0.55) });
+    };
+    resize();
+    window.addEventListener('resize', resize);
+  } catch (e) {
+    status.textContent = 'Failed to load chart: ' + (e.message || e);
+  }
+}
+load();
+</script>
+</body>
+</html>

@@ -250,6 +250,12 @@ def scan_stock_for_day(
             # Prefer the full strategy signal over soft annotate overwrite.
             row_out["smart_money_signal"] = sig.signal
             row_out["signal"] = sig.signal
+            # "Bearish CHoCH" directly contradicts a BUY thesis - drop it.
+            # Not applied to SELL rows, where a bearish CHoCH is the
+            # CONFIRMING signal, not noise to filter out.
+            structure_label = row_out.get("structure") or row_out.get("market_structure")
+            if sig.signal == "BUY" and structure_label == "Bearish CHoCH":
+                continue
             if sig.signal == "BUY":
                 buys.append(row_out)
             else:

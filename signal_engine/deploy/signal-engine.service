@@ -1,0 +1,20 @@
+[Unit]
+Description=Trading Signal Engine (FastAPI/uvicorn)
+After=network.target
+
+[Service]
+Type=simple
+# Adjust User/Group and paths if you didn't deploy to /home/ubuntu/trading-platform
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/trading-platform/signal_engine
+EnvironmentFile=/home/ubuntu/trading-platform/.env
+ExecStart=/home/ubuntu/trading-platform/signal_engine/.venv/bin/uvicorn app.api.main:app --host 0.0.0.0 --port 8000
+Restart=always
+RestartSec=5
+# t3.micro has 1GB RAM - cap memory so a runaway process gets restarted
+# by systemd instead of the kernel OOM-killer taking down SSH too.
+MemoryMax=700M
+
+[Install]
+WantedBy=multi-user.target

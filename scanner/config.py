@@ -193,8 +193,11 @@ SUPPORT_BOUNCE_PIVOT_LENGTH = 5           # short swing pivot
 SUPPORT_BOUNCE_MAJOR_PIVOT_LENGTH = 12    # major swing lows for trendlines
 SUPPORT_BOUNCE_TOUCH_PCT = 2.0            # % band around support / trendline
 SUPPORT_BOUNCE_ATR_TOUCH_MULT = 0.6       # also allow ATR-scaled touch band
-SUPPORT_BOUNCE_MAX_DIST_PCT = 5.0         # max distance above support if only touching
-SUPPORT_BOUNCE_MAX_BOUNCE_DIST_PCT = 12.0 # after a bounce, allow farther extension
+SUPPORT_BOUNCE_MAX_DIST_PCT = 4.0         # max distance above support if only touching
+SUPPORT_BOUNCE_MAX_BOUNCE_DIST_PCT = 7.0  # after a bounce, allow only a little extension
+                                            # (was 12.0 — too generous, let already-moved
+                                            # stocks through; tightened to keep results
+                                            # near the support/buy zone, not post-move)
 SUPPORT_BOUNCE_BOUNCE_BARS = 35           # lookback for probe + bounce (~5-7 weeks)
 SUPPORT_BOUNCE_MIN_TRENDLINE_SEP = 25     # min bars between trendline anchors
 SUPPORT_BOUNCE_MAX_PIVOTS_FOR_LINE = 10   # recent swing lows considered for lines
@@ -225,11 +228,23 @@ SUPPORT_BOUNCE_CUP_MAX_UP_PCT = 8.0       # handle bounce still near handle low
 # moved away with no re-test to anchor a stop against. Also rewards a
 # high-volume, strong-close breakout bar.
 SUPPORT_BOUNCE_VOLUME_SMA_PERIOD = 20
-SUPPORT_BOUNCE_MAX_BREAKOUT_DIST_PCT = 15.0   # exclude un-retested breakouts extended past this
+SUPPORT_BOUNCE_MAX_BREAKOUT_DIST_PCT = 6.0    # exclude un-retested breakouts extended past this
+                                                # (was 15.0 — let stocks that already ran 15%
+                                                # past resistance through; this is the main
+                                                # source of "already moved" results)
 SUPPORT_BOUNCE_RETEST_MAX_BARS = 25           # bars allowed for a re-test after breakout (~5 weeks)
 SUPPORT_BOUNCE_RETEST_BAND_PCT = 3.0          # % band around the broken level for a re-test
 SUPPORT_BOUNCE_MIN_CLOSE_STRENGTH = 0.6       # close in the top 40% of the bar's range = "strong"
 SUPPORT_BOUNCE_VOLUME_SPIKE_MULT = 1.5        # breakout volume >= this x SMA counts as "high volume"
+
+# Final buy-zone gate — applied uniformly to EVERY result (pattern-based buy
+# zone AND raw Pine Smart Money BUY/SELL alike). Pine's BUY signal alone has
+# no notion of "distance from previous support", so without this a stock
+# already 20%+ past its support could still surface just because Pine fired
+# BUY on unrelated momentum grounds — this closes that loophole.
+SUPPORT_BOUNCE_BUY_ZONE_MAX_PCT = 7.0          # current price must be within this % of support
+SUPPORT_BOUNCE_PROXIMITY_PENALTY_MULT = 2.5    # score points lost per % away from support
+SUPPORT_BOUNCE_REQUIRE_NON_BEARISH_TREND = True  # hard-gate out htf_trend == bearish (-1)
 
 # ---------------------------------------------------------------------------
 # Swing Trade (Weekly) — resistance breakout (descending trendline or
@@ -262,6 +277,45 @@ SWING_TRADE_WATCH_BAND_PCT = 6.0          # % below (or just at) resistance stil
 SWING_TRADE_MIN_SCORE_WATCHING = 25       # lower floor — WATCHING rows have no breakout/volume bonus yet
 SWING_TRADE_MAX_EXTENSION_PCT = 15.0      # drop TRIGGERED rows already this far past the breakout high
 SWING_TRADE_SEND_TELEGRAM = False
+
+# ---------------------------------------------------------------------------
+# DarvaX — proper Darvas Box construction (Nicolas Darvas's 3-session-stall
+# top/bottom rule) with Amitabh Jha's "DarvaX" Indian-market overlay: bias
+# toward stocks near their all-time high, tiered EMA stop-loss reference,
+# never average down. Runs on DAILY candles (the box mechanic + "enter above
+# previous day high" trigger are both daily-native, unlike Swing Trade's
+# weekly-only resistance breakout).
+# ---------------------------------------------------------------------------
+DARVAX_UNIVERSE = "nifty200"          # "nifty50" | "nifty100" | "nifty200" | "nifty500"
+DARVAX_LOOKBACK_DAYS = 400            # enough daily history for box formation + ATH context
+DARVAX_CONFIRM_BARS = 3               # Darvas's "3 sessions without a new high/low"
+DARVAX_BREAKOUT_LOOKBACK_DAYS = 20    # surface boxes that broke out in the last N sessions
+                                        # (was 5 — too tight: real examples like MUFIN/EMMVEE/
+                                        # CENTUM had valid, still-un-invalidated breakouts 17-56
+                                        # bars old that got excluded purely on recency, not quality)
+DARVAX_VOLUME_SMA_DAYS = 20
+DARVAX_VOLUME_MULT = 1.5              # "surge in volume" gate on the breakout bar
+DARVAX_MAX_BOX_AGE_DAYS = 90          # ignore boxes that took absurdly long to form
+DARVAX_EMA_TIERS = {                  # p.7 of the deck: SL reference by holding style
+    "very_short_term": 5,
+    "swing": 10,
+    "positional": 20,
+    "investor": 200,
+}
+DARVAX_MIN_SCORE = 30                 # soft quality-score floor (0-100)
+
+# Weekly variant — same box state machine, run on weekly-resampled candles.
+# The deck explicitly prefers this over daily ("the higher the timeframe,
+# the higher the respect") since a weekly 3-bar stall represents 3 WEEKS of
+# real consolidation, not 3 days — far fewer, much higher-conviction boxes.
+DARVAX_WEEKLY_LOOKBACK_DAYS = 900          # ~3.5y daily -> enough weekly bars for long bases
+DARVAX_WEEKLY_CONFIRM_BARS = 3             # same 3-session-stall rule, on weekly bars
+DARVAX_WEEKLY_BREAKOUT_LOOKBACK_WEEKS = 10  # surface boxes that broke out in the last N weeks
+                                              # (was 4 — same recency issue as the daily lookback)
+DARVAX_WEEKLY_VOLUME_SMA_WEEKS = 20
+DARVAX_WEEKLY_VOLUME_MULT = 1.5
+DARVAX_WEEKLY_MAX_BOX_AGE_WEEKS = 26       # ~6 months
+DARVAX_WEEKLY_MIN_SCORE = 30
 
 # ---------------------------------------------------------------------------
 # Trade simulation rules

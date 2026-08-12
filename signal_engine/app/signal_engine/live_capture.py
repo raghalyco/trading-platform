@@ -10,6 +10,7 @@ Flow:
 
 from __future__ import annotations
 
+from app.config import CONFIG
 from app.signal_engine import journal
 from app.signal_engine.modes import current_expiry_date_iso
 from app.signal_engine.trade_recommendation import (
@@ -84,13 +85,19 @@ def capture_entry(
 
     pl = rec.get("levels_premium") or {}
     prem = rec.get("premium") or {}
-    entry_premium = pl.get("entry") or prem.get("mid")
+    entry_premium = float(pl.get("entry") or prem.get("mid") or 0) or None
     if entry_premium is None:
         return {
             "ok": False,
             "error": "Could not resolve entry premium (need live Kite quote or estimate)",
             "recommendation": rec,
         }
+
+    # Fixed OPTION PREMIUM points target (not index points) - this is the
+    # actual exit rule for every captured trade, replacing the ATR-derived
+    # target1. Applies identically to CE and PE: the premium always moves
+    # in the buyer's favor as the trade works, regardless of side.
+    t1_premium = round(entry_premium + CONFIG.auto_trade.target_premium_points, 2)
 
     lot_size = LOT_SIZES.get(symbol, 65)
     trade_id = journal.log_entry(
@@ -107,7 +114,7 @@ def capture_entry(
         expiry=rec.get("expiry"),
         strike=rec.get("strike"),
         entry_premium=float(entry_premium),
-        t1_premium=float(pl["target1"]) if pl.get("target1") is not None else None,
+        t1_premium=t1_premium,
         t2_premium=float(pl["target2"]) if pl.get("target2") is not None else None,
         sl_premium=float(pl["stop_loss"]) if pl.get("stop_loss") is not None else None,
     )
@@ -131,7 +138,7 @@ def capture_entry(
         "strike": rec.get("strike"),
         "index_entry": levels.get("entry"),
         "entry_premium": entry_premium,
-        "t1_premium": pl.get("target1"),
+        "t1_premium": t1_premium,
         "t2_premium": pl.get("target2"),
         "sl_premium": pl.get("stop_loss"),
         "lot_size": lot_size,
