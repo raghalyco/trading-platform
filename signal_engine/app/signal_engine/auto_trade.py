@@ -29,9 +29,12 @@ def should_auto_enter(signal: dict, otm_steps: int) -> tuple[bool, str]:
         reasons = "; ".join((rec.get("reasons") or [])[:2]) or "not TAKE"
         return False, f"SKIP — {reasons}"
 
-    conf = int(signal.get("confidence_pct") or 0)
-    if conf < cfg.min_confidence_pct:
-        return False, f"confidence {conf}% < {cfg.min_confidence_pct}%"
+    # Gate on the raw base score (out of 7), not the derived confidence_pct
+    # (which is scaled out of 9 with PA bonus and under-represents a clean
+    # base score - see min_base_score's comment in config.py).
+    base_score = int(signal.get("base_score") or 0)
+    if base_score < cfg.min_base_score:
+        return False, f"score {base_score}/7 < {cfg.min_base_score}/7"
 
     gate = signal.get("risk_gate") or {}
     if not gate.get("can_enter", False):

@@ -69,7 +69,15 @@ class AutoTradeConfig:
     # option capture (journal + optional Telegram). Does NOT place broker
     # orders unless you wire kite.place_order separately.
     enabled: bool = True
-    min_confidence_pct: int = 75
+    min_confidence_pct: int = 75  # kept for the UI label only - see min_base_score for the actual gate
+    # Gate on the raw 7-point score (EMA/MACD/15M/5M/1M/VOL/RSI) directly,
+    # NOT the derived confidence_pct. confidence_pct = score / 9 (7 base +
+    # up to 2 price-action bonus), so a clean 5/7 base score only reaches
+    # 56-67% confidence depending on PA bonus - well under a 75% cutoff.
+    # That mismatch was silently blocking every 5/7 and most 6/7 signals.
+    # 5-6 out of 7 factors agreeing (~60-70%+ confluence) is a normal,
+    # commonly-used bar for multi-indicator systems, not a low one.
+    min_base_score: int = 5
     require_take: bool = True
     default_otm_steps: int = 0  # 0=ATM
     max_open_positions: int = 1
