@@ -37,6 +37,7 @@ import support_bounce
 import swing_trade
 import darvax
 import trade_tracker
+import strategy_performance
 from kite_auth import get_kite_session
 from kite_client import KiteDataClient
 
@@ -836,6 +837,62 @@ def api_tracked_delete(trade_id):
     if not ok:
         return jsonify({"error": f"No tracked trade with id {trade_id}"}), 404
     return jsonify({"ok": True})
+
+
+def _largest_cached(cache: dict) -> dict:
+    """Pick the cached scan entry with the most results, across whichever
+    universe/timeframe combos have been run - avoids double-counting a
+    symbol that appears in both e.g. nifty100 and nifty200 caches."""
+    best = {}
+    best_n = -1
+    for entry in cache.values():
+        results = (entry.get("payload") or {}).get("results") or []
+        if len(results) > best_n:
+            best_n = len(results)
+            best = entry.get("payload") or {}
+    return best
+
+
+@app.route("/api/performance/strategy")
+def api_performance_strategy():
+    """Cross-screener performance: aggregates every tracked trade by which
+    screener it was tracked from ('which strategy is actually working')."""
+    try:
+        return jsonify({"strategies": strategy_performance.strategy_performance()})
+    except Exception as e:
+        return jsonify({"error": str(e), "strategies": []}), 500
+
+
+@app.route("/api/performance/industry")
+def api_performance_industry():
+    """Industry-level breakout performance for DarvaX or Swing Trade's
+    most recently cached scan - 'which industries are producing stronger
+    breakout candidates', using each result's own breakout price vs
+    today's price (no extra data fetches)."""
+    from flask import request
+    source = (request.args.get("source") or "darvax").strip().lower()
+    try:
+        if source == "swing_trade":
+            payload = _largest_cached(_swing_trade_cache)
+            entry_field, current_field = "resistance_price", "current_price"
+        else:
+            source = "darvax"
+            payload = _largest_cached(_darvax_cache)
+            entry_field, current_field = "breakout_close", "current_close"
+
+        results = payload.get("results") or []
+        industries = strategy_performance.industry_breakout_performance(
+            results, entry_field, current_field
+        )
+        return jsonify({
+            "source": source,
+            "universe_label": payload.get("universe_label"),
+            "generated_at": payload.get("generated_at"),
+            "num_breakouts": len(results),
+            "industries": industries,
+        })
+    except Exception as e:
+        return jsonify({"error": str(e), "industries": []}), 500
 
 
 if __name__ == "__main__":

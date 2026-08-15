@@ -16,6 +16,9 @@ from pydantic import BaseModel
 import os
 import secrets
 import sys
+import threading
+import time
+import pandas as pd
 
 from app.data_feed.simulator import SimulatorFeed
 from app.data_feed.kite_feed import KiteFeed, SESSION_FILE
@@ -32,6 +35,7 @@ from app.signal_engine.backtest import run_backtest, build_backtest_trade_chart
 from app.signal_engine import journal
 from app.signal_engine.target_monitor import check_and_alert_t1
 from app.signal_engine.live_capture import capture_entry, poll_open_positions
+from app.signal_engine.auto_trade import maybe_auto_enter
 from app.signal_engine.trade_chart import build_trade_chart
 from app.config import CONFIG
 from app.telegram_alerts import (
@@ -88,6 +92,65 @@ except Exception as shared_exc:
 risk_mgr = RiskManager()
 
 FRONTEND_DIR = os.path.join(os.path.dirname(__file__), "..", "frontend")
+
+
+def _background_scan_loop():
+    """Runs entirely on the server, independent of any browser/phone
+    having the dashboard open. Without this, auto-capture only ever fired
+    because the dashboard's own JS polls /api/signal every few seconds -
+    close every tab and nothing ran at all. This loop is what makes
+    "capture data every day on EC2 without anyone accessing it" actually
+    true, rather than accidentally depending on a UI staying open.
+
+    References `feed`/`risk_mgr`/`DATA_SOURCE` by module-level name (not
+    captured at thread-start) so it automatically picks up the live
+    KiteFeed the /admin/<token>/login flow swaps in later, without a
+    restart - and, critically, does NOTHING until that login has actually
+    happened. Before that, `feed` is still SimulatorFeed; running the
+    capture logic against it would silently log FAKE simulated trades
+    into the real journal (this happened once already with manual test
+    data - the whole point of this loop is to avoid a repeat of that).
+    """
+    from app.signal_engine.session import get_session_label
+
+    print(f"[background] loop thread started "
+          f"(every {CONFIG.auto_trade.background_poll_seconds}s, "
+          f"active during market hours once today's Kite login is done)", flush=True)
+    was_live = False
+    while True:
+        try:
+            if DATA_SOURCE != "kite":
+                if was_live:
+                    print("[background] lost live feed (token expired?) - paused until re-login.", flush=True)
+                    was_live = False
+                time.sleep(CONFIG.auto_trade.background_poll_seconds)
+                continue
+            if not was_live:
+                print("[background] live Kite feed detected - capturing until market close (15:30 IST).", flush=True)
+                was_live = True
+
+            session = get_session_label()
+            if session != "MARKET CLOSED":
+                for symbol in CONFIG.instruments:
+                    try:
+                        signal = generate_signal(feed, symbol, "SCALP", risk_mgr)
+                        poll_open_positions(feed, auto_exit=True)
+                        auto = maybe_auto_enter(feed, signal, risk_mgr)
+                        if auto and auto.get("ok") and not auto.get("skipped"):
+                            print(f"[background] auto-captured {symbol} trade #{auto.get('trade_id')}", flush=True)
+                    except Exception as e:
+                        print(f"[background] {symbol} cycle failed: {e}", flush=True)
+        except Exception as e:
+            print(f"[background] loop error: {e}", flush=True)
+        time.sleep(CONFIG.auto_trade.background_poll_seconds)
+
+
+@app.on_event("startup")
+def _start_background_loop():
+    if not CONFIG.auto_trade.enabled:
+        print("[background] AUTO_TRADE disabled - background loop not started.")
+        return
+    threading.Thread(target=_background_scan_loop, daemon=True).start()
 
 
 class AdminLoginRequest(BaseModel):
@@ -264,6 +327,29 @@ def telegram_send(req: TelegramSendRequest):
     return result
 
 
+def _aligned_vix_series(feed, days: int, interval: str, index_df):
+    """Fetches India VIX history and reindexes it onto index_df's exact
+    timestamps (forward-filled) so it's safely position-aligned even if
+    the two symbols' bars don't line up 1:1. Returns None (not raises) on
+    any failure - callers fall back to index-only backtesting rather than
+    hard-failing the whole report over a VIX fetch hiccup."""
+    try:
+        getter = getattr(feed, "get_ohlcv_history", None)
+        if getter is None:
+            return None
+        vix_df = getter("INDIA VIX", days=days, interval=interval)
+        if vix_df is None or vix_df.empty:
+            return None
+        vix_s = vix_df.set_index(pd.to_datetime(vix_df["timestamp"]))["close"]
+        idx_ts = pd.to_datetime(index_df["timestamp"])
+        aligned = vix_s.reindex(idx_ts, method="ffill")
+        aligned.index = index_df.index
+        return aligned
+    except Exception as e:
+        print(f"[warn] VIX history fetch failed, falling back to index-only backtest: {e}")
+        return None
+
+
 @app.get("/api/report/performance")
 def performance_report(
     symbol: str = Query("NIFTY"),
@@ -271,12 +357,14 @@ def performance_report(
     months: int = Query(3, ge=1, le=6),
     step_minutes: int = Query(15, ge=5, le=60),
     mark_to_market: bool = Query(True),
-    min_score: int = Query(4, ge=0, le=9),
+    min_score: int = Query(5, ge=0, le=9),
 ):
     """
     Backtest over the last N months using 5-minute candles.
     Default mark_to_market=True so hold-end close decides WIN/LOSS instead
     of leaving most trades as TIMEOUT (more honest for coarse bars).
+    Simulates OPTION PREMIUM P&L (Black-Scholes, real VIX history) when
+    VIX history is available - falls back to index points otherwise.
     """
     mode = mode.upper()
     days = months * 30
@@ -285,13 +373,16 @@ def performance_report(
         if getter is not None:
             df = getter(symbol, days=days, interval="5minute")
             bar_minutes = 5
+            vix_series = _aligned_vix_series(feed, days, "5minute", df)
         else:
             df = feed.get_ohlcv_1m(symbol, lookback_minutes=min(days * 75, 2000))
             bar_minutes = 1
+            vix_series = None
         report = run_backtest(
             df, symbol=symbol, mode=mode,
             step_minutes=step_minutes, bar_minutes=bar_minutes,
             mark_to_market=mark_to_market, min_score=min_score,
+            vix_series=vix_series,
         )
         report["months"] = months
         report["days"] = days
@@ -309,7 +400,7 @@ def performance_trade_chart(
     months: int = Query(3, ge=1, le=6),
     step_minutes: int = Query(15, ge=5, le=60),
     mark_to_market: bool = Query(True),
-    min_score: int = Query(4, ge=0, le=9),
+    min_score: int = Query(5, ge=0, le=9),
 ):
     """
     Candles + entry/exit/target/stop overlay for one backtest trade, in the
@@ -324,13 +415,16 @@ def performance_trade_chart(
         if getter is not None:
             df = getter(symbol, days=days, interval="5minute")
             bar_minutes = 5
+            vix_series = _aligned_vix_series(feed, days, "5minute", df)
         else:
             df = feed.get_ohlcv_1m(symbol, lookback_minutes=min(days * 75, 2000))
             bar_minutes = 1
+            vix_series = None
         return build_backtest_trade_chart(
             df, symbol=symbol, mode=mode, trade_index=trade_index,
             step_minutes=step_minutes, bar_minutes=bar_minutes,
             mark_to_market=mark_to_market, min_score=min_score,
+            vix_series=vix_series,
         )
     except Exception as e:
         return {"ok": False, "error": str(e)}

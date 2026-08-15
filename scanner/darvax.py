@@ -43,6 +43,7 @@ from tqdm import tqdm
 import config
 import indicators as ind
 import smart_money_strategy as sms
+import trade_tracker
 import universe as universe_mod
 from charts import tradingview_chart_url
 
@@ -526,6 +527,22 @@ def scan_darvax(
 
     status_rank = {"INVALIDATED": 0, "BREAKOUT": 1, "TRIGGERED": 2}
     results.sort(key=lambda r: (status_rank.get(r.get("status"), 0), r.get("quality") or 0), reverse=True)
+
+    # Auto-track every non-invalidated breakout so Strategy Performance
+    # reflects EVERY signal this scanner produced, not just the ones
+    # manually clicked "Track" - dedups on (symbol, source, entry price).
+    for r in results:
+        if r.get("status") == "INVALIDATED":
+            continue
+        try:
+            trade_tracker.auto_track_if_new(
+                symbol=r["symbol"], source="darvax",
+                entry_price=r.get("breakout_close"), stop_loss=r.get("box_bottom"),
+                target=None, chart_url=r.get("chart_url"),
+            )
+        except Exception as e:
+            print(f"  [warn] darvax auto-track failed for {r.get('symbol')}: {e}")
+
     charts = {
         str(r["symbol"]).upper(): get_chart_payload(r["symbol"], timeframe=timeframe)
         for r in results if get_chart_payload(r["symbol"], timeframe=timeframe) is not None

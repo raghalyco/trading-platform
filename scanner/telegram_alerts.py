@@ -94,6 +94,52 @@ def format_intraday_alert(trigger: dict) -> str:
     )
 
 
+def format_swing_trade_alert(hit: dict) -> str:
+    """Telegram payload for a Swing Trade (Weekly) resistance breakout -
+    trendline or horizontal box, confirmed by a volume spike."""
+    symbol = hit["symbol"]
+    resistance_type = hit.get("resistance_type") or "Resistance"
+    resistance_price = hit.get("resistance_price")
+    breakout_high = hit.get("breakout_high")
+    current_price = hit.get("current_price")
+    volume_ratio = hit.get("volume_ratio")
+    retest = hit.get("retest")
+    ema_cross = hit.get("ema_bullish_cross")
+    quality = hit.get("quality")
+    stop_loss = hit.get("stop_loss")
+    target = hit.get("target")
+    rr = hit.get("risk_reward")
+    chart_url = hit.get("tv_chart_url") or tradingview_chart_url(symbol, interval="W")
+
+    lines = [
+        f"📈 <b>{symbol}</b> — Weekly Resistance Breakout",
+        f"Pattern: {resistance_type}",
+    ]
+    if resistance_price is not None:
+        lines.append(f"Resistance/trendline: ₹{resistance_price:.2f}")
+    if breakout_high is not None:
+        lines.append(f"Breakout high: ₹{breakout_high:.2f}")
+    if current_price is not None:
+        lines.append(f"Current price: ₹{current_price:.2f}")
+    if volume_ratio is not None:
+        lines.append(f"Volume: {volume_ratio:.2f}x avg")
+    if retest:
+        lines.append("Re-tested the broken level and held ✅")
+    if ema_cross:
+        lines.append("EMA bullish cross confirmed")
+    if quality is not None:
+        lines.append(f"Score: {quality:.0f}")
+    if stop_loss is not None:
+        lines.append(f"Stop-loss: ₹{stop_loss:.2f}")
+    if target is not None:
+        lines.append(f"Target: ₹{target:.2f}")
+    if rr is not None:
+        lines.append(f"R:R: {rr:.2f}")
+    lines.append(f"Chart: {chart_url}")
+    lines.append("<i>Alert only — no auto-order. Manage the trade yourself.</i>")
+    return "\n".join(lines)
+
+
 if __name__ == "__main__":
     ok = send_telegram_message("✅ Test message from kite_scanner_bot — Telegram alerts are wired up correctly.")
     print("Sent OK" if ok else "Failed — check TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID in .env")

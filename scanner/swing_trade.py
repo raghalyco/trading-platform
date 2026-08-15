@@ -34,11 +34,18 @@ import config
 import indicators as ind
 import market_structure
 import smart_money_strategy as sms
+import telegram_alerts
+import trade_tracker
 import universe as universe_mod
 from charts import tradingview_chart_url
 
 # Per-symbol weekly OHLCV + drawn lines/markers for the Swing Trade chart page.
 _CHART_CACHE: dict[str, dict] = {}
+
+# Dedup so the same breakout doesn't re-alert on every re-scan within this
+# process's lifetime (resets on restart, same as the other scanners'
+# in-memory dedup - e.g. smart_money_pipeline.py's _seen_signal_keys).
+_alerted_breakouts: set[str] = set()
 
 
 def local_chart_url(symbol: str) -> str:
@@ -752,6 +759,26 @@ def scan_swing_trade(
             hit = evaluate_symbol_swing_trade(symbol, daily)
             if hit:
                 results.append(hit)
+                if hit.get("status") == "TRIGGERED":
+                    try:
+                        trade_tracker.auto_track_if_new(
+                            symbol=symbol, source="swing_trade",
+                            entry_price=hit.get("entry_price") or hit.get("current_price"),
+                            stop_loss=hit.get("stop_loss"), target=hit.get("target"),
+                            chart_url=hit.get("chart_url"),
+                        )
+                    except Exception as e:
+                        print(f"  [warn] swing-trade auto-track failed for {symbol}: {e}")
+                    if config.SWING_TRADE_SEND_TELEGRAM:
+                        key = f"{symbol}|{hit.get('breakout_week')}|{hit.get('resistance_type')}"
+                        if key not in _alerted_breakouts:
+                            _alerted_breakouts.add(key)
+                            try:
+                                telegram_alerts.send_telegram_message(
+                                    telegram_alerts.format_swing_trade_alert(hit)
+                                )
+                            except Exception as e:
+                                print(f"  [warn] swing-trade telegram alert failed for {symbol}: {e}")
         except Exception as e:
             print(f"  [warn] swing-trade skipped {symbol}: {e}")
             continue

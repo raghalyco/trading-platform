@@ -276,7 +276,7 @@ SWING_TRADE_MIN_SCORE = 45                # soft quality-score floor (0-100) —
 SWING_TRADE_WATCH_BAND_PCT = 6.0          # % below (or just at) resistance still counted as "pressing"
 SWING_TRADE_MIN_SCORE_WATCHING = 25       # lower floor — WATCHING rows have no breakout/volume bonus yet
 SWING_TRADE_MAX_EXTENSION_PCT = 15.0      # drop TRIGGERED rows already this far past the breakout high
-SWING_TRADE_SEND_TELEGRAM = False
+SWING_TRADE_SEND_TELEGRAM = True
 
 # ---------------------------------------------------------------------------
 # DarvaX — proper Darvas Box construction (Nicolas Darvas's 3-session-stall

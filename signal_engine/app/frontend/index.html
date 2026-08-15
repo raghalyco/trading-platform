@@ -23,7 +23,7 @@
 }
 *{box-sizing:border-box;}
 body{
-  margin:0 auto; max-width:420px; min-height:100vh;
+  margin:0 auto; max-width:1280px; min-height:100vh;
   background:var(--bg); color:var(--text);
   font-family:var(--font); font-size:13px;
   font-feature-settings:'cv11','ss01';
@@ -123,10 +123,10 @@ body{
   background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%239ca3af'/%3E%3C/svg%3E");
   background-repeat:no-repeat; background-position:right 8px center;
 }
-.table-card{background:var(--card); border:1px solid var(--line); border-radius:10px; overflow:hidden; margin-bottom:10px;}
-table.trades{width:100%; border-collapse:collapse; font-size:12px;}
-table.trades th{text-align:left; color:var(--muted); font-weight:600; font-size:11px; padding:8px 8px 6px; border-bottom:1px solid var(--line);}
-table.trades td{padding:8px; border-bottom:1px solid #f3f4f6; vertical-align:middle;}
+.table-card{background:var(--card); border:1px solid var(--line); border-radius:10px; overflow-x:auto; overflow-y:hidden; margin-bottom:10px; -webkit-overflow-scrolling:touch;}
+table.trades{width:100%; border-collapse:collapse; font-size:12px; table-layout:auto;}
+table.trades th{text-align:left; color:var(--muted); font-weight:600; font-size:11px; padding:8px 10px 6px; border-bottom:1px solid var(--line); white-space:nowrap;}
+table.trades td{padding:8px 10px; border-bottom:1px solid #f3f4f6; vertical-align:middle; white-space:nowrap;}
 table.trades tr:last-child td{border-bottom:none;}
 table.trades tr.win td:first-child{box-shadow:inset 3px 0 0 var(--green-btn);}
 table.trades tr.loss td:first-child{box-shadow:inset 3px 0 0 var(--red);}
@@ -145,7 +145,7 @@ table.trades tr.open td:first-child{box-shadow:inset 3px 0 0 var(--blue);}
 .bt-note{font-size:11px; color:var(--muted); margin-bottom:8px;}
 .bt-warn{font-size:11px; color:var(--amber); margin-bottom:6px;}
 .chart-title{font-size:11px; font-weight:700; color:var(--soft); margin-bottom:6px; text-transform:uppercase; letter-spacing:.03em;}
-.bottom-nav{position:fixed; left:50%; transform:translateX(-50%); bottom:0; width:100%; max-width:420px; background:var(--card); border-top:1px solid var(--line); display:flex; padding:4px 6px calc(4px + env(safe-area-inset-bottom)); z-index:40;}
+.bottom-nav{position:fixed; left:50%; transform:translateX(-50%); bottom:0; width:100%; max-width:1280px; background:var(--card); border-top:1px solid var(--line); display:flex; padding:4px 6px calc(4px + env(safe-area-inset-bottom)); z-index:40;}
 .nav-item{flex:1; background:none; border:none; font-family:var(--font); font-size:11px; font-weight:600; color:var(--muted); padding:6px; cursor:pointer; border-radius:8px;}
 .nav-item.active{color:var(--blue); background:#eff6ff;}
 </style>
@@ -253,7 +253,7 @@ table.trades tr.open td:first-child{box-shadow:inset 3px 0 0 var(--blue);}
   <div class="table-card">
     <table class="trades">
       <thead>
-        <tr><th>Date</th><th>Side</th><th>Entry</th><th>Exit</th><th>Result</th><th>P&amp;L</th></tr>
+        <tr><th>Strike</th><th>Side</th><th>Entry Time</th><th>Entry</th><th>Exit Time</th><th>Exit</th><th>Result / P&amp;L</th><th>Chart</th></tr>
       </thead>
       <tbody id="journalBody"></tbody>
     </table>
@@ -392,6 +392,19 @@ function fmtDateShort(iso){
   if (Number.isNaN(d.getTime())) return String(iso).slice(0,10);
   const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
   return d.getDate() + ' ' + months[d.getMonth()];
+}
+function fmtDateTimeShort(iso){
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return String(iso).slice(0,16).replace('T',' ');
+  const months = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+  const hh = String(d.getHours()).padStart(2,'0');
+  const mm = String(d.getMinutes()).padStart(2,'0');
+  return `${d.getDate()} ${months[d.getMonth()]} ${hh}:${mm}`;
+}
+function tvChartUrl(symbol, interval){
+  const exch = (symbol || '').toUpperCase() === 'SENSEX' ? 'BSE' : 'NSE';
+  return `https://in.tradingview.com/chart/?symbol=${exch}:${(symbol||'NIFTY').toUpperCase()}&interval=${interval || '1'}`;
 }
 function confBand(pct){
   if (pct < 35) return 'low';
@@ -664,23 +677,33 @@ async function loadJournal(){
         resultCell = `<span class="${cls}">${pts}${rs}</span>`;
       }
     }
+    const strikeLabel = t.contract || (t.strike ? `${t.strike} ${t.side}` : '—');
+    const tvHref = tvChartUrl(t.symbol, '1');
     return `<tr class="${rowClass}">
-      <td>${fmtDateShort(t.entry_time)}</td>
+      <td>${strikeLabel}</td>
       <td class="${sideCls}">${t.side}</td>
+      <td>${fmtDateTimeShort(t.entry_time)}</td>
       <td>${entry}</td>
+      <td>${fmtDateTimeShort(t.exit_time)}</td>
       <td>${exitCell}</td>
       <td>${resultCell}</td>
-      <td><a class="chart-link" href="/chart?id=${t.id}" target="_blank" rel="noopener">Chart</a></td>
+      <td><a class="chart-link" href="${tvHref}" target="_blank" rel="noopener">Chart ↗</a></td>
     </tr>`;
   }).join('');
 
+  // Always sync button state to the journal's actual OPEN/closed status -
+  // it must reset even when a trade closes on its own (auto target/SL
+  // exit), not just when the user manually clicks Exit. Previously this
+  // only reset via the manual exitTrade() path, so an auto-closed trade
+  // left the Enter button permanently stuck disabled.
   const openTrade = trades.find(t => t.result === 'OPEN');
   const inBtn = document.getElementById('inBtn');
   if (openTrade) {
     openTradeId = openTrade.id;
     inBtn.disabled = true;
     inBtn.textContent = `OPEN #${openTrade.id}`;
-  } else if (openTradeId == null) {
+  } else {
+    openTradeId = null;
     inBtn.disabled = false;
     inBtn.textContent = 'Enter';
   }

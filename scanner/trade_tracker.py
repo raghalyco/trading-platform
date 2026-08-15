@@ -15,6 +15,13 @@ from typing import Optional
 
 DB_PATH = os.path.join(os.path.dirname(__file__), "cache", "trade_tracker.db")
 
+_EXTRA_COLUMNS = {
+    # 'manual' = you clicked Track; 'auto' = the scanner logged it itself
+    # the moment it qualified, so Strategy Performance reflects EVERY
+    # signal a scanner produced, not just the ones you happened to click.
+    "origin": "TEXT DEFAULT 'manual'",
+}
+
 
 def _connect():
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
@@ -37,6 +44,10 @@ def _connect():
             exit_price REAL
         )
     """)
+    existing = {row[1] for row in conn.execute("PRAGMA table_info(tracked_trades)").fetchall()}
+    for col, typedef in _EXTRA_COLUMNS.items():
+        if col not in existing:
+            conn.execute(f"ALTER TABLE tracked_trades ADD COLUMN {col} {typedef}")
     conn.commit()
     return conn
 
@@ -48,20 +59,40 @@ def _row_to_dict(conn, row) -> dict:
 
 def track_trade(symbol: str, source: str, entry_price: float,
                  stop_loss: Optional[float] = None, target: Optional[float] = None,
-                 chart_url: Optional[str] = None, notes: Optional[str] = None) -> int:
+                 chart_url: Optional[str] = None, notes: Optional[str] = None,
+                 origin: str = "manual") -> int:
     conn = _connect()
     cur = conn.execute(
         """INSERT INTO tracked_trades
            (symbol, source, entry_price, stop_loss, target, current_price,
-            status, chart_url, notes, tracked_at)
-           VALUES (?, ?, ?, ?, ?, ?, 'OPEN', ?, ?, ?)""",
+            status, chart_url, notes, tracked_at, origin)
+           VALUES (?, ?, ?, ?, ?, ?, 'OPEN', ?, ?, ?, ?)""",
         (symbol.upper(), source, entry_price, stop_loss, target, entry_price,
-         chart_url, notes, datetime.now().isoformat()),
+         chart_url, notes, datetime.now().isoformat(), origin),
     )
     conn.commit()
     trade_id = cur.lastrowid
     conn.close()
     return trade_id
+
+
+def auto_track_if_new(symbol: str, source: str, entry_price: float,
+                       stop_loss: Optional[float] = None, target: Optional[float] = None,
+                       chart_url: Optional[str] = None) -> Optional[int]:
+    """Called by the scanners themselves for every qualifying signal, not
+    just ones you click Track on. Dedups on (symbol, source, entry_price)
+    so re-scanning the same still-open breakout doesn't create duplicate
+    rows - a genuinely new breakout naturally has a different entry price
+    and gets logged as a new row."""
+    conn = _connect()
+    existing = conn.execute(
+        "SELECT id FROM tracked_trades WHERE symbol=? AND source=? AND ABS(entry_price - ?) < 0.01",
+        (symbol.upper(), source, entry_price),
+    ).fetchone()
+    conn.close()
+    if existing:
+        return None
+    return track_trade(symbol, source, entry_price, stop_loss, target, chart_url, origin="auto")
 
 
 def list_tracked(status: Optional[str] = None) -> list[dict]:

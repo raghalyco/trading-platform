@@ -89,6 +89,10 @@ class AutoTradeConfig:
     # CE and PE since premium always rises in the buyer's favor regardless
     # of side; a captured trade exits at entry_premium + this many points.
     target_premium_points: float = 12.0
+    # How often the SERVER-SIDE background loop (not the dashboard poll)
+    # checks for new signals / manages open positions, independent of
+    # whether anyone has the dashboard open on a phone or laptop.
+    background_poll_seconds: int = 15
 
 
 @dataclass

@@ -335,6 +335,34 @@
     <div class="card">
       <div id="backtestWrap"><div class="empty">Click "Run Backtest" to see historical win rate and P&amp;L.</div></div>
     </div>
+
+    <div class="topbar" style="margin-top:28px;">
+      <div>
+        <h1>Strategy Performance</h1>
+        <p class="meta">Which screener's tracked trades are actually working — from the My Trades journal</p>
+      </div>
+      <button class="secondary" id="stratPerfBtn" onclick="runStrategyPerformance()">Refresh</button>
+    </div>
+    <div class="card">
+      <div id="stratPerfWrap"><div class="loading">Loading…</div></div>
+    </div>
+
+    <div class="topbar" style="margin-top:28px;">
+      <div>
+        <h1>Industry Breakout Performance</h1>
+        <p class="meta" id="industryPerfMeta">Which industries are producing stronger breakout candidates — from the last DarvaX/Swing Trade scan</p>
+      </div>
+      <div class="topbar-actions">
+        <select class="universe-select" id="industryPerfSource" onchange="runIndustryPerformance()">
+          <option value="darvax">DarvaX</option>
+          <option value="swing_trade">Swing Trade</option>
+        </select>
+        <button class="secondary" id="industryPerfBtn" onclick="runIndustryPerformance()">Refresh</button>
+      </div>
+    </div>
+    <div class="card">
+      <div id="industryPerfWrap"><div class="loading">Loading…</div></div>
+    </div>
   </div>
 
 </div>
@@ -433,6 +461,7 @@ function switchTab(tab) {
   if (tab === 'intraday') { pollIntradayStatus(); startIntradayPolling(); }
   else { stopIntradayPolling(); }
   if (tab === 'mytrades') runMyTrades();
+  if (tab === 'backtest') { runStrategyPerformance(); runIndustryPerformance(); }
 }
 
 document.querySelectorAll('.nav-item').forEach(el => {
@@ -1058,7 +1087,7 @@ function renderMyTradesTable() {
     return;
   }
   let html = `<table><thead><tr>
-    <th>Symbol</th><th>Source</th><th>Status</th>
+    <th>Symbol</th><th>Source</th><th>Origin</th><th>Status</th>
     <th class="num">Entry</th><th class="num">Stop</th><th class="num">Target</th>
     <th class="num">Current</th><th class="num">P&amp;L %</th><th>Tracked at</th><th>Chart</th><th></th>
   </tr></thead><tbody>`;
@@ -1066,9 +1095,13 @@ function renderMyTradesTable() {
     const pnlCls = (t.pnl_pct ?? 0) >= 0 ? 'pos' : 'neg';
     const trackedAt = t.tracked_at ? new Date(t.tracked_at).toLocaleString() : '—';
     const chartHref = t.chart_url || '#';
+    const originBadge = t.origin === 'auto'
+      ? '<span class="pill" style="background:var(--surface-2);color:var(--text-secondary)">auto</span>'
+      : '<span class="pill" style="background:#0f2e24;color:#22c58a">manual</span>';
     html += `<tr>
       <td style="font-weight:600">${t.symbol}</td>
       <td style="color:var(--text-secondary)">${t.source}</td>
+      <td>${originBadge}</td>
       <td>${mytradesStatusPill(t.status)}</td>
       <td class="num">₹${Number(t.entry_price).toFixed(2)}</td>
       <td class="num neg">${t.stop_loss != null ? '₹' + Number(t.stop_loss).toFixed(2) : '—'}</td>
@@ -1326,6 +1359,82 @@ function renderBacktest() {
   }
   html += '</tbody></table>';
   document.getElementById('backtestWrap').innerHTML = html;
+}
+
+// ---------------- Strategy Performance (cross-screener, from My Trades) ----------------
+async function runStrategyPerformance() {
+  const btn = document.getElementById('stratPerfBtn');
+  btn.disabled = true; btn.textContent = 'Loading...';
+  document.getElementById('stratPerfWrap').innerHTML = '<div class="loading">Loading…</div>';
+  try {
+    const data = await fetchJson('/api/performance/strategy');
+    const rows = data.strategies || [];
+    if (!rows.length) {
+      document.getElementById('stratPerfWrap').innerHTML =
+        '<div class="empty">No tracked trades yet — track a few from any screener first, then check back here.</div>';
+    } else {
+      let html = `<table><thead><tr>
+        <th>Source</th><th class="num">Total tracked</th><th class="num">Open</th>
+        <th class="num">Closed</th><th class="num">Win rate</th><th class="num">Avg P&amp;L %</th>
+      </tr></thead><tbody>`;
+      for (const s of rows) {
+        const pnlCls = (s.avg_pnl_pct ?? 0) >= 0 ? 'pos' : 'neg';
+        html += `<tr>
+          <td style="font-weight:600">${s.source}</td>
+          <td class="num">${s.total_tracked}</td>
+          <td class="num">${s.open}</td>
+          <td class="num">${s.closed}</td>
+          <td class="num">${s.win_rate_pct != null ? s.win_rate_pct + '%' : '—'}</td>
+          <td class="num ${pnlCls}">${s.avg_pnl_pct != null ? s.avg_pnl_pct + '%' : '—'}</td>
+        </tr>`;
+      }
+      html += '</tbody></table>';
+      document.getElementById('stratPerfWrap').innerHTML = html;
+    }
+  } catch (e) {
+    document.getElementById('stratPerfWrap').innerHTML = '<div class="empty">Failed: ' + (e.message || e) + '</div>';
+  }
+  btn.disabled = false; btn.textContent = 'Refresh';
+}
+
+// ---------------- Industry Breakout Performance (DarvaX / Swing Trade) ----------------
+async function runIndustryPerformance() {
+  const source = document.getElementById('industryPerfSource').value;
+  const btn = document.getElementById('industryPerfBtn');
+  btn.disabled = true; btn.textContent = 'Loading...';
+  document.getElementById('industryPerfWrap').innerHTML = '<div class="loading">Loading…</div>';
+  try {
+    const data = await fetchJson('/api/performance/industry?source=' + encodeURIComponent(source));
+    const rows = data.industries || [];
+    document.getElementById('industryPerfMeta').textContent =
+      `${data.num_breakouts || 0} breakout(s) · ${data.universe_label || '—'} · from the last ${source === 'swing_trade' ? 'Swing Trade' : 'DarvaX'} scan`;
+    if (!rows.length) {
+      document.getElementById('industryPerfWrap').innerHTML =
+        '<div class="empty">No cached breakout scan yet for this source — run the scan on that tab first, then check back here.</div>';
+    } else {
+      let html = `<table><thead><tr>
+        <th>Industry</th><th class="num">Breakouts</th><th class="num">Win rate</th>
+        <th class="num">Avg return</th><th class="num">Best</th><th class="num">Worst</th><th>Symbols</th>
+      </tr></thead><tbody>`;
+      for (const r of rows) {
+        const avgCls = r.avg_return_pct >= 0 ? 'pos' : 'neg';
+        html += `<tr>
+          <td style="font-weight:600">${r.industry}</td>
+          <td class="num">${r.count}</td>
+          <td class="num">${r.win_rate_pct}%</td>
+          <td class="num ${avgCls}">${fmtPct(r.avg_return_pct)}</td>
+          <td class="num pos">${fmtPct(r.best_return_pct)}</td>
+          <td class="num neg">${fmtPct(r.worst_return_pct)}</td>
+          <td style="color:var(--text-secondary); font-size:12px">${r.symbols.join(', ')}</td>
+        </tr>`;
+      }
+      html += '</tbody></table>';
+      document.getElementById('industryPerfWrap').innerHTML = html;
+    }
+  } catch (e) {
+    document.getElementById('industryPerfWrap').innerHTML = '<div class="empty">Failed: ' + (e.message || e) + '</div>';
+  }
+  btn.disabled = false; btn.textContent = 'Refresh';
 }
 
 // Initial load: show startup-cached results on every scanner tab.

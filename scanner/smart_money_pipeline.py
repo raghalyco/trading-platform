@@ -22,6 +22,7 @@ import live_scan
 import smart_money_strategy as sms
 import support_bounce as sb
 import telegram_alerts
+import trade_tracker
 
 # Suppress repeat Telegram/API noise for the same symbol+side+bar timestamp
 # within a process lifetime (important for --loop).
@@ -258,6 +259,15 @@ def scan_stock_for_day(
                 continue
             if sig.signal == "BUY":
                 buys.append(row_out)
+                try:
+                    trade_tracker.auto_track_if_new(
+                        symbol=symbol, source="stockday",
+                        entry_price=row_out.get("entry_price"),
+                        stop_loss=row_out.get("stop_loss"), target=row_out.get("target"),
+                        chart_url=row_out.get("chart_url"),
+                    )
+                except Exception as e:
+                    print(f"  [warn] stockday auto-track failed for {symbol}: {e}")
             else:
                 sells.append(row_out)
         except Exception as e:

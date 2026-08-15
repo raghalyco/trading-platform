@@ -1,11 +1,25 @@
 """
 Historical win/loss report for emitted SCALP / SMART TRADE levels.
 
+Simulates OPTION PREMIUM P&L (the same Black-Scholes model + fixed
++target_premium_points rule that live auto-capture actually uses), not
+raw index points - see run_backtest's docstring for why this matters and
+what it still can't capture.
+
 Honest limitations (read before trusting win_rate):
-  - Uses INDEX levels, not option premium P&L.
+  - Premium is a Black-Scholes ESTIMATE (option_pricing.py), calibrated
+    against real VIX history but not against live bid-ask quotes. Same
+    known limitation as live trading: near-expiry premiums are likely
+    under-estimated unless iv_multiplier is tuned (see option_pricing.py).
   - Multi-month runs use 5-minute bars (Kite 1m history is capped) while
     live SCALP is designed on 1-minute — coarser fills.
-  - No slippage, gap risk, or bid-ask.
+  - No slippage, spread, or gap modeling.
+  - Entry premium priced off the signal bar's close; SL premium priced by
+    re-pricing the SAME option at the index stop-loss level (same
+    approach trade_recommendation.py uses live) - VIX/time-to-expiry held
+    fixed at signal time, not re-estimated bar-by-bar.
+  - Target is the live rule exactly: entry_premium + target_premium_points
+    (fixed points, not ATR-derived) - matches auto_trade.py's real gate.
   - Default scoring: T1 before SL = WIN, SL first = LOSS.
   - Optional mark_to_market: at hold end, close vs entry decides WIN/LOSS
     instead of TIMEOUT (more trades "decided", still approximate).
@@ -20,9 +34,12 @@ from app.indicators.multi_tf import resample_ohlcv
 from app.price_action.patterns import detect_pattern, pa_bonus_points
 from app.signal_engine.scorer import score_components, compute_score, verdict_label
 from app.signal_engine.smart_scorer import score_smart_trade, compute_smart_score
-from app.signal_engine.modes import scalp_levels, smart_trade_levels
+from app.signal_engine.modes import scalp_levels, smart_trade_levels, expiry_date_iso_for
+from app.signal_engine.option_pricing import estimate_premium
 from app.signal_engine.regime import classify_regime
 from app.signal_engine.trade_chart import IST, candles_to_list
+from app.signal_engine.trade_recommendation import LOT_SIZES
+from app.config import CONFIG
 
 
 def _fmt_ist(ts) -> str | None:
@@ -110,6 +127,96 @@ def _simulate_outcome(side: str, entry: float, t1: float, sl: float,
     }
 
 
+def _atm_strike(spot: float) -> int:
+    return int(round(spot / 50) * 50)
+
+
+def _premium_at(spot: float, strike: int, side: str, vix_pct: float,
+                 expiry_iso: str | None, as_of, iv_multiplier: float) -> float | None:
+    """Thin wrapper around option_pricing.estimate_premium with the
+    error/edge cases (no expiry, already-expired, bad VIX) turned into a
+    clean None instead of an exception, since the backtest walks through
+    hundreds of arbitrary historical instants."""
+    if expiry_iso is None or vix_pct is None or vix_pct <= 0:
+        return None
+    try:
+        now = pd.Timestamp(as_of)
+        if now.tzinfo is None:
+            now = now.tz_localize(IST)
+        return estimate_premium(
+            spot=spot, strike=strike, side=side, vix_pct=float(vix_pct),
+            expiry_date_iso=expiry_iso, now=now.to_pydatetime(),
+            iv_multiplier=iv_multiplier,
+        )
+    except Exception:
+        return None
+
+
+def _simulate_premium_outcome(side: str, entry_premium: float, t1_premium: float,
+                               sl_premium: float, strike: int, expiry_iso: str,
+                               future_bars, future_vix, iv_multiplier: float,
+                               max_bars: int, mark_to_market: bool = False) -> dict:
+    """Same T1-before-SL race as _simulate_outcome, but re-prices each
+    future INDEX bar's high/low into OPTION PREMIUM terms via
+    Black-Scholes before comparing against the premium target/stop - this
+    is what actually determines WIN/LOSS for a real option buyer, not the
+    raw index move."""
+    bars = future_bars.head(max_bars).reset_index(drop=True)
+    vix_bars = future_vix.head(max_bars).reset_index(drop=True) if future_vix is not None else None
+    if len(bars) == 0:
+        return {"result": "TIMEOUT", "bars_held": 0, "reason": "no_future_bars",
+                "exit_price": entry_premium, "index_exit_price": None, "pnl_points": 0.0, "exit_ts": None}
+
+    for offset, row in bars.iterrows():
+        vix_now = float(vix_bars.iloc[offset]) if vix_bars is not None and offset < len(vix_bars) else None
+        ts = row["timestamp"]
+        spot_high, spot_low = float(row["high"]), float(row["low"])
+        # CE premium rises with spot -> bar's spot HIGH gives premium HIGH.
+        # PE premium rises as spot FALLS -> bar's spot LOW gives premium HIGH.
+        hi_spot, lo_spot = (spot_high, spot_low) if side == "CE" else (spot_low, spot_high)
+        premium_high = _premium_at(hi_spot, strike, side, vix_now, expiry_iso, ts, iv_multiplier)
+        premium_low = _premium_at(lo_spot, strike, side, vix_now, expiry_iso, ts, iv_multiplier)
+        if premium_high is None or premium_low is None:
+            # Past expiry or bad VIX at this instant - can't price, skip bar
+            continue
+
+        hit_sl = premium_low <= sl_premium
+        hit_t1 = premium_high >= t1_premium
+        held = int(offset) + 1
+
+        if hit_sl and hit_t1:
+            return {"result": "LOSS", "bars_held": held, "reason": "same_bar_sl_and_t1",
+                    "exit_price": sl_premium, "index_exit_price": lo_spot,
+                    "pnl_points": -abs(entry_premium - sl_premium), "exit_ts": ts}
+        if hit_sl:
+            return {"result": "LOSS", "bars_held": held, "reason": "sl_hit",
+                    "exit_price": sl_premium, "index_exit_price": lo_spot,
+                    "pnl_points": -abs(entry_premium - sl_premium), "exit_ts": ts}
+        if hit_t1:
+            return {"result": "WIN", "bars_held": held, "reason": "t1_hit",
+                    "exit_price": t1_premium, "index_exit_price": hi_spot,
+                    "pnl_points": abs(t1_premium - entry_premium), "exit_ts": ts}
+
+    last_row = bars.iloc[-1]
+    last_ts = last_row["timestamp"]
+    last_vix = float(vix_bars.iloc[-1]) if vix_bars is not None and len(vix_bars) else None
+    last_spot = float(last_row["close"])
+    last_premium = _premium_at(last_spot, strike, side, last_vix, expiry_iso, last_ts, iv_multiplier)
+    if last_premium is None:
+        last_premium = entry_premium
+    pnl = last_premium - entry_premium
+
+    if mark_to_market:
+        result = "WIN" if pnl > 0 else ("LOSS" if pnl < 0 else "BREAKEVEN")
+        return {"result": result, "bars_held": len(bars), "reason": "mark_to_market_at_hold_end",
+                "exit_price": round(last_premium, 2), "index_exit_price": last_spot,
+                "pnl_points": round(pnl, 2), "exit_ts": last_ts}
+
+    return {"result": "TIMEOUT", "bars_held": len(bars), "reason": "max_hold_reached",
+            "exit_price": round(last_premium, 2), "index_exit_price": last_spot,
+            "pnl_points": round(pnl, 2), "exit_ts": last_ts}
+
+
 def _signal_at(df_slice, symbol: str, mode: str,
                min_score: int | None = None) -> dict | None:
     if len(df_slice) < 40:
@@ -138,7 +245,11 @@ def _signal_at(df_slice, symbol: str, mode: str,
 
     if "WAIT" in verdict:
         return None
-    if min_score is not None and total_score < min_score:
+    # Gate on the raw base score (out of 7), matching auto_trade.py's live
+    # capture gate exactly (min_base_score) - NOT total_score, which is
+    # inflated by up to +2 price-action bonus points and would let weaker
+    # base setups through that live trading would have skipped.
+    if min_score is not None and base["score"] < min_score:
         return None
 
     atr_value = float(atr(df_5m).iloc[-1]) if len(df_5m) > 14 else float(atr(df_slice).iloc[-1])
@@ -174,13 +285,32 @@ def _signal_at(df_slice, symbol: str, mode: str,
 def _generate_trades(df, symbol: str, mode: str,
                      step_minutes: int, min_history: int,
                      bar_minutes: int, hold_minutes: int | None,
-                     mark_to_market: bool, min_score: int) -> list[dict]:
+                     mark_to_market: bool, min_score: int,
+                     vix_series=None, iv_multiplier: float | None = None,
+                     target_premium_points: float | None = None,
+                     sl_premium_points: float | None = None) -> list[dict]:
     """Walk-forward signal generation + outcome simulation. Shared by
     run_backtest (aggregate report) and build_backtest_trade_chart
-    (single-trade detail view) so both see identical trades."""
+    (single-trade detail view) so both see identical trades.
+
+    vix_series: pd.Series of India VIX closes, POSITION-aligned to df (same
+    length, same bar timestamps) - required to price option premium via
+    Black-Scholes at each signal/future bar. If None, falls back to raw
+    index points (old behavior) with a clear "pricing": "index" tag.
+
+    target_premium_points: overrides CONFIG.auto_trade.target_premium_points
+    for this run (default None = use the live config value, 12).
+
+    sl_premium_points: if set, uses a FIXED premium-points stop instead of
+    the ATR-derived index stop re-priced into premium terms - lets you
+    test a stop sized proportionally to the fixed target (e.g. symmetric
+    1:1) instead of whatever the ATR happens to produce."""
     bar_minutes = max(1, int(bar_minutes))
     step_bars = max(1, int(round(step_minutes / bar_minutes)))
     min_bars = max(40, int(round(min_history / bar_minutes)))
+    iv_mult = iv_multiplier if iv_multiplier is not None else CONFIG.option_pricing.iv_multiplier
+    target_pts = target_premium_points if target_premium_points is not None else CONFIG.auto_trade.target_premium_points
+    lot_size = LOT_SIZES.get(symbol, 65)
 
     trades = []
     i = min_bars
@@ -193,7 +323,9 @@ def _generate_trades(df, symbol: str, mode: str,
             continue
 
         future = df.iloc[i + 1 :].reset_index(drop=True)
+        future_vix = vix_series.iloc[i + 1 :].reset_index(drop=True) if vix_series is not None else None
         levels = sig["levels"]
+        entry_ts = slice_df.iloc[-1]["timestamp"]
 
         eval_hold = hold_minutes if hold_minutes is not None else int(sig["max_hold"])
         # Coarse 5m SCALP: evaluate over 30–60m so T1 (~ATR*3.6) can print
@@ -202,11 +334,37 @@ def _generate_trades(df, symbol: str, mode: str,
 
         max_bars = max(1, int(round(eval_hold / bar_minutes)))
 
-        outcome = _simulate_outcome(
-            sig["side"], levels["entry"], levels["target1"], levels["stop_loss"],
-            future, max_bars=max_bars, mark_to_market=mark_to_market,
-        )
+        strike = _atm_strike(levels["entry"])
+        expiry_iso = expiry_date_iso_for(symbol, pd.Timestamp(entry_ts))
+        vix_now = float(vix_series.iloc[i]) if vix_series is not None and i < len(vix_series) else None
+        entry_premium = _premium_at(levels["entry"], strike, sig["side"], vix_now, expiry_iso, entry_ts, iv_mult)
+
+        if vix_series is not None and entry_premium is not None:
+            t1_premium = round(entry_premium + target_pts, 2)
+            if sl_premium_points is not None:
+                sl_premium = round(max(0.05, entry_premium - sl_premium_points), 2)
+            else:
+                sl_premium = _premium_at(levels["stop_loss"], strike, sig["side"], vix_now, expiry_iso, entry_ts, iv_mult)
+            if sl_premium is None or sl_premium >= entry_premium:
+                # Can't price (e.g. past expiry at this instant) - skip this signal.
+                i += step_bars
+                continue
+            outcome = _simulate_premium_outcome(
+                sig["side"], entry_premium, t1_premium, sl_premium, strike, expiry_iso,
+                future, future_vix, iv_mult, max_bars=max_bars, mark_to_market=mark_to_market,
+            )
+            pricing = "premium (Black-Scholes estimate)"
+            entry_display, t1_display, sl_display = entry_premium, t1_premium, sl_premium
+        else:
+            outcome = _simulate_outcome(
+                sig["side"], levels["entry"], levels["target1"], levels["stop_loss"],
+                future, max_bars=max_bars, mark_to_market=mark_to_market,
+            )
+            pricing = "index (no VIX history supplied)"
+            entry_display, t1_display, sl_display = levels["entry"], levels["target1"], levels["stop_loss"]
+
         exit_ts = outcome.get("exit_ts")
+        pnl_points = outcome.get("pnl_points")
         trades.append({
             "entry_ts": sig["entry_ts"],
             "entry_time_ist": _fmt_ist(slice_df.iloc[-1]["timestamp"]),
@@ -215,17 +373,25 @@ def _generate_trades(df, symbol: str, mode: str,
             "timezone": "Asia/Kolkata",
             "verdict": sig["verdict"],
             "side": sig["side"],
-            "entry": levels["entry"],
-            "target1": levels["target1"],
-            "stop_loss": levels["stop_loss"],
+            "pricing": pricing,
+            "strike": strike if vix_series is not None else None,
+            "expiry": expiry_iso if vix_series is not None else None,
+            "entry": entry_display,
+            "target1": t1_display,
+            "stop_loss": sl_display,
+            "index_entry": levels["entry"],
+            "index_target1": levels["target1"],
+            "index_stop_loss": levels["stop_loss"],
             "rr": levels["rr"],
             "score": sig["score"],
             "result": outcome["result"],
             "bars_held": outcome["bars_held"],
             "reason": outcome["reason"],
             "exit_price": outcome.get("exit_price"),
-            "pnl_points": outcome.get("pnl_points"),
-            "t1_distance": round(abs(levels["target1"] - levels["entry"]), 1),
+            "index_exit_price": outcome.get("index_exit_price"),
+            "pnl_points": pnl_points,
+            "pnl_rupees": round(pnl_points * lot_size, 2) if pnl_points is not None else None,
+            "t1_distance": round(abs(t1_display - entry_display), 1) if t1_display is not None and entry_display is not None else None,
             "bar_index": i,
             "exit_bar_index": i + outcome["bars_held"],
         })
@@ -239,14 +405,23 @@ def run_backtest(df, symbol: str = "NIFTY", mode: str = "SCALP",
                  bar_minutes: int = 1,
                  hold_minutes: int | None = None,
                  mark_to_market: bool = True,
-                 min_score: int = 4) -> dict:
+                 min_score: int = 5,
+                 vix_series=None, iv_multiplier: float | None = None,
+                 target_premium_points: float | None = None,
+                 sl_premium_points: float | None = None) -> dict:
     """
     df: OHLCV with columns timestamp, open, high, low, close, volume.
     bar_minutes: candle size of df (1 for 1m, 5 for 5m backtests).
     hold_minutes: override evaluation window (default = mode max_hold,
                   bumped on coarse bars).
     mark_to_market: if True, TIMEOUT becomes WIN/LOSS at hold-end close.
-    min_score: skip weak signals (default 4 ≈ moderate+).
+    min_score: skip weak signals (default 5, on the raw base score out of
+               7 - matches auto_trade.py's live capture gate exactly).
+    vix_series: India VIX closes, position-aligned to df (same length,
+               same bars). Pass this to price OPTION PREMIUM P&L (what
+               live auto-capture actually trades) instead of raw index
+               points - strongly recommended, see module docstring.
+    iv_multiplier: overrides CONFIG.option_pricing.iv_multiplier for this run.
     """
     mode = mode.upper()
     if mode not in ("SCALP", "SMART_TRADE"):
@@ -257,6 +432,8 @@ def run_backtest(df, symbol: str = "NIFTY", mode: str = "SCALP",
     trades = _generate_trades(
         df, symbol, mode, step_minutes, min_history,
         bar_minutes, hold_minutes, mark_to_market, min_score,
+        vix_series=vix_series, iv_multiplier=iv_multiplier,
+        target_premium_points=target_premium_points, sl_premium_points=sl_premium_points,
     )
 
     wins = sum(1 for t in trades if t["result"] == "WIN")
@@ -267,9 +444,13 @@ def run_backtest(df, symbol: str = "NIFTY", mode: str = "SCALP",
     win_rate = round(100.0 * wins / decided, 1) if decided else None
     timeout_rate = round(100.0 * timeouts / len(trades), 1) if trades else None
     avg_pnl = round(sum(t.get("pnl_points") or 0 for t in trades) / len(trades), 2) if trades else None
+    avg_pnl_rupees = round(sum(t.get("pnl_rupees") or 0 for t in trades) / len(trades), 2) if trades else None
+    total_pnl_rupees = round(sum(t.get("pnl_rupees") or 0 for t in trades), 2) if trades else None
     avg_t1 = round(
-        sum(t["t1_distance"] for t in trades) / len(trades), 1
+        sum(t["t1_distance"] for t in trades if t.get("t1_distance") is not None)
+        / max(1, sum(1 for t in trades if t.get("t1_distance") is not None)), 1
     ) if trades else None
+    pricing_mode = trades[0]["pricing"] if trades else ("premium (Black-Scholes estimate)" if vix_series is not None else "index (no VIX history supplied)")
 
     first_ts = str(df.iloc[0]["timestamp"]) if n else None
     last_ts = str(df.iloc[-1]["timestamp"]) if n else None
@@ -284,6 +465,7 @@ def run_backtest(df, symbol: str = "NIFTY", mode: str = "SCALP",
         ),
         "mark_to_market": mark_to_market,
         "min_score": min_score,
+        "pricing": pricing_mode,
         "candles": n,
         "from": first_ts,
         "to": last_ts,
@@ -296,9 +478,14 @@ def run_backtest(df, symbol: str = "NIFTY", mode: str = "SCALP",
         "win_rate_pct": win_rate,
         "timeout_rate_pct": timeout_rate,
         "avg_pnl_points": avg_pnl,
+        "avg_pnl_rupees": avg_pnl_rupees,
+        "total_pnl_rupees": total_pnl_rupees,
         "avg_t1_distance": avg_t1,
         "accuracy_notes": [
-            "INDEX points only — not option premium P&L / ATM-OTM decay.",
+            "Premium is a Black-Scholes ESTIMATE calibrated on real VIX "
+            "history, not live bid-ask quotes." if vix_series is not None else
+            "INDEX points only — not option premium P&L / ATM-OTM decay (no VIX history supplied).",
+            "SL/target priced off the signal-time VIX and expiry — not re-estimated for IV changes mid-trade.",
             "No slippage, spread, or gap modeling.",
             "5m multi-month history ≠ live 1m SCALP fills.",
             "Win rate ignores TIMEOUT unless mark_to_market is on.",
@@ -322,19 +509,27 @@ def build_backtest_trade_chart(df, symbol: str, mode: str, trade_index: int,
                                bar_minutes: int = 1,
                                hold_minutes: int | None = None,
                                mark_to_market: bool = True,
-                               min_score: int = 4,
-                               pad_bars: int = 12) -> dict:
+                               min_score: int = 5,
+                               pad_bars: int = 12,
+                               vix_series=None, iv_multiplier: float | None = None) -> dict:
     """
     Re-runs the same walk-forward simulation as run_backtest (identical
     params => identical trades) and returns candles + entry/exit/target/stop
     overlay data for trade `trade_index`, in the same shape the journal's
     /chart page (chart.html) already knows how to render.
+
+    The chart candles are always INDEX-scale (that's the only OHLC data
+    available), so the overlay lines use index_entry/index_target1/
+    index_stop_loss - plotting the premium-scale entry/target/stop directly
+    on an index candle chart would be nonsense (wrong order of magnitude).
+    Premium P&L is still reported separately via pnl_points/pnl_rupees.
     """
     mode = mode.upper()
     bar_minutes = max(1, int(bar_minutes))
     trades = _generate_trades(
         df, symbol, mode, step_minutes, min_history,
         bar_minutes, hold_minutes, mark_to_market, min_score,
+        vix_series=vix_series, iv_multiplier=iv_multiplier,
     )
     if trade_index < 0 or trade_index >= len(trades):
         return {"ok": False, "error": f"Trade index {trade_index} out of range (0..{len(trades)-1})"}
@@ -357,26 +552,39 @@ def build_backtest_trade_chart(df, symbol: str, mode: str, trade_index: int,
         "side": t["side"],
         "mode": mode,
         "timezone": "Asia/Kolkata",
+        "pricing": t.get("pricing"),
+        "strike": t.get("strike"),
+        "expiry": t.get("expiry"),
         "entry": {
-            "price": t["entry"],
+            "price": t["index_entry"],
             "time": entry_dt.isoformat(),
             "time_label": t["entry_time_ist"],
         },
         "exit": {
-            "price": t["exit_price"],
+            # index_exit_price when premium-priced (real chart scale);
+            # falls back to exit_price itself when there's no VIX series
+            # (that branch's exit_price is already index-scale).
+            "price": t.get("index_exit_price") if t.get("index_exit_price") is not None else t["exit_price"],
             "time": exit_dt.isoformat() if exit_dt is not None else None,
             "time_label": t["exit_time_ist"],
         },
-        "target": t["target1"],
-        "stop": t["stop_loss"],
+        "target": t["index_target1"],
+        "stop": t["index_stop_loss"],
+        "premium_entry": t.get("entry"),
+        "premium_target": t.get("target1"),
+        "premium_stop": t.get("stop_loss"),
         "pnl_points": t["pnl_points"],
+        "pnl_rupees": t.get("pnl_rupees"),
         "pnl_pct": (
             round((t["pnl_points"] / t["entry"]) * 100, 2)
-            if t["pnl_points"] is not None and t["entry"] else None
+            if t["pnl_points"] is not None and t.get("entry") else None
         ),
         "rr": t["rr"],
         "result": t["result"],
         "candles": candles,
         "candle_source": "index",
-        "note": "Index-level OHLC (not option premium) — for visualization only.",
+        "note": (
+            "Index-level OHLC for the chart lines (only data available); "
+            "P&L is simulated OPTION PREMIUM (Black-Scholes estimate), see premium_entry/target/stop."
+        ),
     }

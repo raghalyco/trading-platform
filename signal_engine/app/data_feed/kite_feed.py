@@ -25,6 +25,7 @@ INSTRUMENT_TOKENS = {
     # Fill with actual instrument tokens - run scripts/fetch_instrument_tokens.py
     "NIFTY": 256265,
     "SENSEX": 265,
+    "INDIA VIX": 264969,  # needed to backtest OPTION PREMIUM (Black-Scholes needs IV)
 }
 
 

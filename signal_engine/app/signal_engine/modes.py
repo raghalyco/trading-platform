@@ -56,6 +56,21 @@ def current_expiry_date_iso(symbol: str) -> str:
     return expiry.strftime("%Y-%m-%d")
 
 
+def expiry_date_iso_for(symbol: str, as_of: pd.Timestamp) -> str:
+    """Same weekly-expiry logic as current_expiry_date_iso, but relative to
+    an arbitrary historical timestamp instead of "now" - lets the backtest
+    price options against the expiry that was actually current on each
+    historical bar, not today's."""
+    weekday = EXPIRY_WEEKDAY.get(symbol)
+    if weekday is None:
+        return None
+    if as_of.tzinfo is None:
+        as_of = as_of.tz_localize("Asia/Kolkata")
+    days_ahead = (weekday - as_of.weekday()) % 7
+    expiry = as_of + timedelta(days=days_ahead)
+    return expiry.strftime("%Y-%m-%d")
+
+
 def detect_fvg(df: pd.DataFrame, side: str) -> dict | None:
     """
     3-candle Fair Value Gap: gap between candle[0].high and candle[2].low

@@ -27,6 +27,7 @@ import config
 import indicators as ind
 import market_structure
 import smart_money_strategy as sms
+import trade_tracker
 import universe as universe_mod
 from charts import tradingview_chart_url
 
@@ -1496,6 +1497,16 @@ def scan_support_bounce(
             hit = evaluate_symbol_support_bounce(symbol, daily)
             if hit:
                 results.append(hit)
+                if hit.get("smart_money_signal") == "BUY":
+                    try:
+                        trade_tracker.auto_track_if_new(
+                            symbol=symbol, source="support_bounce",
+                            entry_price=hit.get("entry_price") or hit.get("current_price"),
+                            stop_loss=hit.get("stop_loss"), target=hit.get("target"),
+                            chart_url=hit.get("chart_url"),
+                        )
+                    except Exception as e:
+                        print(f"  [warn] support-bounce auto-track failed for {symbol}: {e}")
         except Exception as e:
             print(f"  [warn] support-bounce skipped {symbol}: {e}")
             continue
