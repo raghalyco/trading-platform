@@ -20,8 +20,12 @@ DEFAULT_CHANNEL = "@Testalgotrading"
 
 
 def _load_dotenv() -> None:
-    """Load repo-root .env into os.environ if present (no python-dotenv dependency)."""
-    env_path = os.path.join(os.path.dirname(__file__), "..", ".env")
+    """Load repo-root .env into os.environ if present (no python-dotenv dependency).
+    __file__ is signal_engine/app/telegram_alerts.py, so the repo root is
+    TWO levels up (../..), not one - the previous ../.env pointed at
+    signal_engine/.env, which never existed, silently no-op'ing this the
+    whole time even though the credentials were sitting one level up."""
+    env_path = os.path.join(os.path.dirname(__file__), "..", "..", ".env")
     if not os.path.isfile(env_path):
         return
     try:
