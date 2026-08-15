@@ -49,6 +49,9 @@ body{
 #dataSource{color:var(--green); font-weight:600;}
 #dataSource.sim{color:var(--amber);}
 .regime-line{text-align:center; font-size:11px; font-weight:600; color:var(--blue); margin:2px 0 8px;}
+.sr-zone-line{text-align:center; font-size:11px; font-weight:600; margin:0 0 10px; display:flex; justify-content:center; gap:14px; flex-wrap:wrap;}
+.sr-zone-line .res{color:var(--red);}
+.sr-zone-line .sup{color:var(--green);}
 .spot-row{display:flex; justify-content:space-between; align-items:flex-end; margin-bottom:8px;}
 .spot-label{font-size:10px; color:var(--muted); margin-bottom:1px;}
 .spot-price{font-size:20px; font-weight:800; letter-spacing:-.02em; line-height:1.1;}
@@ -164,6 +167,7 @@ table.trades tr.open td:first-child{box-shadow:inset 3px 0 0 var(--blue);}
       <span id="dataSource" class="sim">—</span>
     </div>
     <div class="regime-line" id="regimeLine">—</div>
+    <div class="sr-zone-line" id="srZoneLine"></div>
 
     <div class="spot-row">
       <div>
@@ -468,6 +472,20 @@ function render(d){
     .replace(/\b\w/g, c => c.toUpperCase());
   document.getElementById('regimeLine').textContent =
     adx != null ? `${nice} · ADX ${adx}` : nice;
+
+  const iz = d.intraday_zones || {};
+  const srParts = [];
+  if (iz.nearest_resistance) {
+    const r = iz.nearest_resistance;
+    const rLabel = r.label || (r.role === 'flip' ? 'Flip level' : 'Resistance');
+    srParts.push(`<span class="res">▲ ${rLabel} ${Number(r.level).toLocaleString('en-IN')}</span>`);
+  }
+  if (iz.nearest_support) {
+    const s = iz.nearest_support;
+    const sLabel = s.label || (s.role === 'flip' ? 'Flip level' : 'Support');
+    srParts.push(`<span class="sup">▼ ${sLabel} ${Number(s.level).toLocaleString('en-IN')}</span>`);
+  }
+  document.getElementById('srZoneLine').innerHTML = srParts.join('');
 
   const side = d.side;
   const isWait = (d.verdict || '').includes('WAIT');

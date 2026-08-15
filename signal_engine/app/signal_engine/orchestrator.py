@@ -14,6 +14,7 @@ from app.signal_engine.modes import scalp_levels, smart_trade_levels, current_ex
 from app.signal_engine.risk import RiskManager
 from app.signal_engine.orb import check_orb_breakout
 from app.signal_engine.retest import check_retest
+from app.signal_engine.intraday_sr import find_intraday_zones
 from app.signal_engine.gamma_blast import check_gamma_blast, is_monthly_expiry_today
 from app.signal_engine.regime import classify_regime, gate_breakout_signal
 from app.signal_engine.session import get_session_label
@@ -21,6 +22,33 @@ from app.signal_engine.option_pricing import estimate_premium
 from app.signal_engine.trade_recommendation import build_trade_recommendation
 from app.config import CONFIG
 from app.data_feed.base import DataFeed
+
+import time
+
+# Multi-day 5-min history for S/R zone detection is fetched on a slow
+# cache (not every generate_signal() call, which can run every ~15s from
+# the background loop across 2 symbols) - a zone drawn from swing highs/
+# lows over the last few days doesn't meaningfully change minute to
+# minute, so there's no reason to re-fetch and re-cluster that often.
+_SR_ZONE_CACHE: dict[str, dict] = {}
+_SR_ZONE_CACHE_TTL_SECONDS = 20 * 60
+
+
+def _get_intraday_zones(feed: DataFeed, symbol: str) -> dict:
+    empty = {"key_levels": [], "day_levels": [], "all_levels": [],
+             "nearest_resistance": None, "nearest_support": None, "price": None}
+    cached = _SR_ZONE_CACHE.get(symbol)
+    now = time.time()
+    if cached and (now - cached["ts"]) < _SR_ZONE_CACHE_TTL_SECONDS:
+        return cached["zones"]
+    try:
+        getter = getattr(feed, "get_ohlcv_history", None)
+        zones = find_intraday_zones(getter(symbol, days=5, interval="5minute")) if getter else empty
+    except Exception as e:
+        print(f"[intraday_sr] zone fetch failed for {symbol}: {e}")
+        zones = cached["zones"] if cached else empty
+    _SR_ZONE_CACHE[symbol] = {"ts": now, "zones": zones}
+    return zones
 
 
 def generate_signal(feed: DataFeed, symbol: str, mode: str, risk_mgr: RiskManager,
@@ -92,7 +120,11 @@ def generate_signal(feed: DataFeed, symbol: str, mode: str, risk_mgr: RiskManage
     orb_range = orb_signal.get("orb_range") or {
         "high": orb_signal.get("orb_high"), "low": orb_signal.get("orb_low")
     }
-    retest_signal = check_retest(df, orb_range if orb_range.get("high") else None)
+    intraday_zones = _get_intraday_zones(feed, symbol)
+    sr_zone_levels = [z["level"] for z in (intraday_zones.get("all_levels") or [])]
+    retest_signal = check_retest(
+        df, orb_range if orb_range.get("high") else None, sr_zones=sr_zone_levels,
+    )
     gamma_signal = check_gamma_blast(symbol, df, vix)
 
     # 7. regime detection - gates ORB/Retest, which produce more false
@@ -157,6 +189,12 @@ def generate_signal(feed: DataFeed, symbol: str, mode: str, risk_mgr: RiskManage
         "daily_risk": risk_mgr.daily_summary(),
         "orb": orb_signal,
         "retest": retest_signal,
+        "intraday_zones": {
+            "nearest_resistance": intraday_zones.get("nearest_resistance"),
+            "nearest_support": intraday_zones.get("nearest_support"),
+            "key_levels": intraday_zones.get("key_levels"),
+            "day_levels": intraday_zones.get("day_levels"),
+        },
         "gamma_blast": gamma_signal,
         "regime": regime_info,
         "session": session_label,
