@@ -322,6 +322,19 @@ def _generate_trades(df, symbol: str, mode: str,
             i += step_bars
             continue
 
+        # Anti-overtrading: mirror the live gate (auto_trade.py) - cap
+        # trades per calendar day and stop for the day after a WIN, so the
+        # backtest doesn't credit itself with entries the live bot would
+        # never have taken.
+        entry_day = pd.Timestamp(sig["entry_ts"]).strftime("%Y-%m-%d")
+        todays_trades = [t for t in trades if pd.Timestamp(t["entry_ts"]).strftime("%Y-%m-%d") == entry_day]
+        if len(todays_trades) >= CONFIG.auto_trade.max_trades_per_day:
+            i += step_bars
+            continue
+        if CONFIG.auto_trade.stop_after_first_win and any(t["result"] == "WIN" for t in todays_trades):
+            i += step_bars
+            continue
+
         future = df.iloc[i + 1 :].reset_index(drop=True)
         future_vix = vix_series.iloc[i + 1 :].reset_index(drop=True) if vix_series is not None else None
         levels = sig["levels"]
@@ -391,6 +404,8 @@ def _generate_trades(df, symbol: str, mode: str,
             "index_exit_price": outcome.get("index_exit_price"),
             "pnl_points": pnl_points,
             "pnl_rupees": round(pnl_points * lot_size, 2) if pnl_points is not None else None,
+            "invested_rupees": round(entry_display * lot_size, 2) if entry_display is not None else None,
+            "lot_size": lot_size,
             "t1_distance": round(abs(t1_display - entry_display), 1) if t1_display is not None and entry_display is not None else None,
             "bar_index": i,
             "exit_bar_index": i + outcome["bars_held"],

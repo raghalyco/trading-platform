@@ -93,6 +93,11 @@ class AutoTradeConfig:
     # checks for new signals / manages open positions, independent of
     # whether anyone has the dashboard open on a phone or laptop.
     background_poll_seconds: int = 15
+    # Anti-overtrading: hard cap on auto-captured entries per calendar day,
+    # and stop for the day after the first WIN (a winning trade already
+    # banked shouldn't be risked chasing a second one).
+    max_trades_per_day: int = 2
+    stop_after_first_win: bool = True
 
 
 @dataclass

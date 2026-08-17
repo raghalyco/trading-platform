@@ -292,11 +292,12 @@ table.trades tr.open td:first-child{box-shadow:inset 3px 0 0 var(--blue);}
       <div class="kpi"><div class="lbl">Signals</div><div class="val" id="btTrades">—</div></div>
       <div class="kpi"><div class="lbl">Wins</div><div class="val green" id="btWins">—</div></div>
       <div class="kpi"><div class="lbl">Timeouts</div><div class="val amber" id="btTimeouts">—</div></div>
+      <div class="kpi"><div class="lbl">Total P&amp;L</div><div class="val" id="btTotalPnl">—</div></div>
     </div>
 
     <div class="table-card" id="btTableWrap" style="display:none;">
       <table class="trades">
-        <thead><tr><th>Entry (IST)</th><th>Side</th><th>Entry</th><th>T1</th><th>Result</th><th></th></tr></thead>
+        <thead><tr><th>Entry (IST)</th><th>Side</th><th>Strike</th><th>Entry</th><th>T1</th><th>Invested</th><th>P&amp;L</th><th>Result</th><th></th></tr></thead>
         <tbody id="btBody"></tbody>
       </table>
     </div>
@@ -760,6 +761,8 @@ async function runBacktest(){
     document.getElementById('btTrades').textContent = d.trades;
     document.getElementById('btWins').textContent = d.wins;
     document.getElementById('btTimeouts').textContent = d.timeouts;
+    document.getElementById('btTotalPnl').textContent =
+      d.total_pnl_rupees != null ? `₹${Math.round(d.total_pnl_rupees)}` : '—';
     const body = document.getElementById('btBody');
     const samples = d.samples || [];
     body.innerHTML = samples.slice(0, 80).map((t, i) => {
@@ -769,10 +772,19 @@ async function runBacktest(){
       const chartQ = new URLSearchParams({
         bt: '1', idx: i, symbol, mode, months,
       });
+      const strikeLabel = t.strike ? `${t.strike} ${t.side}` : '—';
+      const invested = t.invested_rupees != null ? `₹${Math.round(t.invested_rupees)}` : '—';
+      let pnlCell = '—';
+      if (t.pnl_rupees != null) {
+        const pnlCls = t.pnl_rupees > 0 ? 'res-pos' : t.pnl_rupees < 0 ? 'res-neg' : 'res-mute';
+        const sign = t.pnl_rupees > 0 ? '+' : '';
+        pnlCell = `<span class="${pnlCls}">${sign}₹${Math.round(t.pnl_rupees)}</span>`;
+      }
       return `<tr class="${cls}"><td>${ts}</td><td class="${sideCls}">${t.side}</td>
-        <td>${t.entry}</td><td>${t.target1}</td><td>${t.result}</td>
+        <td>${strikeLabel}</td><td>${t.entry}</td><td>${t.target1}</td>
+        <td>${invested}</td><td>${pnlCell}</td><td>${t.result}</td>
         <td><a class="chart-link" href="/chart?${chartQ.toString()}" target="_blank" rel="noopener">Chart</a></td></tr>`;
-    }).join('') || '<tr><td colspan="6" class="empty">No samples</td></tr>';
+    }).join('') || '<tr><td colspan="9" class="empty">No samples</td></tr>';
     document.getElementById('btTableWrap').style.display = 'block';
   } catch (e) {
     status.textContent = 'Request failed: ' + e;

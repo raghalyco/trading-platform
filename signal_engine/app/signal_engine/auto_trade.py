@@ -7,9 +7,20 @@ Does not place Zerodha orders by default — it arms journal live-capture
 
 from __future__ import annotations
 
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
 from app.config import CONFIG
 from app.signal_engine import journal
 from app.signal_engine.live_capture import capture_entry
+
+IST = ZoneInfo("Asia/Kolkata")
+
+
+def _todays_trades() -> list[dict]:
+    """All trades (any status) with entry_time falling on today's IST date."""
+    today = datetime.now(IST).strftime("%Y-%m-%d")
+    return [t for t in journal.list_trades() if (t.get("entry_time") or "").startswith(today)]
 
 
 def should_auto_enter(signal: dict, otm_steps: int) -> tuple[bool, str]:
@@ -43,6 +54,12 @@ def should_auto_enter(signal: dict, otm_steps: int) -> tuple[bool, str]:
     open_n = len(journal.list_trades("OPEN"))
     if open_n >= cfg.max_open_positions:
         return False, f"max open positions ({cfg.max_open_positions}) reached"
+
+    todays = _todays_trades()
+    if len(todays) >= cfg.max_trades_per_day:
+        return False, f"max trades/day ({cfg.max_trades_per_day}) reached"
+    if cfg.stop_after_first_win and any(t.get("result") == "WIN" for t in todays):
+        return False, "already banked a win today - no over-trading"
 
     return True, "OK"
 
