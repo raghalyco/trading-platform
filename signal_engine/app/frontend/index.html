@@ -264,6 +264,7 @@ table.trades tr.open td:first-child{box-shadow:inset 3px 0 0 var(--blue);}
     <div class="empty" id="journalEmpty" style="display:none;">No trades yet</div>
   </div>
   <button type="button" class="export-btn" onclick="exportJournal()">⬇ Export CSV</button>
+  <button type="button" class="export-btn" onclick="purgeOldJournal()">🗑 Clear data older than 1 week</button>
 </div>
 
 <!-- BACKTEST -->
@@ -285,6 +286,7 @@ table.trades tr.open td:first-child{box-shadow:inset 3px 0 0 var(--blue);}
       </select>
     </div>
     <button class="bt-run" id="btRunBtn" onclick="runBacktest()">Run backtest</button>
+    <button type="button" class="export-btn" onclick="purgeOldJournal()">🗑 Clear journal data older than 1 week</button>
     <div class="bt-note" id="btStatus">Index-level backtest — not option premium P&amp;L.</div>
     <div class="bt-warn" id="btWarning" style="display:none;"></div>
     <div class="kpi-grid" id="btStats" style="display:none;">
@@ -725,6 +727,18 @@ async function loadJournal(){
     openTradeId = null;
     inBtn.disabled = false;
     inBtn.textContent = 'Enter';
+  }
+}
+
+async function purgeOldJournal(){
+  if (!confirm('Delete all journal trades older than 1 week? This cannot be undone.')) return;
+  try {
+    const res = await fetch('/api/journal/purge?days=7', { method: 'POST' });
+    const d = await res.json();
+    alert(`Deleted ${d.deleted} old trade(s). Keeping the last ${d.kept_days} days.`);
+    loadJournal();
+  } catch (e) {
+    alert('Failed to clear old data: ' + e);
   }
 }
 

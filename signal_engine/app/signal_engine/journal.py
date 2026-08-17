@@ -207,6 +207,20 @@ def list_trades(result_filter: str | None = None, symbol: str | None = None) -> 
     return trades
 
 
+def purge_older_than(days: int) -> int:
+    """Delete all trades (OPEN or closed) with entry_time older than `days`
+    days ago. Returns the number of rows deleted. Used to clear stale test
+    or pre-update data so the journal only shows recent trades."""
+    from datetime import timedelta
+    cutoff = (datetime.now() - timedelta(days=days)).isoformat()
+    conn = _connect()
+    cur = conn.execute("DELETE FROM trades WHERE entry_time < ?", (cutoff,))
+    conn.commit()
+    deleted = cur.rowcount
+    conn.close()
+    return deleted
+
+
 def daily_summary(day: str | None = None, symbol: str | None = None) -> dict:
     """
     Aggregates closed trades for a given day (default: today, IST).

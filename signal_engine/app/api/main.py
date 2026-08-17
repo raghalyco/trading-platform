@@ -669,6 +669,14 @@ def journal_export(symbol: str | None = Query(None)):
     )
 
 
+@app.post("/api/journal/purge")
+def journal_purge(days: int = Query(7, ge=1)):
+    """Delete trades older than `days` days (default 7) - use after a code
+    update to clear out stale/test entries so the journal starts fresh."""
+    deleted = journal.purge_older_than(days)
+    return {"deleted": deleted, "kept_days": days}
+
+
 @app.get("/api/journal/daily-summary")
 def journal_daily_summary(
     day: str | None = Query(None),
