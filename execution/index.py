@@ -6,6 +6,7 @@ import os
 import re
 import calendar
 import sqlite3
+import sys
 import threading
 import time
 from datetime import date, datetime, timedelta
@@ -19,6 +20,11 @@ from telethon import TelegramClient, events
 from telethon.errors.rpcerrorlist import AuthKeyDuplicatedError
 from telethon.sessions import SQLiteSession
 from kite_auth import get_kite_client
+
+_REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+if _REPO_ROOT not in sys.path:
+    sys.path.insert(0, _REPO_ROOT)
+from shared import config as shared_config
 
 # ==========================================
 # 1. BOT CONFIGURATIONS
@@ -83,8 +89,22 @@ def start_telegram_client_with_retry(client, logger, session_name, attempts=3, d
             )
             time.sleep(delay_seconds)
 
-SOURCE_CHAT = 'Option Playbook by SK'
+# Which Telegram chat's messages get parsed into real orders. Overridable via
+# env so this can later point at signal_engine's own alert chat (or, with
+# multiple users, a different chat per user) without touching code - default
+# stays the existing discretionary call provider so nothing changes today.
+SOURCE_CHAT = os.getenv("SOURCE_CHAT", "Option Playbook by SK")
 NOTIFICATION_CHAT = 't.me/testalgotradinganand'
+
+# Second, independent kill switch specifically for signal_engine-sourced
+# signals. signal_engine posts its alerts to shared_config.TELEGRAM_CHAT_ID
+# (same chat/bot used across scanner/signal_engine/execution). Even if
+# SOURCE_CHAT is pointed at that chat, messages from it are ignored unless
+# this is explicitly set true - stays False until signal_engine's option-
+# premium backtest (see signal_engine/app/signal_engine/backtest.py) shows
+# a real edge, not just because someone flips SOURCE_CHAT by accident.
+SIGNAL_ENGINE_CHAT_ID = (shared_config.TELEGRAM_CHAT_ID or "").strip()
+SIGNAL_ENGINE_LIVE_ENABLED = os.getenv("SIGNAL_ENGINE_LIVE_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
 KITE_PRODUCT = "NRML"
 KITE_ORDER_TYPE = "LIMIT"
 KITE_PRICE_MATCH_TOLERANCE = 1.0
@@ -1872,6 +1892,16 @@ async def handler(event):
             telegram_logger.info("[%s] Message ignored. Source chat %s does not match configured source %s.", event_id, chat_name, SOURCE_CHAT)
             return
 
+        # Second safety gate: even if SOURCE_CHAT is pointed at
+        # signal_engine's alert chat, refuse to act on it unless explicitly
+        # enabled - see SIGNAL_ENGINE_LIVE_ENABLED above.
+        if SIGNAL_ENGINE_CHAT_ID and str(getattr(chat, "id", "")) == SIGNAL_ENGINE_CHAT_ID and not SIGNAL_ENGINE_LIVE_ENABLED:
+            telegram_logger.info(
+                "[%s] Message ignored. It's from signal_engine's alert chat but SIGNAL_ENGINE_LIVE_ENABLED is not set - "
+                "not enabled for live order placement yet.", event_id,
+            )
+            return
+
         if LOG_ONLY_MODE:
             signal = extract_signal(message_text)
             telegram_logger.info(
@@ -1916,7 +1946,7 @@ async def handler(event):
 
 if __name__ == "__main__":
     telegram_logger.info(
-        "Starting bot with source chat %s, log file %s, log-only mode %s, daily profit target %s, target lot sizes %s, pending trade expiry minutes %s, pending trades file %s, max trades per day %s",
+        "Starting bot with source chat %s, log file %s, log-only mode %s, daily profit target %s, target lot sizes %s, pending trade expiry minutes %s, pending trades file %s, max trades per day %s, signal_engine live enabled %s",
         SOURCE_CHAT,
         TELEGRAM_LOG_FILE,
         LOG_ONLY_MODE,
@@ -1925,6 +1955,7 @@ if __name__ == "__main__":
         PENDING_TRADE_EXPIRY_MINUTES,
         PENDING_TRADES_FILE,
         MAX_TRADES_PER_DAY,
+        SIGNAL_ENGINE_LIVE_ENABLED,
     )
     for warning_message in CONFIG_WARNINGS:
         telegram_logger.warning("Configuration fallback applied: %s", warning_message)

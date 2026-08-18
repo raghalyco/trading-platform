@@ -531,17 +531,20 @@ def scan_darvax(
     # Auto-track every non-invalidated breakout so Strategy Performance
     # reflects EVERY signal this scanner produced, not just the ones
     # manually clicked "Track" - dedups on (symbol, source, entry price).
-    for r in results:
-        if r.get("status") == "INVALIDATED":
-            continue
-        try:
-            trade_tracker.auto_track_if_new(
-                symbol=r["symbol"], source="darvax",
-                entry_price=r.get("breakout_close"), stop_loss=r.get("box_bottom"),
-                target=None, chart_url=r.get("chart_url"),
-            )
-        except Exception as e:
-            print(f"  [warn] darvax auto-track failed for {r.get('symbol')}: {e}")
+    # Off by default (config.AUTO_TRACK_ENABLED) - My Trades should only
+    # show what you explicitly clicked "☆ Track" on.
+    if config.AUTO_TRACK_ENABLED:
+        for r in results:
+            if r.get("status") == "INVALIDATED":
+                continue
+            try:
+                trade_tracker.auto_track_if_new(
+                    symbol=r["symbol"], source="darvax",
+                    entry_price=r.get("breakout_close"), stop_loss=r.get("box_bottom"),
+                    target=None, chart_url=r.get("chart_url"),
+                )
+            except Exception as e:
+                print(f"  [warn] darvax auto-track failed for {r.get('symbol')}: {e}")
 
     charts = {
         str(r["symbol"]).upper(): get_chart_payload(r["symbol"], timeframe=timeframe)

@@ -38,6 +38,8 @@ import swing_trade
 import darvax
 import trade_tracker
 import strategy_performance
+import index_movers
+import options_chain
 from kite_auth import get_kite_session
 from kite_client import KiteDataClient
 
@@ -107,6 +109,8 @@ _ema10_cache = {"generated_at": None, "payload": None}
 _nday_cache = {}  # lookback -> {generated_at, payload}
 _sector_cache = {"generated_at": None, "results": []}
 _trending_cache = {"generated_at": None, "sectors": {}}
+_index_movers_cache: dict = {}  # index_label -> {generated_at, payload}
+_option_chain_cache: dict = {}  # underlying -> {generated_at, payload}
 # Per-universe cache: mode -> {generated_at, payload}
 _stock_for_day_cache: dict = {}
 _support_bounce_cache: dict = {}
@@ -415,6 +419,42 @@ def api_scan_sector():
         "results": _sector_cache["results"],
         "cached": not refresh,
     })
+
+
+@app.route("/api/index_movers", methods=["GET"])
+def api_index_movers():
+    from flask import request
+    index_label = (request.args.get("index") or "NIFTY 50")
+    if index_label not in index_movers.INDEX_MOVER_UNIVERSES:
+        index_label = "NIFTY 50"
+    refresh = _want_refresh()
+    cached = _index_movers_cache.get(index_label)
+    if refresh or not cached:
+        payload = index_movers.compute_index_movers(_client, index_label)
+        _index_movers_cache[index_label] = {"generated_at": payload["generated_at"], "payload": payload}
+        cached = _index_movers_cache[index_label]
+    out = dict(cached["payload"])
+    out["market_open"] = _is_market_open()
+    out["cached"] = not refresh
+    return jsonify(out)
+
+
+@app.route("/api/option_chain", methods=["GET"])
+def api_option_chain():
+    from flask import request
+    underlying = (request.args.get("underlying") or "NIFTY").upper()
+    if underlying not in ("NIFTY", "BANKNIFTY"):
+        underlying = "NIFTY"
+    refresh = _want_refresh()
+    cached = _option_chain_cache.get(underlying)
+    if refresh or not cached:
+        payload = options_chain.compute_option_chain(_client, underlying)
+        _option_chain_cache[underlying] = {"generated_at": payload["generated_at"], "payload": payload}
+        cached = _option_chain_cache[underlying]
+    out = dict(cached["payload"])
+    out["market_open"] = _is_market_open()
+    out["cached"] = not refresh
+    return jsonify(out)
 
 
 @app.route("/api/intraday/start", methods=["POST"])

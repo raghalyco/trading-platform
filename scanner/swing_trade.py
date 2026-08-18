@@ -760,15 +760,16 @@ def scan_swing_trade(
             if hit:
                 results.append(hit)
                 if hit.get("status") == "TRIGGERED":
-                    try:
-                        trade_tracker.auto_track_if_new(
-                            symbol=symbol, source="swing_trade",
-                            entry_price=hit.get("entry_price") or hit.get("current_price"),
-                            stop_loss=hit.get("stop_loss"), target=hit.get("target"),
-                            chart_url=hit.get("chart_url"),
-                        )
-                    except Exception as e:
-                        print(f"  [warn] swing-trade auto-track failed for {symbol}: {e}")
+                    if config.AUTO_TRACK_ENABLED:
+                        try:
+                            trade_tracker.auto_track_if_new(
+                                symbol=symbol, source="swing_trade",
+                                entry_price=hit.get("entry_price") or hit.get("current_price"),
+                                stop_loss=hit.get("stop_loss"), target=hit.get("target"),
+                                chart_url=hit.get("chart_url"),
+                            )
+                        except Exception as e:
+                            print(f"  [warn] swing-trade auto-track failed for {symbol}: {e}")
                     if config.SWING_TRADE_SEND_TELEGRAM:
                         key = f"{symbol}|{hit.get('breakout_week')}|{hit.get('resistance_type')}"
                         if key not in _alerted_breakouts:

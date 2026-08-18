@@ -35,16 +35,31 @@ NIFTY_INDEX_LABELS = {
 
 def normalize_nifty_mode(mode: Optional[str], default: str = "nifty100") -> str:
     mode = (mode or default).strip().lower()
-    if mode not in NIFTY_INDEX_URLS:
+    if mode not in NIFTY_INDEX_URLS and mode != "fno":
         raise ValueError(
             f"Unknown nifty universe mode: {mode!r}. "
-            f"Use one of: {', '.join(NIFTY_INDEX_URLS)}"
+            f"Use one of: {', '.join(list(NIFTY_INDEX_URLS) + ['fno'])}"
         )
     return mode
 
 
 def nifty_mode_label(mode: str) -> str:
+    if mode == "fno":
+        return "F&O"
     return NIFTY_INDEX_LABELS.get(mode, mode)
+
+
+def build_fno_universe(kite_client) -> "pd.DataFrame":
+    """Every NSE equity that has stock futures/options (derivatives-eligible
+    universe) — the "F&O" option from the Kite Scanner improvement review,
+    matched against tradeable NSE cash-segment instruments the same way the
+    Nifty index lists are."""
+    names = kite_client.get_fno_underlying_names()
+    instruments = kite_client.get_nse_equity_instruments()
+    instruments = instruments[instruments["tradingsymbol"].isin(names)].reset_index(drop=True)
+    print(f"Universe: F&O list -> {len(instruments)} matched to tradeable "
+          f"Kite instruments (of {len(names)} F&O underlyings)")
+    return instruments
 
 
 def load_market_cap_csv() -> dict:
@@ -120,8 +135,10 @@ def fetch_market_cap_yfinance(symbols: list) -> dict:
 
 def build_nifty_index_universe(kite_client, mode: str = "nifty100") -> pd.DataFrame:
     """NSE index constituent list matched to Kite equity instruments.
-    mode: nifty50 | nifty100 | nifty200 | nifty500"""
+    mode: nifty50 | nifty100 | nifty200 | nifty500 | fno"""
     mode = normalize_nifty_mode(mode)
+    if mode == "fno":
+        return build_fno_universe(kite_client)
     url = NIFTY_INDEX_URLS[mode]
 
     cache_file = os.path.join(config.CACHE_DIR, f"{mode}_constituents.csv")
@@ -163,6 +180,9 @@ def build_universe(kite_client) -> pd.DataFrame:
     """
     if config.UNIVERSE_MODE in NIFTY_INDEX_URLS:
         return build_nifty_index_universe(kite_client, config.UNIVERSE_MODE)
+
+    if config.UNIVERSE_MODE == "fno":
+        return build_fno_universe(kite_client)
 
     if config.UNIVERSE_MODE == "file":
         symbols = pd.read_csv(config.UNIVERSE_FILE, header=None)[0].str.upper().tolist()

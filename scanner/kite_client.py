@@ -77,6 +77,38 @@ class KiteDataClient:
         df.to_parquet(cache_file)
         return df
 
+    def get_nfo_instruments(self) -> pd.DataFrame:
+        """All NFO derivatives instruments (stock/index futures + options).
+        Large dump (~50k+ rows) — cached like the other instrument lookups."""
+        cache_file = os.path.join(config.CACHE_DIR, "instruments_nfo.parquet")
+        if os.path.exists(cache_file):
+            age_hours = (time.time() - os.path.getmtime(cache_file)) / 3600
+            if age_hours < 24:
+                return pd.read_parquet(cache_file)
+
+        self.limiter.wait()
+        instruments = self.kite.instruments("NFO")
+        df = pd.DataFrame(instruments)
+        df.to_parquet(cache_file)
+        return df
+
+    def get_fno_underlying_names(self) -> list:
+        """Tradingsymbols of every NSE equity that has F&O (stock futures)
+        contracts — i.e. the derivatives-eligible universe. Derived from the
+        NFO instrument dump's futures rows' "name" column (there's no
+        separate "F&O eligible list" endpoint)."""
+        cache_file = os.path.join(config.CACHE_DIR, "fno_underlyings.parquet")
+        if os.path.exists(cache_file):
+            age_hours = (time.time() - os.path.getmtime(cache_file)) / 3600
+            if age_hours < 24:
+                return pd.read_parquet(cache_file)["name"].tolist()
+
+        df = self.get_nfo_instruments()
+        df = df[df["instrument_type"] == "FUT"]
+        names = sorted(df["name"].dropna().unique().tolist())
+        pd.DataFrame({"name": names}).to_parquet(cache_file)
+        return names
+
     # ---------------------------------------------------------------- #
     # Historical candles
     # ---------------------------------------------------------------- #

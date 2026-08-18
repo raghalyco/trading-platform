@@ -158,6 +158,33 @@ def build_trade_recommendation(
         if prem_t2 is not None and prem_t2 <= (prem_t1 or mid):
             prem_t2 = round((prem_t1 or mid) * 1.35, 2)
 
+    # The REAL exit rule every auto-captured trade actually uses
+    # (live_capture.py) is a FIXED premium-points target - entry_premium +
+    # target_premium_points - not a Black-Scholes reprice at the ATR-based
+    # index target1 level. Using the reprice here made the displayed
+    # "Target" wildly inconsistent with what a TAKE would actually exit at
+    # (e.g. showing Rs 297 on a Rs 5 entry while the real captured trade
+    # only targets entry + Rs 12) - override so what's shown always matches
+    # what actually happens. Stop-loss is untouched: live_capture really
+    # does use the ATR-based index stop re-priced into premium terms.
+    if mid is not None:
+        prem_t1 = round(mid + CONFIG.auto_trade.target_premium_points, 2)
+
+    # Cap the top of the displayed entry band so even the WORST (highest)
+    # price in that range still clears the minimum R:R. The TAKE/SKIP call
+    # below is priced off `mid`, but a wide band (e.g. live LTP +-8%) can
+    # let the printed upper bound imply a much worse R:R than the one that
+    # was actually approved - e.g. mid=84 might clear 1:2, but band high=91
+    # against the same T1/SL could be only 1:1.3. Buying anywhere past this
+    # cap isn't the setup that got a TAKE.
+    if prem_t1 is not None and prem_sl is not None and prem_sl < prem_t1:
+        min_rr = CONFIG.risk.min_band_rr
+        max_entry_for_rr = (prem_t1 + min_rr * prem_sl) / (1 + min_rr)
+        if band.get("high") is not None and band["high"] > max_entry_for_rr:
+            band["high"] = round(max(band.get("low") or 0, max_entry_for_rr), 2)
+        if band.get("low") is not None and band["low"] > band["high"]:
+            band["low"] = band["high"]
+
     sl_prem_pts = round(mid - prem_sl, 2) if (mid and prem_sl) else None
     t1_prem_pts = round(prem_t1 - mid, 2) if (mid and prem_t1) else None
     premium_rr = (

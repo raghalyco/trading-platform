@@ -1497,7 +1497,7 @@ def scan_support_bounce(
             hit = evaluate_symbol_support_bounce(symbol, daily)
             if hit:
                 results.append(hit)
-                if hit.get("smart_money_signal") == "BUY":
+                if config.AUTO_TRACK_ENABLED and hit.get("smart_money_signal") == "BUY":
                     try:
                         trade_tracker.auto_track_if_new(
                             symbol=symbol, source="support_bounce",

@@ -44,7 +44,7 @@ WARMUP_YEARS = 3
 # For a first dry run you may want to cap this — scanning ~2000 symbols x
 # ~4 years of daily candles through Kite's historical API (rate-limited to
 # ~3 req/sec) takes hours. Set MAX_UNIVERSE_SIZE to e.g. 300 to test quickly.
-UNIVERSE_MODE = "nifty100"     # "nifty50" | "nifty100" | "nifty200" | "nifty500" | "all" | "file"
+UNIVERSE_MODE = os.environ.get("UNIVERSE_MODE", "nifty500")     # "nifty50" | "nifty100" | "nifty200" | "nifty500" | "fno" | "all" | "file"
 UNIVERSE_FILE = "data/universe.csv"   # used if UNIVERSE_MODE == "file", one symbol per line
 MAX_UNIVERSE_SIZE = None       # e.g. 300 for a quick test run, None = no cap
 
@@ -277,6 +277,14 @@ SWING_TRADE_WATCH_BAND_PCT = 6.0          # % below (or just at) resistance stil
 SWING_TRADE_MIN_SCORE_WATCHING = 25       # lower floor — WATCHING rows have no breakout/volume bonus yet
 SWING_TRADE_MAX_EXTENSION_PCT = 15.0      # drop TRIGGERED rows already this far past the breakout high
 SWING_TRADE_SEND_TELEGRAM = True
+
+# ---------------------------------------------------------------------------
+# My Trades tracking — whether scanners auto-add every signal they produce
+# (darvax breakouts, support_bounce BUYs, swing_trade TRIGGERED rows, stock
+# for day BUYs) to My Trades, versus only tracking what you explicitly click
+# "☆ Track" on. Off by default: My Trades should reflect trades YOU chose to
+# track, not every signal the scanners happened to produce.
+AUTO_TRACK_ENABLED = False
 
 # ---------------------------------------------------------------------------
 # DarvaX — proper Darvas Box construction (Nicolas Darvas's 3-session-stall

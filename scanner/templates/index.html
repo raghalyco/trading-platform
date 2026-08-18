@@ -31,12 +31,20 @@
   .status-pill.open { background: var(--green-bg); color: var(--green); }
   .status-pill.closed { background: var(--surface-2); color: var(--text-muted); }
   .status-pill .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
-  .nav-item { padding: 9px 10px; border-radius: 7px; font-size: 14px; color: var(--text-secondary);
-    cursor: pointer; margin-bottom: 2px; }
+  .nav-group { margin-bottom: 1.1rem; }
+  .nav-group-label { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em;
+    color: var(--text-muted); padding: 0 10px; margin-bottom: 5px; }
+  .nav-item { padding: 9px 10px 9px 16px; border-radius: 7px; font-size: 14px; color: var(--text-secondary);
+    cursor: pointer; margin-bottom: 2px; border-left: 3px solid transparent; }
   .nav-item.active { background: var(--surface-2); color: var(--text); }
   .nav-item:hover { color: var(--text); }
-  .nav-item.sub { padding-left: 28px; font-size: 13px; color: var(--text-muted); }
+  .nav-item.sub { padding-left: 34px; font-size: 13px; color: var(--text-muted); border-left-color: transparent !important; }
   .nav-item.sub.active { color: var(--text); }
+  .nav-item.cat-overview.active { border-left-color: var(--accent); }
+  .nav-item.cat-strategy.active { border-left-color: #f0b429; }
+  .nav-item.cat-trades.active { border-left-color: var(--green); }
+
+  .mobile-nav { display: none; }
 
   .main { flex: 1; padding: 1.5rem 2rem; max-width: 1200px; }
   .tab-page { display: none; }
@@ -44,6 +52,26 @@
   .topbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.25rem; }
   .topbar h1 { font-size: 19px; margin: 0; }
   .topbar .meta { font-size: 13px; color: var(--text-muted); margin-top: 2px; }
+  .topbar .help-text { font-size: 12.5px; color: var(--text-muted); margin-top: 4px; max-width: 640px; line-height: 1.4; }
+  .live-pill { display: none; font-size: 11px; font-weight: 700; letter-spacing: 0.04em; color: #fff; background: #e5484d; border-radius: 4px; padding: 2px 7px; margin-left: 8px; vertical-align: middle; animation: live-pulse 1.6s ease-in-out infinite; }
+  @keyframes live-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
+  .mover-row { display: grid; grid-template-columns: 90px 1fr 70px; gap: 10px; align-items: center; padding: 5px 0; font-size: 13px; }
+  .mover-bar-track { background: var(--surface-2); border-radius: 3px; height: 16px; overflow: hidden; position: relative; }
+  .mover-bar-fill { height: 100%; border-radius: 3px; }
+  .mover-bar-fill.pos { background: #2fbf71; }
+  .mover-bar-fill.neg { background: #e5484d; }
+  .movers-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  @media (max-width: 900px) { .movers-columns { grid-template-columns: 1fr; } }
+  .oc-summary { display: flex; gap: 18px; flex-wrap: wrap; margin-bottom: 14px; }
+  .oc-summary .stat { background: var(--surface-2); border-radius: 8px; padding: 8px 14px; }
+  .oc-summary .stat .lbl { font-size: 11px; color: var(--text-muted); }
+  .oc-summary .stat .val { font-size: 16px; font-weight: 700; }
+  .oc-oi-bar { height: 12px; border-radius: 2px; }
+  .oc-oi-bar.ce { background: #e5484d; }
+  .oc-oi-bar.pe { background: #2fbf71; }
+  table.oc-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  table.oc-table th, table.oc-table td { padding: 5px 8px; text-align: center; }
+  table.oc-table tr.atm-row { background: var(--surface-2); font-weight: 700; }
   button.primary {
     background: var(--accent); color: white; border: none; border-radius: 8px;
     padding: 9px 16px; font-size: 13px; font-weight: 600; cursor: pointer;
@@ -112,6 +140,30 @@
   }
   .dir-up { color: var(--green); }
   .dir-down { color: var(--red); }
+
+  /* ---------------- Mobile (< 768px) ---------------- */
+  @media (max-width: 768px) {
+    body { flex-direction: column; }
+    .sidebar { display: none; }
+    .mobile-nav {
+      display: flex; overflow-x: auto; -webkit-overflow-scrolling: touch;
+      position: sticky; top: 0; z-index: 20; background: var(--surface);
+      border-bottom: 1px solid var(--border); padding: 6px 6px; gap: 4px;
+    }
+    .mobile-nav-item {
+      flex: 0 0 auto; font-size: 20px; padding: 8px 12px; border-radius: 8px;
+      cursor: pointer; opacity: 0.55;
+    }
+    .mobile-nav-item.active { opacity: 1; background: var(--surface-2); }
+    .main { padding: 1rem 0.85rem; max-width: 100%; }
+    .topbar { flex-direction: column; align-items: flex-start; gap: 10px; }
+    .topbar-actions { flex-wrap: wrap; width: 100%; }
+    .topbar-actions button, .topbar-actions select { flex: 1 1 auto; }
+    table { font-size: 12px; }
+    th, td { padding: 8px 6px; }
+    .card { padding: 0.85rem; }
+    .kpis { grid-template-columns: repeat(2, 1fr); }
+  }
 </style>
 </head>
 <body>
@@ -123,17 +175,46 @@
   </div>
   <p class="brand-sub">{{ universe_mode }} · {{ universe_size }} symbols</p>
   <div class="status-pill closed" id="marketStatus"><span class="dot"></span><span id="marketStatusText">Checking...</span></div>
-  <div class="nav-item active" data-tab="sector">Sector Analysis</div>
-  <div class="nav-item" data-tab="trending">Trending Stocks by Sector</div>
-  <div class="nav-item" data-tab="stockday">Stock for day</div>
-  <div class="nav-item sub" data-tab="stockday-bt">↳ Backtest (3M)</div>
-  <div class="nav-item" data-tab="support">Previous Support Bounce</div>
-  <div class="nav-item" data-tab="swing">Swing Trade (Weekly)</div>
-  <div class="nav-item" data-tab="darvax">DarvaX (Darvas Box)</div>
-  <div class="nav-item" data-tab="mytrades">My Trades</div>
-  <div class="nav-item" data-tab="intraday">Intraday Monitor</div>
-  <div class="nav-item" data-tab="backtest">Performance / Backtest</div>
+
+  <div class="nav-group">
+    <div class="nav-group-label">Market Overview</div>
+    <div class="nav-item cat-overview active" data-tab="sector">Sector Analysis</div>
+    <div class="nav-item cat-overview" data-tab="trending">Trending Stocks by Sector</div>
+    <div class="nav-item cat-overview" data-tab="indexmovers">Index Movers</div>
+    <div class="nav-item cat-overview" data-tab="optionchain">Option Chain (PCR)</div>
+  </div>
+
+  <div class="nav-group">
+    <div class="nav-group-label">Strategy Screeners</div>
+    <div class="nav-item cat-strategy" data-tab="stockday">Stock for day</div>
+    <div class="nav-item cat-strategy sub" data-tab="stockday-bt">↳ Backtest (3M)</div>
+    <div class="nav-item cat-strategy" data-tab="support">Previous Support Bounce</div>
+    <div class="nav-item cat-strategy" data-tab="swing">Swing Trade (Weekly)</div>
+    <div class="nav-item cat-strategy" data-tab="darvax">DarvaX (Darvas Box)</div>
+    <div class="nav-item cat-strategy" data-tab="intraday">Intraday Monitor</div>
+  </div>
+
+  <div class="nav-group">
+    <div class="nav-group-label">My Trading</div>
+    <div class="nav-item cat-trades" data-tab="mytrades">My Trades</div>
+    <div class="nav-item cat-trades" data-tab="backtest">Performance / Backtest</div>
+  </div>
 </div>
+
+<!-- Mobile bottom nav: same tabs, condensed icons, shown only under 768px -->
+<nav class="mobile-nav">
+  <div class="mobile-nav-item active" data-tab="sector" title="Sector Analysis">📊</div>
+  <div class="mobile-nav-item" data-tab="trending" title="Trending Stocks by Sector">🔥</div>
+  <div class="mobile-nav-item" data-tab="indexmovers" title="Index Movers">📈</div>
+  <div class="mobile-nav-item" data-tab="optionchain" title="Option Chain (PCR)">🧮</div>
+  <div class="mobile-nav-item" data-tab="stockday" title="Stock for day">☀️</div>
+  <div class="mobile-nav-item" data-tab="support" title="Previous Support Bounce">🛟</div>
+  <div class="mobile-nav-item" data-tab="swing" title="Swing Trade (Weekly)">📅</div>
+  <div class="mobile-nav-item" data-tab="darvax" title="DarvaX (Darvas Box)">📦</div>
+  <div class="mobile-nav-item" data-tab="intraday" title="Intraday Monitor">⏱️</div>
+  <div class="mobile-nav-item" data-tab="mytrades" title="My Trades">⭐</div>
+  <div class="mobile-nav-item" data-tab="backtest" title="Performance / Backtest">🧾</div>
+</nav>
 
 <div class="main">
 
@@ -141,8 +222,9 @@
   <div class="tab-page active" id="page-sector">
     <div class="topbar">
       <div>
-        <h1>Sector Analysis</h1>
+        <h1>Sector Analysis <span class="live-pill" id="live-sector">LIVE</span></h1>
         <p class="meta" id="sectorMeta">NSE sector indices ranked by today (1D) · loading…</p>
+        <p class="help-text">Ranks NSE's sector indices (Bank, IT, Pharma, etc.) by today's % change — auto-refreshes every 25s while this tab is open.</p>
       </div>
       <button class="primary" id="sectorBtn" onclick="runSectorScan(true)">Run Scan</button>
     </div>
@@ -155,13 +237,56 @@
   <div class="tab-page" id="page-trending">
     <div class="topbar">
       <div>
-        <h1>Trending Stocks by Sector</h1>
+        <h1>Trending Stocks by Sector <span class="live-pill" id="live-trending">LIVE</span></h1>
         <p class="meta" id="trendingMeta">Top movers today within each sector (ordered by Sector Analysis 1D) · loading…</p>
+        <p class="help-text">Within each sector, the individual stocks moving the most today — auto-refreshes every 30s while this tab is open.</p>
       </div>
       <button class="primary" id="trendingBtn" onclick="runTrendingScan(true)">Run Scan</button>
     </div>
     <div id="trendingCardsWrap" class="trending-grid">
       <div class="loading">Loading trending stocks…</div>
+    </div>
+  </div>
+
+  <!-- ============ TAB: Index Movers ============ -->
+  <div class="tab-page" id="page-indexmovers">
+    <div class="topbar">
+      <div>
+        <h1>Index Movers</h1>
+        <p class="meta" id="indexMoversMeta">Which constituents are driving today's index move · loading…</p>
+        <p class="help-text">Ranks constituents by their approximate contribution to today's index move (% change × market-cap weight). This is a market-cap-weighted approximation, not NSE's exact free-float index weighting — directionally accurate for large, liquid names, not an authoritative number.</p>
+      </div>
+      <div class="topbar-actions">
+        <select class="universe-select" id="indexMoversIndex" title="Index" onchange="runIndexMovers(true)">
+          <option value="NIFTY 50">NIFTY 50</option>
+          <option value="NIFTY 200">NIFTY 200</option>
+        </select>
+        <button class="primary" id="indexMoversBtn" onclick="runIndexMovers(true)">Run Scan</button>
+      </div>
+    </div>
+    <div class="card">
+      <div id="indexMoversWrap"><div class="loading">Loading index movers…</div></div>
+    </div>
+  </div>
+
+  <!-- ============ TAB: Option Chain (PCR) ============ -->
+  <div class="tab-page" id="page-optionchain">
+    <div class="topbar">
+      <div>
+        <h1>Option Chain (PCR)</h1>
+        <p class="meta" id="optionChainMeta">Per-strike Call/Put OI + Put-Call Ratio, nearest expiry · loading…</p>
+        <p class="help-text">Minimal option-chain view: open interest per strike around ATM for the nearest expiry, plus a single Put-Call Ratio and a simple sentiment read. Single live snapshot — not a multi-day PCR trend.</p>
+      </div>
+      <div class="topbar-actions">
+        <select class="universe-select" id="optionChainUnderlying" title="Underlying" onchange="runOptionChain(true)">
+          <option value="NIFTY">NIFTY</option>
+          <option value="BANKNIFTY">BANKNIFTY</option>
+        </select>
+        <button class="primary" id="optionChainBtn" onclick="runOptionChain(true)">Run Scan</button>
+      </div>
+    </div>
+    <div class="card">
+      <div id="optionChainWrap"><div class="loading">Loading option chain…</div></div>
     </div>
   </div>
 
@@ -171,6 +296,7 @@
       <div>
         <h1>Stock for day</h1>
         <p class="meta" id="stockdayMeta">Smart Money BUY / SELL · Pine structure · loading…</p>
+        <p class="help-text">Intraday BUY/SELL calls from a Smart Money market-structure read (CHoCH/BOS, order blocks, liquidity sweeps). Stop-loss is the structural swing point; targets are the next opposing structure level.</p>
       </div>
       <div class="topbar-actions">
         <select class="universe-select" id="stockdayUniverse" title="Index universe">
@@ -178,6 +304,7 @@
           <option value="nifty100" {% if stock_for_day_universe == 'nifty100' %}selected{% endif %}>Nifty 100</option>
           <option value="nifty200" {% if stock_for_day_universe == 'nifty200' %}selected{% endif %}>Nifty 200</option>
           <option value="nifty500" {% if stock_for_day_universe == 'nifty500' %}selected{% endif %}>Nifty 500</option>
+          <option value="fno" {% if stock_for_day_universe == 'fno' %}selected{% endif %}>F&amp;O</option>
         </select>
         <button class="primary" id="stockdayBtn" onclick="runStockForDay(true)">Run Scan</button>
       </div>
@@ -200,6 +327,7 @@
           <option value="nifty100" {% if stock_for_day_universe == 'nifty100' %}selected{% endif %}>Nifty 100</option>
           <option value="nifty200" {% if stock_for_day_universe == 'nifty200' %}selected{% endif %}>Nifty 200</option>
           <option value="nifty500" {% if stock_for_day_universe == 'nifty500' %}selected{% endif %}>Nifty 500</option>
+          <option value="fno" {% if stock_for_day_universe == 'fno' %}selected{% endif %}>F&amp;O</option>
         </select>
         <button class="secondary" id="stockdayBtBtn" onclick="runStockdayBacktest()">Run Backtest</button>
       </div>
@@ -215,6 +343,7 @@
       <div>
         <h1>Previous Support Bounce</h1>
         <p class="meta" id="supportMeta">Ascending trendline / multi-touch horizontal support · Smart Money buy zone · loading…</p>
+        <p class="help-text">Finds stocks bouncing off a previously-established support level (an ascending trendline or a horizontal level touched 2+ times before). Stop-loss sits just below that support; entries close to the bounce score higher than ones already extended away from it.</p>
       </div>
       <div class="topbar-actions">
         <select class="universe-select" id="supportUniverse" title="Index universe">
@@ -222,6 +351,7 @@
           <option value="nifty100" {% if support_bounce_universe == 'nifty100' %}selected{% endif %}>Nifty 100</option>
           <option value="nifty200" {% if support_bounce_universe == 'nifty200' %}selected{% endif %}>Nifty 200</option>
           <option value="nifty500" {% if support_bounce_universe == 'nifty500' %}selected{% endif %}>Nifty 500</option>
+          <option value="fno" {% if support_bounce_universe == 'fno' %}selected{% endif %}>F&amp;O</option>
         </select>
         <button class="primary" id="supportBtn" onclick="runSupportBounce(true)">Run Scan</button>
       </div>
@@ -237,6 +367,7 @@
       <div>
         <h1>Swing Trade (Weekly)</h1>
         <p class="meta" id="swingMeta">Weekly resistance breakout (trendline / box) + volume spike · loading…</p>
+        <p class="help-text">Multi-week swing setups: a stock breaking above a weekly resistance level (trendline or box top) on above-average volume. Meant to be held days-to-weeks, not intraday — stop-loss is below the breakout level.</p>
       </div>
       <div class="topbar-actions">
         <select class="universe-select" id="swingUniverse" title="Index universe">
@@ -244,6 +375,7 @@
           <option value="nifty100" {% if swing_trade_universe == 'nifty100' %}selected{% endif %}>Nifty 100</option>
           <option value="nifty200" {% if swing_trade_universe == 'nifty200' %}selected{% endif %}>Nifty 200</option>
           <option value="nifty500" {% if swing_trade_universe == 'nifty500' %}selected{% endif %}>Nifty 500</option>
+          <option value="fno" {% if swing_trade_universe == 'fno' %}selected{% endif %}>F&amp;O</option>
         </select>
         <button class="primary" id="swingBtn" onclick="runSwingTrade(true)">Run Scan</button>
       </div>
@@ -259,6 +391,7 @@
       <div>
         <h1>DarvaX (Darvas Box)</h1>
         <p class="meta" id="darvaxMeta">Daily Darvas box breakout (3-session-stall top/bottom) + volume spike · loading…</p>
+        <p class="help-text">Classic Darvas Box: a stock makes a new high, stalls in a tight range for 3+ sessions (the "box"), then breaks above the box top on volume. Stop-loss is the box bottom. "Weekly" uses the same logic on weekly candles for higher-conviction, slower setups.</p>
       </div>
       <div class="topbar-actions">
         <select class="universe-select" id="darvaxTimeframe" title="Box timeframe">
@@ -270,6 +403,7 @@
           <option value="nifty100" {% if darvax_universe == 'nifty100' %}selected{% endif %}>Nifty 100</option>
           <option value="nifty200" {% if darvax_universe == 'nifty200' %}selected{% endif %}>Nifty 200</option>
           <option value="nifty500" {% if darvax_universe == 'nifty500' %}selected{% endif %}>Nifty 500</option>
+          <option value="fno" {% if darvax_universe == 'fno' %}selected{% endif %}>F&amp;O</option>
         </select>
         <button class="primary" id="darvaxBtn" onclick="runDarvax(true)">Run Scan</button>
       </div>
@@ -283,8 +417,9 @@
   <div class="tab-page" id="page-mytrades">
     <div class="topbar">
       <div>
-        <h1>My Trades</h1>
+        <h1>My Trades <span class="live-pill" id="live-mytrades">LIVE</span></h1>
         <p class="meta" id="mytradesMeta">Trades tracked from any screener — click "☆ Track" on a row to add it here · loading…</p>
+        <p class="help-text">Positions tracked from any screener (☆ Track a row anywhere) with live entry/stop/target and P&amp;L — auto-refreshes every 12s while this tab is open.</p>
       </div>
       <div class="topbar-actions">
         <select class="universe-select" id="mytradesStatus" title="Status filter" onchange="runMyTrades()">
@@ -451,22 +586,143 @@ function updateMarketStatus(marketOpen) {
 
 // ---------------- Tab switching ----------------
 let activeTab = 'sector';
+let indexMoversLoaded = false;
+let optionChainLoaded = false;
 
 function switchTab(tab) {
   activeTab = tab;
   document.querySelectorAll('.nav-item').forEach(el => el.classList.toggle('active', el.dataset.tab === tab));
+  document.querySelectorAll('.mobile-nav-item').forEach(el => el.classList.toggle('active', el.dataset.tab === tab));
   document.querySelectorAll('.tab-page').forEach(el => el.classList.toggle('active', el.id === 'page-' + tab));
   // Scanner tabs only load on explicit Run Scan / Run Backtest clicks —
   // keep the server running via: python .\app.py
   if (tab === 'intraday') { pollIntradayStatus(); startIntradayPolling(); }
   else { stopIntradayPolling(); }
-  if (tab === 'mytrades') runMyTrades();
+  if (tab === 'mytrades') { runMyTrades(); startLivePolling('mytrades'); } else { stopLivePolling('mytrades'); }
+  if (tab === 'sector') { startLivePolling('sector'); } else { stopLivePolling('sector'); }
+  if (tab === 'trending') { startLivePolling('trending'); } else { stopLivePolling('trending'); }
+  if (tab === 'indexmovers' && !indexMoversLoaded) { indexMoversLoaded = true; runIndexMovers(false); }
+  if (tab === 'optionchain' && !optionChainLoaded) { optionChainLoaded = true; runOptionChain(false); }
   if (tab === 'backtest') { runStrategyPerformance(); runIndustryPerformance(); }
+}
+
+// ---------------- Live auto-refresh (Sector Analysis / Trending / My Trades) ----------------
+// Matches TradeBrahma's always-live tables: poll on an interval instead of
+// requiring a manual "Run Scan" click. My Trades polls faster since it's
+// showing live P&L on open positions; Sector/Trending poll slower since
+// they're index/quote-level data that doesn't need per-second freshness.
+const LIVE_POLL_CONFIG = {
+  sector: { fn: () => runSectorScan(true), intervalMs: 25000 },
+  trending: { fn: () => runTrendingScan(true), intervalMs: 30000 },
+  mytrades: { fn: () => runMyTrades(), intervalMs: 12000 },
+};
+const _liveTimers = {};
+
+function startLivePolling(key) {
+  if (_liveTimers[key]) return;
+  const cfg = LIVE_POLL_CONFIG[key];
+  if (!cfg) return;
+  _liveTimers[key] = setInterval(cfg.fn, cfg.intervalMs);
+  const pill = document.getElementById('live-' + key);
+  if (pill) pill.style.display = 'inline-block';
+}
+
+function stopLivePolling(key) {
+  if (_liveTimers[key]) { clearInterval(_liveTimers[key]); delete _liveTimers[key]; }
+  const pill = document.getElementById('live-' + key);
+  if (pill) pill.style.display = 'none';
 }
 
 document.querySelectorAll('.nav-item').forEach(el => {
   el.addEventListener('click', () => switchTab(el.dataset.tab));
 });
+document.querySelectorAll('.mobile-nav-item').forEach(el => {
+  el.addEventListener('click', () => switchTab(el.dataset.tab));
+});
+
+// ---------------- Option Chain (PCR) ----------------
+async function runOptionChain(forceRefresh) {
+  const btn = document.getElementById('optionChainBtn');
+  const wrap = document.getElementById('optionChainWrap');
+  const meta = document.getElementById('optionChainMeta');
+  const underlying = document.getElementById('optionChainUnderlying').value;
+  if (btn) { btn.disabled = true; btn.textContent = 'Scanning…'; }
+  try {
+    const q = forceRefresh ? '&refresh=1' : '';
+    const d = await fetchJson(`/api/option_chain?underlying=${encodeURIComponent(underlying)}${q}`);
+    if (d.error) {
+      wrap.innerHTML = `<div class="empty">${d.error}</div>`;
+      meta.textContent = `${d.underlying} · ${d.error}`;
+      return;
+    }
+    meta.textContent = `${d.underlying} ${d.expiry || ''} · spot ${d.spot ?? 'n/a'} · PCR ${d.pcr ?? 'n/a'} (${d.sentiment}) · ${d.generated_at ? new Date(d.generated_at).toLocaleTimeString() : ''}`;
+    const maxOi = d.max_oi || 1;
+    const rows = (d.strikes || []).map(r => {
+      const cePct = Math.min(100, (r.ce_oi || 0) / maxOi * 100);
+      const pePct = Math.min(100, (r.pe_oi || 0) / maxOi * 100);
+      const isAtm = d.atm_strike != null && r.strike === d.atm_strike;
+      return `<tr class="${isAtm ? 'atm-row' : ''}">
+        <td>${r.ce_oi ?? '—'}<div class="oc-oi-bar ce" style="width:${cePct}%"></div></td>
+        <td>${r.ce_ltp ?? '—'}</td>
+        <td><strong>${r.strike}</strong></td>
+        <td>${r.pe_ltp ?? '—'}</td>
+        <td>${r.pe_oi ?? '—'}<div class="oc-oi-bar pe" style="width:${pePct}%"></div></td>
+      </tr>`;
+    }).join('');
+    wrap.innerHTML = `
+      <div class="oc-summary">
+        <div class="stat"><div class="lbl">Total CE OI</div><div class="val" style="color:#e5484d">${d.total_ce_oi ?? '—'}</div></div>
+        <div class="stat"><div class="lbl">Total PE OI</div><div class="val" style="color:#2fbf71">${d.total_pe_oi ?? '—'}</div></div>
+        <div class="stat"><div class="lbl">PCR</div><div class="val">${d.pcr ?? '—'}</div></div>
+        <div class="stat"><div class="lbl">Sentiment</div><div class="val">${d.sentiment}</div></div>
+      </div>
+      <table class="oc-table">
+        <thead><tr><th>CE OI</th><th>CE LTP</th><th>Strike</th><th>PE LTP</th><th>PE OI</th></tr></thead>
+        <tbody>${rows || '<tr><td colspan="5" class="empty">No strikes</td></tr>'}</tbody>
+      </table>`;
+  } catch (e) {
+    wrap.innerHTML = '<div class="empty">Failed: ' + (e.message || e) + '</div>';
+  }
+  if (btn) { btn.disabled = false; btn.textContent = 'Run Scan'; }
+}
+
+// ---------------- Index Movers ----------------
+async function runIndexMovers(forceRefresh) {
+  const btn = document.getElementById('indexMoversBtn');
+  const wrap = document.getElementById('indexMoversWrap');
+  const meta = document.getElementById('indexMoversMeta');
+  const index = document.getElementById('indexMoversIndex').value;
+  if (btn) { btn.disabled = true; btn.textContent = 'Scanning…'; }
+  try {
+    const q = forceRefresh ? '&refresh=1' : '';
+    const d = await fetchJson(`/api/index_movers?index=${encodeURIComponent(index)}${q}`);
+    if (d.note) {
+      wrap.innerHTML = `<div class="empty">${d.note}</div>`;
+      meta.textContent = `${d.index} · ${d.note}`;
+      return;
+    }
+    meta.textContent = `${d.index} · net contribution ${d.net_contribution_pct > 0 ? '+' : ''}${d.net_contribution_pct}% · ${d.constituents_used}/${d.constituents_total} constituents · ${d.generated_at ? new Date(d.generated_at).toLocaleTimeString() : ''}`;
+    const maxAbs = d.max_abs_contribution_pct || 0.0001;
+    const barRow = (r, cls) => {
+      const widthPct = Math.min(100, Math.abs(r.contribution_pct) / maxAbs * 100);
+      const sign = r.contribution_pct > 0 ? '+' : '';
+      return `<div class="mover-row">
+        <span>${symbolWithChart(r)}</span>
+        <div class="mover-bar-track"><div class="mover-bar-fill ${cls}" style="width:${widthPct}%"></div></div>
+        <span style="text-align:right">${sign}${r.contribution_pct}%</span>
+      </div>`;
+    };
+    const gainersHtml = (d.top_gainers || []).map(r => barRow(r, 'pos')).join('') || '<div class="empty">None</div>';
+    const losersHtml = (d.top_losers || []).map(r => barRow(r, 'neg')).join('') || '<div class="empty">None</div>';
+    wrap.innerHTML = `<div class="movers-columns">
+      <div><h3 style="margin:0 0 8px;font-size:14px;color:#2fbf71">Top contributors (up)</h3>${gainersHtml}</div>
+      <div><h3 style="margin:0 0 8px;font-size:14px;color:#e5484d">Top contributors (down)</h3>${losersHtml}</div>
+    </div>`;
+  } catch (e) {
+    wrap.innerHTML = '<div class="empty">Failed: ' + (e.message || e) + '</div>';
+  }
+  if (btn) { btn.disabled = false; btn.textContent = 'Run Scan'; }
+}
 
 // ---------------- Sector Analysis ----------------
 let sectorData = null;
@@ -1446,6 +1702,9 @@ runSupportBounce(false);
 runSwingTrade(false);
 runDarvax(false);
 runMyTrades();
+// Sector Analysis is the default active tab on load — start its live poll
+// immediately (other tabs' polling starts when you switch to them).
+startLivePolling('sector');
 </script>
 </body>
 </html>

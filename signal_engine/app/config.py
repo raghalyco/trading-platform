@@ -11,7 +11,14 @@ class RiskConfig:
     capital: float = 100000.0          # total trading capital (₹)
     risk_per_trade_pct: float = 1.0    # % of capital risked per trade
     daily_max_loss_pct: float = 3.0    # daily circuit breaker
-    min_rr: float = 1.5                # minimum acceptable reward:risk
+    min_rr: float = 1.5                # minimum acceptable reward:risk (gates TAKE/SKIP)
+    # Stricter floor applied ONLY to the top of the displayed entry band
+    # (Telegram/dashboard "Buy around X-Y" text), not to the TAKE/SKIP
+    # decision. A signal can clear min_rr at the mid premium and still
+    # print a wide band whose upper edge implies a much worse R:R - this
+    # keeps the range you're actually shown safer without changing which
+    # signals fire.
+    min_band_rr: float = 2.5
     max_trades_per_day: int = 8
 
 
