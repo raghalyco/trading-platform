@@ -4,6 +4,7 @@ Tune these without touching logic files.
 """
 
 from dataclasses import dataclass, field
+from datetime import time as _time
 
 
 @dataclass
@@ -105,6 +106,10 @@ class AutoTradeConfig:
     # banked shouldn't be risked chasing a second one).
     max_trades_per_day: int = 2
     stop_after_first_win: bool = True
+    # Safety cutoff (IST): no NEW auto-entries at or after this time. Open
+    # positions are NOT force-closed - they keep riding until T1 or SL
+    # actually hits, however long that takes past this cutoff.
+    no_entry_after: _time = _time(15, 0)
 
 
 @dataclass

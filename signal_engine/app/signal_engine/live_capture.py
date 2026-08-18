@@ -203,6 +203,9 @@ def poll_open_positions(feed, auto_exit: bool = True) -> list[dict]:
             hit = "T1"
         elif sl_prem is not None and ltp <= float(sl_prem):
             hit = "SL"
+        # No time-based force-close: open positions ride until T1 or SL
+        # actually hits, however long that takes. Only NEW entries are cut
+        # off at CONFIG.auto_trade.no_entry_after (see auto_trade.py).
 
         status["hit"] = hit
         if hit and auto_exit:
