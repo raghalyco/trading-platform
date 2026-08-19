@@ -115,6 +115,9 @@ def _timeframe_params(timeframe: str) -> dict:
             "min_score": config.DARVAX_WEEKLY_MIN_SCORE,
             "min_bars": 30,
             "unit": "week",
+            "uptrend_ema_period": config.DARVAX_WEEKLY_UPTREND_EMA_PERIOD,
+            "uptrend_lookback_bars": config.DARVAX_WEEKLY_UPTREND_LOOKBACK_BARS,
+            "max_extension_pct": config.DARVAX_WEEKLY_MAX_EXTENSION_PCT,
         }
     return {
         "confirm_bars": config.DARVAX_CONFIRM_BARS,
@@ -125,6 +128,9 @@ def _timeframe_params(timeframe: str) -> dict:
         "min_score": config.DARVAX_MIN_SCORE,
         "min_bars": 60,
         "unit": "day",
+        "uptrend_ema_period": config.DARVAX_UPTREND_EMA_PERIOD,
+        "uptrend_lookback_bars": config.DARVAX_UPTREND_LOOKBACK_BARS,
+        "max_extension_pct": config.DARVAX_MAX_EXTENSION_PCT,
     }
 
 
@@ -257,6 +263,28 @@ def evaluate_symbol_darvax(symbol: str, daily: pd.DataFrame, timeframe: str = "d
     if box_age_bars > params["max_box_age"]:
         return None
 
+    close = df["close"].astype(float)
+
+    # Rule 1 pre-filter ("Look for a stock in a strong uptrend"): the box's
+    # top must have formed while price was above a RISING EMA, not just
+    # near-ATH (dist_from_ath_pct in the score below is a related but
+    # weaker proxy - a stock recovering from a base could score fine there
+    # without ever having been in a real uptrend). Hard-excludes rather
+    # than soft-scores, matching how the volume gate below already works.
+    top_idx = last["box_top_idx"]
+    ema_period = params["uptrend_ema_period"]
+    lookback_bars = params["uptrend_lookback_bars"]
+    uptrend_ema = ind.ema(close, ema_period)
+    lookback_idx = max(0, top_idx - lookback_bars)
+    if top_idx < ema_period or pd.isna(uptrend_ema.iloc[top_idx]) or pd.isna(uptrend_ema.iloc[lookback_idx]):
+        return None
+    in_uptrend = (
+        close.iloc[top_idx] > uptrend_ema.iloc[top_idx]
+        and uptrend_ema.iloc[top_idx] > uptrend_ema.iloc[lookback_idx]
+    )
+    if not in_uptrend:
+        return None
+
     vol = df["volume"].astype(float)
     vol_sma = vol.rolling(params["volume_sma_bars"]).mean()
     avg_vol = vol_sma.iloc[breakout_idx - 1] if breakout_idx > 0 else None
@@ -266,7 +294,6 @@ def evaluate_symbol_darvax(symbol: str, daily: pd.DataFrame, timeframe: str = "d
     if vol_ratio < params["volume_mult"]:
         return None
 
-    close = df["close"].astype(float)
     today_close = float(close.iloc[-1])
     window_high = float(df["high"].astype(float).iloc[: n].max())
     dist_from_ath_pct = round((window_high - today_close) / window_high * 100.0, 2)
@@ -281,6 +308,15 @@ def evaluate_symbol_darvax(symbol: str, daily: pd.DataFrame, timeframe: str = "d
     # this - always check against whatever's actually been fetched.
     invalidated = today_close < box_bottom
     status = "INVALIDATED" if invalidated else ("TRIGGERED" if n - 1 > breakout_idx else "BREAKOUT")
+
+    # Drop TRIGGERED rows that have already run too far past the breakout
+    # close - not a fresh setup anymore, just a continuation move with the
+    # stop-loss (box bottom) now far below current price. BREAKOUT (fresh,
+    # today) and INVALIDATED (needs to stay visible as an exit signal) are
+    # exempt - this only filters "still technically valid but chasing" rows.
+    extension_from_breakout_pct = round((today_close - entry) / entry * 100.0, 2)
+    if status == "TRIGGERED" and extension_from_breakout_pct > params["max_extension_pct"]:
+        return None
 
     score = (
         min(vol_ratio, 6.0) * 8
@@ -319,6 +355,7 @@ def evaluate_symbol_darvax(symbol: str, daily: pd.DataFrame, timeframe: str = "d
         "current_close": round(today_close, 2),
         "volume_ratio": round(vol_ratio, 2),
         "dist_from_ath_pct": dist_from_ath_pct,
+        "extension_from_breakout_pct": extension_from_breakout_pct,
         "stop_loss_box_bottom": round(box_bottom, 2),
         "stop_loss_darvax_1pct": round(entry * 0.99, 2),
         "ema_sl_tiers": ema_tiers,

@@ -1226,26 +1226,21 @@ function darvaxChartHref(symbol) {
   return '/darvax-chart/' + encodeURIComponent(symbol) + (timeframe === 'weekly' ? '?tf=weekly' : '');
 }
 
-function renderDarvaxTable() {
-  if (!darvaxData || !darvaxData.results || !darvaxData.results.length) {
-    document.getElementById('darvaxTableWrap').innerHTML =
-      '<div class="empty">No stocks currently show a Darvas box breakout right now.</div>';
-    return;
-  }
-  const rows = genericSort(darvaxData.results, darvaxSortKey, darvaxSortDir);
+function darvaxTableHtml(rows, sortable) {
   const cols = [
     ['status', 'Status'], ['box_top', 'Box top'], ['box_bottom', 'Box bottom (SL)'],
     ['box_height_pct', 'Box height %'], ['breakout_date', 'Breakout date'],
     ['breakout_close', 'Breakout close'], ['current_close', 'Price'],
+    ['extension_from_breakout_pct', 'Ext. from breakout'],
     ['volume_ratio', 'Vol vs Avg'], ['dist_from_ath_pct', '% off high'],
     ['box_formed_bars', 'Box days'], ['quality', 'Score'],
   ];
   const numCols = new Set([
     'box_top', 'box_bottom', 'box_height_pct', 'breakout_close', 'current_close',
-    'volume_ratio', 'dist_from_ath_pct', 'box_formed_bars', 'quality',
+    'extension_from_breakout_pct', 'volume_ratio', 'dist_from_ath_pct', 'box_formed_bars', 'quality',
   ]);
   let html = '<table><thead><tr><th></th>' + cols.map(([key, label]) =>
-    `<th class="${numCols.has(key) ? 'num' : ''}" onclick="setDarvaxSort('${key}')" style="cursor:pointer">${label}${sortIndicator(darvaxSortKey, key, darvaxSortDir)}</th>`
+    `<th class="${numCols.has(key) ? 'num' : ''}" ${sortable ? `onclick="setDarvaxSort('${key}')" style="cursor:pointer"` : ''}>${label}${sortable ? sortIndicator(darvaxSortKey, key, darvaxSortDir) : ''}</th>`
   ).join('') + '<th></th></tr></thead><tbody>';
   for (const s of rows) {
     const href = darvaxChartHref(s.symbol);
@@ -1258,6 +1253,7 @@ function renderDarvaxTable() {
       <td>${s.breakout_date || '—'}</td>
       <td class="num">₹${Number(s.breakout_close).toFixed(2)}</td>
       <td class="num pos">₹${Number(s.current_close).toFixed(2)}</td>
+      <td class="num">${s.extension_from_breakout_pct != null ? s.extension_from_breakout_pct + '%' : '—'}</td>
       <td class="num">${s.volume_ratio != null ? s.volume_ratio + 'x' : '—'}</td>
       <td class="num">${s.dist_from_ath_pct != null ? s.dist_from_ath_pct + '%' : '—'}</td>
       <td class="num">${s.box_formed_bars}</td>
@@ -1266,6 +1262,32 @@ function renderDarvaxTable() {
     </tr>`;
   }
   html += '</tbody></table>';
+  return html;
+}
+
+function renderDarvaxTable() {
+  if (!darvaxData || !darvaxData.results || !darvaxData.results.length) {
+    document.getElementById('darvaxTableWrap').innerHTML =
+      '<div class="empty">No stocks currently show a Darvas box breakout right now.</div>';
+    return;
+  }
+  // Split into two clearly separate groups instead of one flat sorted list:
+  // still-following-the-pattern (fresh breakout or active/not-extended) vs
+  // just-broke-the-pattern (closed back below box bottom) - so a recent
+  // breakdown doesn't get buried at the bottom of a quality-sorted table.
+  const active = darvaxData.results.filter(r => r.status !== 'INVALIDATED');
+  const invalidated = darvaxData.results.filter(r => r.status === 'INVALIDATED');
+  const activeSorted = genericSort(active, darvaxSortKey, darvaxSortDir);
+  const invalidatedSorted = [...invalidated].sort((a, b) => (b.quality || 0) - (a.quality || 0));
+
+  let html = `<h3 style="margin:0 0 8px;font-size:14px;color:#2fbf71">✅ Following the pattern (${activeSorted.length})</h3>`;
+  html += activeSorted.length
+    ? darvaxTableHtml(activeSorted, true)
+    : '<div class="empty">Nothing currently active.</div>';
+  html += `<h3 style="margin:20px 0 8px;font-size:14px;color:#e5484d">⚠️ Just broke the pattern (${invalidatedSorted.length})</h3>`;
+  html += invalidatedSorted.length
+    ? darvaxTableHtml(invalidatedSorted, false)
+    : '<div class="empty">None recently invalidated.</div>';
   document.getElementById('darvaxTableWrap').innerHTML = html;
 }
 

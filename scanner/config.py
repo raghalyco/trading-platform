@@ -311,6 +311,18 @@ DARVAX_EMA_TIERS = {                  # p.7 of the deck: SL reference by holding
     "investor": 200,
 }
 DARVAX_MIN_SCORE = 30                 # soft quality-score floor (0-100)
+# Rule 1 pre-filter ("Look for a stock in a strong uptrend" — DarvaX
+# ClassRoom deck): hard-excludes boxes not preceded by a real uptrend,
+# rather than just soft-scoring them lower via dist_from_ath_pct. Requires
+# price above a RISING EMA at the moment the box top formed.
+DARVAX_UPTREND_EMA_PERIOD = 50
+DARVAX_UPTREND_LOOKBACK_BARS = 20     # how far back to confirm the EMA has actually been rising
+# Drop TRIGGERED rows already this far past the breakout close - a stock
+# that ran 20%+ past its box top isn't a fresh setup anymore, it's a
+# continuation move with a stop-loss (box bottom) now far below current
+# price. Same pattern as SWING_TRADE_MAX_EXTENSION_PCT. Does NOT apply to
+# BREAKOUT (today) or INVALIDATED rows - those stay visible regardless.
+DARVAX_MAX_EXTENSION_PCT = 12.0
 
 # Weekly variant — same box state machine, run on weekly-resampled candles.
 # The deck explicitly prefers this over daily ("the higher the timeframe,
@@ -324,6 +336,9 @@ DARVAX_WEEKLY_VOLUME_SMA_WEEKS = 20
 DARVAX_WEEKLY_VOLUME_MULT = 1.5
 DARVAX_WEEKLY_MAX_BOX_AGE_WEEKS = 26       # ~6 months
 DARVAX_WEEKLY_MIN_SCORE = 30
+DARVAX_WEEKLY_UPTREND_EMA_PERIOD = 30      # weekly EMA30 ~ daily EMA150, a similar "real trend" bar
+DARVAX_WEEKLY_UPTREND_LOOKBACK_BARS = 10
+DARVAX_WEEKLY_MAX_EXTENSION_PCT = 12.0
 
 # ---------------------------------------------------------------------------
 # Trade simulation rules
