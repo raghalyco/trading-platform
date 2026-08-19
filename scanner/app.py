@@ -40,6 +40,8 @@ import trade_tracker
 import strategy_performance
 import index_movers
 import options_chain
+import market_hours
+import trending_alerts
 from kite_auth import get_kite_session
 from kite_client import KiteDataClient
 
@@ -321,10 +323,26 @@ def _want_refresh() -> bool:
 
 
 def _is_market_open() -> bool:
-    now = datetime.now()
-    if now.weekday() >= 5:  # Sat/Sun
+    return market_hours.is_market_open()
+
+
+def _should_refresh(want_refresh: bool, has_cache) -> bool:
+    """Gate every data refresh to market hours only - scanner data (and the
+    Telegram alerts driven by it) should only ever be re-fetched from Kite
+    during 9:15-15:30 IST on a trading day, and resume automatically the
+    next session simply because _is_market_open() starts returning True
+    again - no explicit "resume" logic needed.
+
+    The one exception: if there's no cache at all yet (e.g. the app was
+    started before market open), allow exactly one bootstrap fetch so the
+    UI isn't blank - after that, no further refetch until market hours
+    actually begin. Outside market hours, the UI keeps showing whatever
+    was last fetched (Requirement 4: retain last available results)."""
+    if not want_refresh:
         return False
-    return dtime(9, 15) <= now.time() <= dtime(15, 30)
+    if not has_cache:
+        return True
+    return _is_market_open()
 
 
 # Precompute scanner caches so every tab can paint immediately.
@@ -342,6 +360,45 @@ if (
     _refresh_support_bounce_cache()
     _refresh_swing_trade_cache()
     _refresh_darvax_cache()
+
+
+def _trending_alert_loop():
+    """Server-side background loop (independent of anyone having the
+    dashboard open - same reasoning as signal_engine's background loop):
+    every 15 minutes DURING market hours, rechecks Trending Stocks by
+    Sector and sends a Telegram alert only if the trending set actually
+    changed. Sleeps (does nothing) outside market hours and resumes
+    automatically the next session simply because _is_market_open() starts
+    returning True again."""
+    import time as _time
+
+    poll_seconds = 60
+    interval_seconds = config.TRENDING_ALERT_INTERVAL_MINUTES * 60
+    last_check = 0.0
+    print(f"[trending-alerts] background loop started "
+          f"(every {config.TRENDING_ALERT_INTERVAL_MINUTES}m during market hours)", flush=True)
+
+    while True:
+        try:
+            if _is_market_open() and (_time.time() - last_check) >= interval_seconds:
+                last_check = _time.time()
+                print("[trending-alerts] rechecking trending stocks...", flush=True)
+                sectors = live_scan.run_trending_scan(_client, _universe_df)
+                _trending_cache["generated_at"] = datetime.now().isoformat()
+                _trending_cache["sectors"] = sectors
+                sent = trending_alerts.check_and_alert(sectors)
+                print(f"[trending-alerts] {'alert sent' if sent else 'no change, no alert'}", flush=True)
+        except Exception as e:
+            print(f"[trending-alerts] loop error: {e}", flush=True)
+        _time.sleep(poll_seconds)
+
+
+if (
+    _os.environ.get("WERKZEUG_RUN_MAIN") == "true"
+    or _os.environ.get("FLASK_DEBUG", "1") in ("0", "false", "False")
+):
+    import threading as _threading
+    _threading.Thread(target=_trending_alert_loop, daemon=True).start()
 
 
 @app.route("/")
@@ -362,7 +419,7 @@ def index():
 @app.route("/api/scan", methods=["POST", "GET"])
 def api_scan():
     refresh = _want_refresh()
-    if refresh or not _last_scan_cache["generated_at"]:
+    if _should_refresh(refresh, _last_scan_cache["generated_at"]):
         payload = _refresh_scan_cache()
     else:
         payload = dict(_last_scan_cache["payload"] or {})
@@ -376,7 +433,7 @@ def api_scan():
 @app.route("/api/scan_ema10", methods=["POST", "GET"])
 def api_scan_ema10():
     refresh = _want_refresh()
-    if refresh or not _ema10_cache["generated_at"]:
+    if _should_refresh(refresh, _ema10_cache["generated_at"]):
         payload = _refresh_ema10_cache()
     else:
         payload = dict(_ema10_cache["payload"] or {})
@@ -396,7 +453,7 @@ def api_scan_nday():
 
     refresh = _want_refresh()
     cached = _nday_cache.get(lookback) or {}
-    if refresh or not cached.get("generated_at"):
+    if _should_refresh(refresh, cached.get("generated_at")):
         payload = _refresh_nday_cache(lookback)
     else:
         payload = dict(cached.get("payload") or {})
@@ -410,7 +467,7 @@ def api_scan_nday():
 @app.route("/api/scan_sector", methods=["POST", "GET"])
 def api_scan_sector():
     refresh = _want_refresh()
-    if refresh or not _sector_cache["generated_at"]:
+    if _should_refresh(refresh, _sector_cache["generated_at"]):
         _refresh_sector_cache()
     return jsonify({
         "generated_at": _sector_cache["generated_at"],
@@ -429,7 +486,7 @@ def api_index_movers():
         index_label = "NIFTY 50"
     refresh = _want_refresh()
     cached = _index_movers_cache.get(index_label)
-    if refresh or not cached:
+    if _should_refresh(refresh, cached):
         payload = index_movers.compute_index_movers(_client, index_label)
         _index_movers_cache[index_label] = {"generated_at": payload["generated_at"], "payload": payload}
         cached = _index_movers_cache[index_label]
@@ -447,7 +504,7 @@ def api_option_chain():
         underlying = "NIFTY"
     refresh = _want_refresh()
     cached = _option_chain_cache.get(underlying)
-    if refresh or not cached:
+    if _should_refresh(refresh, cached):
         payload = options_chain.compute_option_chain(_client, underlying)
         _option_chain_cache[underlying] = {"generated_at": payload["generated_at"], "payload": payload}
         cached = _option_chain_cache[underlying]
@@ -478,7 +535,7 @@ def api_intraday_status():
 @app.route("/api/scan_trending", methods=["POST", "GET"])
 def api_scan_trending():
     refresh = _want_refresh()
-    if refresh or not _trending_cache["generated_at"]:
+    if _should_refresh(refresh, _trending_cache["generated_at"]):
         _refresh_trending_cache()
     return jsonify({
         "generated_at": _trending_cache["generated_at"],
@@ -540,7 +597,7 @@ def api_stock_for_day():
         mode = _stock_for_day_universe_arg()
         refresh = _want_refresh()
         cached = _stock_for_day_cache.get(mode) or {}
-        if refresh or not cached.get("generated_at"):
+        if _should_refresh(refresh, cached.get("generated_at")):
             print(f"Running Stock for day scan ({mode})...")
             payload = smart_money_pipeline.scan_stock_for_day(
                 _client,
@@ -573,7 +630,7 @@ def api_support_bounce():
         mode = _support_bounce_universe_arg()
         refresh = _want_refresh()
         cached = _support_bounce_cache.get(mode) or {}
-        if refresh or not cached.get("generated_at"):
+        if _should_refresh(refresh, cached.get("generated_at")):
             print(f"Running Support Bounce scan ({mode})...")
             payload = support_bounce.scan_support_bounce(
                 _client, _universe_df, universe_mode=mode
@@ -650,7 +707,7 @@ def api_swing_trade():
         mode = _swing_trade_universe_arg()
         refresh = _want_refresh()
         cached = _swing_trade_cache.get(mode) or {}
-        if refresh or not cached.get("generated_at"):
+        if _should_refresh(refresh, cached.get("generated_at")):
             print(f"Running Swing Trade scan ({mode})...")
             payload = swing_trade.scan_swing_trade(
                 _client, _universe_df, universe_mode=mode
@@ -723,7 +780,7 @@ def api_darvax():
         refresh = _want_refresh()
         cache_key = f"{mode}_{timeframe}"
         cached = _darvax_cache.get(cache_key) or {}
-        if refresh or not cached.get("generated_at"):
+        if _should_refresh(refresh, cached.get("generated_at")):
             print(f"Running DarvaX scan ({mode}, {timeframe})...")
             payload = darvax.scan_darvax(_client, _universe_df, universe_mode=mode, timeframe=timeframe)
             cached = {"generated_at": payload["generated_at"], "payload": payload}
@@ -844,7 +901,8 @@ def api_tracked():
             return jsonify({"error": str(e)}), 500
 
     try:
-        trade_tracker.refresh_prices(_client, _universe_df)
+        if _is_market_open():
+            trade_tracker.refresh_prices(_client, _universe_df)
         status = request.args.get("status")
         trades = trade_tracker.list_tracked(status)
         return jsonify({"trades": trades, "num_trades": len(trades)})

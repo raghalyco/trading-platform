@@ -30,8 +30,10 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
+import alert_dedup
 import config
 import indicators as ind
+import market_hours
 import market_structure
 import smart_money_strategy as sms
 import telegram_alerts
@@ -41,11 +43,6 @@ from charts import tradingview_chart_url
 
 # Per-symbol weekly OHLCV + drawn lines/markers for the Swing Trade chart page.
 _CHART_CACHE: dict[str, dict] = {}
-
-# Dedup so the same breakout doesn't re-alert on every re-scan within this
-# process's lifetime (resets on restart, same as the other scanners'
-# in-memory dedup - e.g. smart_money_pipeline.py's _seen_signal_keys).
-_alerted_breakouts: set[str] = set()
 
 
 def local_chart_url(symbol: str) -> str:
@@ -770,10 +767,10 @@ def scan_swing_trade(
                             )
                         except Exception as e:
                             print(f"  [warn] swing-trade auto-track failed for {symbol}: {e}")
-                    if config.SWING_TRADE_SEND_TELEGRAM:
-                        key = f"{symbol}|{hit.get('breakout_week')}|{hit.get('resistance_type')}"
-                        if key not in _alerted_breakouts:
-                            _alerted_breakouts.add(key)
+                    if config.SWING_TRADE_SEND_TELEGRAM and market_hours.is_market_open():
+                        key = f"swing_trade:{symbol}|{hit.get('breakout_week')}|{hit.get('resistance_type')}"
+                        if not alert_dedup.already_alerted(key):
+                            alert_dedup.mark_alerted(key)
                             try:
                                 telegram_alerts.send_telegram_message(
                                     telegram_alerts.format_swing_trade_alert(hit)

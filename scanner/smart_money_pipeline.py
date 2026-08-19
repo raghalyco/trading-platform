@@ -17,20 +17,22 @@ from typing import Optional
 import pandas as pd
 from tqdm import tqdm
 
+import alert_dedup
 import config
 import live_scan
+import market_hours
 import smart_money_strategy as sms
 import support_bounce as sb
 import telegram_alerts
 import trade_tracker
 
-# Suppress repeat Telegram/API noise for the same symbol+side+bar timestamp
-# within a process lifetime (important for --loop).
-_seen_signal_keys: set[str] = set()
-
 
 def _signal_key(sig: dict) -> str:
-    return f"{sig.get('symbol')}|{sig.get('signal')}|{sig.get('timestamp')}"
+    return f"smart_money:{sig.get('symbol')}|{sig.get('signal')}|{sig.get('timestamp')}"
+
+
+def _stockday_signal_key(sig: dict) -> str:
+    return f"stockday:{sig.get('symbol')}|{sig.get('signal')}|{sig.get('timestamp')}"
 
 
 def select_trending_sectors(kite_client) -> list:
@@ -134,17 +136,18 @@ def run_pipeline(kite_client, universe_df, send_telegram: Optional[bool] = None)
 
     print("Smart Money pipeline: evaluating strategy gates...")
     signals = evaluate_leaders(kite_client, leaders)
-    fresh = []
-    for sig in signals:
-        key = _signal_key(sig)
-        if key in _seen_signal_keys:
-            continue
-        _seen_signal_keys.add(key)
-        fresh.append(sig)
-    print(f"  Signals: {len(signals)} raw, {len(fresh)} new")
+    print(f"  Signals: {len(signals)}")
 
-    if send_telegram:
-        for sig in fresh:
+    # Dedup is for TELEGRAM only, persisted so a restart doesn't re-send an
+    # alert for a signal already alerted before the restart - it must NOT
+    # filter what's returned to the UI/API, or already-alerted-but-still-
+    # active signals would wrongly vanish from the dashboard after a restart.
+    if send_telegram and market_hours.is_market_open():
+        for sig in signals:
+            key = _signal_key(sig)
+            if alert_dedup.already_alerted(key):
+                continue
+            alert_dedup.mark_alerted(key)
             telegram_alerts.send_telegram_message(
                 telegram_alerts.format_smart_money_alert(sig)
             )
@@ -157,8 +160,8 @@ def run_pipeline(kite_client, universe_df, send_telegram: Optional[bool] = None)
             {"symbol": x["symbol"], "sector": x["sector"], "pct_change_1d": x.get("pct_change_1d")}
             for x in leaders
         ],
-        "num_signals": len(fresh),
-        "signals": fresh,
+        "num_signals": len(signals),
+        "signals": signals,
     }
 
 
@@ -288,8 +291,12 @@ def scan_stock_for_day(
         f"Stock for day: {len(buys)} BUY + {len(sells)} SELL of {scanned} scanned ({label})"
     )
 
-    if send_telegram:
+    if send_telegram and market_hours.is_market_open():
         for sig in results:
+            key = _stockday_signal_key(sig)
+            if alert_dedup.already_alerted(key):
+                continue
+            alert_dedup.mark_alerted(key)
             telegram_alerts.send_telegram_message(
                 telegram_alerts.format_smart_money_alert(sig)
             )

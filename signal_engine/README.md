@@ -127,6 +127,12 @@ python scripts/generate_session.py
 uvicorn app.api.main:app --reload --port 8000
 ```
 
+After code is update in Ec2, follow below steps
+cd ~/trading-platform
+git pull origin main
+sudo systemctl restart signal-engine.service
+sudo systemctl status signal-engine.service
+
 The dashboard's top bar shows `Source: LIVE (Kite)` vs `Source: SIMULATOR`
 so you always know which one you're looking at. If `kite_session.json` is
 missing or the token has expired, it silently falls back to the simulator

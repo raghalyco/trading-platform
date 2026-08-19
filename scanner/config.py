@@ -132,6 +132,8 @@ SECTOR_CONSTITUENT_URLS = {
 }
 TRENDING_STOCKS_PER_SECTOR = 6
 TRENDING_LOOKBACK_DAYS = 60  # enough history for 1D % change (+ optional 5D field)
+TRENDING_SEND_TELEGRAM = True
+TRENDING_ALERT_INTERVAL_MINUTES = 15  # server-side background recheck cadence, market hours only
 
 # ---------------------------------------------------------------------------
 # Telegram alerts

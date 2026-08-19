@@ -574,6 +574,7 @@ function symbolWithChart(row, extraHtml = '') {
   return `<a href="${href}" target="_blank" rel="noopener" style="color:var(--accent);font-weight:600">${row.symbol}</a>${extraHtml}`;
 }
 
+let marketWasOpen = null;
 function updateMarketStatus(marketOpen) {
   const pill = document.getElementById('marketStatus');
   const text = document.getElementById('marketStatusText');
@@ -582,6 +583,24 @@ function updateMarketStatus(marketOpen) {
   } else {
     pill.className = 'status-pill closed'; text.textContent = 'Market Closed';
   }
+  // Stop client-side live-polling once the market closes (no point hitting
+  // the server every few seconds when it's just going to hand back the
+  // same cached data) and resume it automatically once it reopens, for
+  // whichever tab is currently active. Server-side already refuses to
+  // refetch from Kite outside market hours regardless, but this saves the
+  // repeated round-trips too.
+  if (marketWasOpen !== null && marketOpen !== marketWasOpen) {
+    if (marketOpen) {
+      if (activeTab === 'sector') startLivePolling('sector');
+      if (activeTab === 'trending') startLivePolling('trending');
+      if (activeTab === 'mytrades') startLivePolling('mytrades');
+    } else {
+      stopLivePolling('sector');
+      stopLivePolling('trending');
+      stopLivePolling('mytrades');
+    }
+  }
+  marketWasOpen = marketOpen;
 }
 
 // ---------------- Tab switching ----------------
@@ -632,6 +651,13 @@ function stopLivePolling(key) {
   const pill = document.getElementById('live-' + key);
   if (pill) pill.style.display = 'none';
 }
+
+// Watchdog: keeps checking market_open even while live-polling is fully
+// stopped (market closed), so reopening next session is actually noticed
+// and polling resumes automatically - without this nothing would ever
+// call the server again to find out the market reopened. Cheap either
+// way: the server only hits Kite when it decides a refetch is due.
+setInterval(() => runSectorScan(false), 120000);
 
 document.querySelectorAll('.nav-item').forEach(el => {
   el.addEventListener('click', () => switchTab(el.dataset.tab));
@@ -742,6 +768,7 @@ async function runSectorScan(refresh = true) {
     const src = sectorData.cached ? 'startup cache' : 'fresh scan';
     document.getElementById('sectorMeta').textContent =
       `${sectorData.num_sectors} sectors · ${src} · ${stamp} · click Run Scan to refresh`;
+    updateMarketStatus(sectorData.market_open);
     renderSectorTable();
   } catch (e) {
     document.getElementById('sectorTableWrap').innerHTML = '<div class="empty">Scan failed: ' + (e.message || e) + '</div>';
