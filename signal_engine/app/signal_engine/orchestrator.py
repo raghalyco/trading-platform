@@ -103,7 +103,12 @@ def generate_signal(feed: DataFeed, symbol: str, mode: str, risk_mgr: RiskManage
         levels = smart_trade_levels(df, side, atr_value, symbol)
 
     # 4. confidence + cautions
-    pct = confidence_pct(total_score, max_score)
+    # Computed on the raw base score alone (base["score"] / max_components),
+    # NOT total_score/max_score (which folds in the 0-2 PA bonus and made
+    # confidence_pct badly diverge from "N of 7 components agree" - e.g. a
+    # clean 5/7 with zero PA bonus read as 56%, not ~71%, silently blocking
+    # otherwise-good signals when compared against a 70-75% gate).
+    pct = confidence_pct(base["score"], max_components)
     label = confidence_label(pct)
     sl_points = abs(levels["entry"] - levels["stop_loss"])
     cautions = build_cautions(df, is_expiry, sl_points, spot)

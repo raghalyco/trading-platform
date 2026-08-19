@@ -97,6 +97,12 @@ body{
 .why-toggle.open .chev{transform:rotate(180deg);}
 .why-panel{display:none; border-top:1px solid var(--line); padding-top:6px;}
 .why-panel.open{display:block;}
+.auto-trade-box{font-size:12.5px; line-height:1.4; padding:8px 10px; border-radius:8px; margin:8px 0; background:var(--panel-2,#1e1e1b); border:1px solid var(--line);}
+.auto-trade-box.will-fire{border-color:#2fbf71; color:#2fbf71;}
+.auto-trade-box.wont-fire{border-color:#f0b429; color:#f0b429;}
+.auto-trade-box.fired{border-color:#2fbf71; background:rgba(47,191,113,0.12); color:#2fbf71; font-weight:600;}
+.auto-trade-box.off{opacity:0.6;}
+.auto-trade-box.error{border-color:#e5484d; color:#e5484d;}
 .why-pa{font-size:11px; color:var(--soft); margin:0 0 6px;}
 .ind-row{display:flex; gap:3px; margin-top:2px;}
 .ind-col{flex:1; text-align:center;}
@@ -211,10 +217,12 @@ table.trades tr.open td:first-child{box-shadow:inset 3px 0 0 var(--blue);}
       <span class="conf-pct" id="confPct">—</span>
     </div>
 
-    <button type="button" class="why-toggle" id="whyToggle" onclick="toggleWhy()">
+    <div class="auto-trade-box" id="autoTradeBox">🤖 <span id="autoTradeMsg">Checking auto-trade status…</span></div>
+
+    <button type="button" class="why-toggle open" id="whyToggle" onclick="toggleWhy()">
       <span class="chev">▾</span> Why this score
     </button>
-    <div class="why-panel" id="whyPanel">
+    <div class="why-panel open" id="whyPanel">
       <p class="why-pa" id="whyPa">—</p>
       <div class="ind-row" id="indRow"></div>
     </div>
@@ -371,6 +379,42 @@ function toggleWhy(){
   const panel = document.getElementById('whyPanel');
   const open = panel.classList.toggle('open');
   btn.classList.toggle('open', open);
+}
+
+function updateAutoTradeBox(d){
+  const box = document.getElementById('autoTradeBox');
+  const msgEl = document.getElementById('autoTradeMsg');
+  box.className = 'auto-trade-box';
+
+  if (!d.auto_trade_enabled) {
+    box.classList.add('off');
+    msgEl.textContent = 'Auto-trade is OFF (CONFIG.auto_trade.enabled = False)';
+    return;
+  }
+
+  const at = d.auto_trade;
+  if (!at) {
+    box.classList.add('off');
+    msgEl.textContent = 'Auto-trade status unavailable this poll';
+    return;
+  }
+  if (at.error) {
+    box.classList.add('error');
+    msgEl.textContent = 'Auto-trade error: ' + at.error;
+    return;
+  }
+  if (at.ok && !at.skipped) {
+    box.classList.add('fired');
+    msgEl.textContent = `Auto-trade EXECUTED this poll — trade #${at.trade_id ?? '?'} (${at.contract || ''}) entered at ₹${at.entry_premium ?? '—'}, target ₹${at.t1_premium ?? '—'}`;
+    return;
+  }
+  if (at.skipped) {
+    box.classList.add('wont-fire');
+    msgEl.textContent = 'Will NOT auto-execute right now — ' + (at.reason || 'gate not met');
+    return;
+  }
+  box.classList.add('will-fire');
+  msgEl.textContent = 'Auto-trade gates currently pass — will execute on the next qualifying poll';
 }
 
 function fmtExpiry(exp){
@@ -547,6 +591,8 @@ function render(d){
   const pat = (pa.pattern || '').toLowerCase().replace(/_/g,' ');
   document.getElementById('whyPa').textContent =
     `${dir ? dir.charAt(0).toUpperCase()+dir.slice(1) : '—'} price action, ${pat || '—'}, ${pa.score ?? '—'} of ${pa.max_score ?? '—'}`;
+
+  updateAutoTradeBox(d);
 
   const indRow = document.getElementById('indRow');
   indRow.innerHTML = '';

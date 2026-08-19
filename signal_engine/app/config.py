@@ -12,7 +12,7 @@ class RiskConfig:
     capital: float = 100000.0          # total trading capital (₹)
     risk_per_trade_pct: float = 1.0    # % of capital risked per trade
     daily_max_loss_pct: float = 3.0    # daily circuit breaker
-    min_rr: float = 1.5                # minimum acceptable reward:risk (gates TAKE/SKIP)
+    min_rr: float = 1.2                # minimum acceptable reward:risk (gates TAKE/SKIP)
     # Stricter floor applied ONLY to the top of the displayed entry band
     # (Telegram/dashboard "Buy around X-Y" text), not to the TAKE/SKIP
     # decision. A signal can clear min_rr at the mid premium and still
@@ -77,7 +77,12 @@ class AutoTradeConfig:
     # option capture (journal + optional Telegram). Does NOT place broker
     # orders unless you wire kite.place_order separately.
     enabled: bool = True
-    min_confidence_pct: int = 75  # kept for the UI label only - see min_base_score for the actual gate
+    # Real gate now (see trade_recommendation.py) - 70 lets a clean 5/7 base
+    # score through (71% on the /7 basis, see orchestrator.py) whether or
+    # not a PA bonus is present; PA is a bonus/confirmation signal, not a
+    # requirement. Paper-trading experiment value, capturing only fixed
+    # +12 premium points per trade - revisit once real results come in.
+    min_confidence_pct: int = 70
     # Gate on the raw 7-point score (EMA/MACD/15M/5M/1M/VOL/RSI) directly,
     # NOT the derived confidence_pct. confidence_pct = score / 9 (7 base +
     # up to 2 price-action bonus), so a clean 5/7 base score only reaches

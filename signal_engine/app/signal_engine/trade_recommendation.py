@@ -221,7 +221,7 @@ def build_trade_recommendation(
         skip_reasons.append("No clear setup (WAIT)")
     if not risk_can_enter:
         skip_reasons.append(risk_reason or "Risk gate blocked")
-    if confidence_pct_val < 55 or "SKIP" in (confidence_label_val or "").upper():
+    if confidence_pct_val < CONFIG.auto_trade.min_confidence_pct or "SKIP" in (confidence_label_val or "").upper():
         skip_reasons.append(f"Confidence too low ({confidence_label_val})")
     if premium_rr and premium_rr < CONFIG.risk.min_rr:
         skip_reasons.append(f"Premium R:R {premium_rr} < min {CONFIG.risk.min_rr}")
