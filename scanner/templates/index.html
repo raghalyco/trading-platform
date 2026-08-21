@@ -182,6 +182,7 @@
     <div class="nav-item cat-overview" data-tab="trending">Trending Stocks by Sector</div>
     <div class="nav-item cat-overview" data-tab="indexmovers">Index Movers</div>
     <div class="nav-item cat-overview" data-tab="optionchain">Option Chain (PCR)</div>
+    <div class="nav-item cat-overview" data-tab="custombaskets">Sector Breakouts (Custom)</div>
   </div>
 
   <div class="nav-group">
@@ -207,6 +208,7 @@
   <div class="mobile-nav-item" data-tab="trending" title="Trending Stocks by Sector">🔥</div>
   <div class="mobile-nav-item" data-tab="indexmovers" title="Index Movers">📈</div>
   <div class="mobile-nav-item" data-tab="optionchain" title="Option Chain (PCR)">🧮</div>
+  <div class="mobile-nav-item" data-tab="custombaskets" title="Sector Breakouts (Custom)">🧩</div>
   <div class="mobile-nav-item" data-tab="stockday" title="Stock for day">☀️</div>
   <div class="mobile-nav-item" data-tab="support" title="Previous Support Bounce">🛟</div>
   <div class="mobile-nav-item" data-tab="swing" title="Swing Trade (Weekly)">📅</div>
@@ -287,6 +289,21 @@
     </div>
     <div class="card">
       <div id="optionChainWrap"><div class="loading">Loading option chain…</div></div>
+    </div>
+  </div>
+
+  <!-- ============ TAB: Sector Breakouts (Custom Baskets) ============ -->
+  <div class="tab-page" id="page-custombaskets">
+    <div class="topbar">
+      <div>
+        <h1>Sector Breakouts (Custom) <span class="live-pill" id="live-custombaskets">LIVE</span></h1>
+        <p class="meta" id="customBasketsMeta">Hand-curated micro-theme baskets, checked for a fresh N-day breakout · loading…</p>
+        <p class="help-text">Custom stock baskets (e.g. "AI IT Services", "Plastic Pipes & Packaging") with no official NSE index — a synthetic basket value (equal-weighted average of member closes) is tracked and flagged when it breaks to a fresh 20-day high, same logic as Sector Analysis but for themes with no real tradeable index. Add/edit baskets in config.CUSTOM_SECTOR_BASKETS. Rechecked in the background every 15 min during market hours, with a Telegram alert on a fresh breakout.</p>
+      </div>
+      <button class="primary" id="customBasketsBtn" onclick="runCustomBaskets(true)">Run Scan</button>
+    </div>
+    <div class="card">
+      <div id="customBasketsWrap"><div class="loading">Loading custom baskets…</div></div>
     </div>
   </div>
 
@@ -607,6 +624,7 @@ function updateMarketStatus(marketOpen) {
 let activeTab = 'sector';
 let indexMoversLoaded = false;
 let optionChainLoaded = false;
+let customBasketsLoaded = false;
 
 function switchTab(tab) {
   activeTab = tab;
@@ -622,6 +640,7 @@ function switchTab(tab) {
   if (tab === 'trending') { startLivePolling('trending'); } else { stopLivePolling('trending'); }
   if (tab === 'indexmovers' && !indexMoversLoaded) { indexMoversLoaded = true; runIndexMovers(false); }
   if (tab === 'optionchain' && !optionChainLoaded) { optionChainLoaded = true; runOptionChain(false); }
+  if (tab === 'custombaskets' && !customBasketsLoaded) { customBasketsLoaded = true; runCustomBaskets(false); }
   if (tab === 'backtest') { runStrategyPerformance(); runIndustryPerformance(); }
 }
 
@@ -706,6 +725,40 @@ async function runOptionChain(forceRefresh) {
         <thead><tr><th>CE OI</th><th>CE LTP</th><th>Strike</th><th>PE LTP</th><th>PE OI</th></tr></thead>
         <tbody>${rows || '<tr><td colspan="5" class="empty">No strikes</td></tr>'}</tbody>
       </table>`;
+  } catch (e) {
+    wrap.innerHTML = '<div class="empty">Failed: ' + (e.message || e) + '</div>';
+  }
+  if (btn) { btn.disabled = false; btn.textContent = 'Run Scan'; }
+}
+
+// ---------------- Sector Breakouts (Custom Baskets) ----------------
+async function runCustomBaskets(forceRefresh) {
+  const btn = document.getElementById('customBasketsBtn');
+  const wrap = document.getElementById('customBasketsWrap');
+  const meta = document.getElementById('customBasketsMeta');
+  if (btn) { btn.disabled = true; btn.textContent = forceRefresh ? 'Scanning…' : 'Loading…'; }
+  try {
+    const url = forceRefresh ? '/api/custom_baskets?refresh=1' : '/api/custom_baskets';
+    const d = await fetchJson(url);
+    meta.textContent = `${d.num_baskets} basket(s) · ${d.cached ? 'cached' : 'fresh scan'} · ${d.generated_at ? new Date(d.generated_at).toLocaleTimeString() : ''}`;
+    updateMarketStatus(d.market_open);
+    const rows = (d.results || []).map(r => {
+      const sign = (r.pct_change_1d ?? 0) >= 0 ? '+' : '';
+      const cls = (r.pct_change_1d ?? 0) >= 0 ? 'pos' : 'neg';
+      const breakoutBadge = r.breakout_20d
+        ? '<span class="pill" style="background:#0f2e24;color:#22c58a">🎯 BREAKOUT</span>'
+        : '<span class="pill" style="background:var(--surface-2);color:var(--text-muted)">—</span>';
+      return `<tr>
+        <td><strong>${r.name}</strong></td>
+        <td>${r.type || 'Custom'}</td>
+        <td class="num">₹${r.value}</td>
+        <td class="num ${cls}">${sign}${r.pct_change_1d}%</td>
+        <td>${breakoutBadge}</td>
+        <td style="font-size:12px;color:var(--text-muted)">${(r.symbols || []).join(', ')}</td>
+      </tr>`;
+    }).join('');
+    wrap.innerHTML = `<table><thead><tr><th>Theme</th><th>Type</th><th class="num">Value</th><th class="num">1D %</th><th>Status</th><th>Stocks</th></tr></thead>
+      <tbody>${rows || '<tr><td colspan="6" class="empty">No baskets configured — add some in config.CUSTOM_SECTOR_BASKETS</td></tr>'}</tbody></table>`;
   } catch (e) {
     wrap.innerHTML = '<div class="empty">Failed: ' + (e.message || e) + '</div>';
   }
@@ -831,6 +884,7 @@ async function runTrendingScan(refresh = true) {
     const src = data.cached ? 'startup cache' : 'fresh scan';
     document.getElementById('trendingMeta').textContent =
       `${data.num_sectors} sector(s) · ranked by today (1D) · ${src} · ${stamp} · click Run Scan to refresh`;
+    updateMarketStatus(data.market_open);
     renderTrendingCards(data.sectors);
   } catch (e) {
     document.getElementById('trendingCardsWrap').innerHTML = '<div class="empty">Scan failed: ' + (e.message || e) + '</div>';
@@ -1357,6 +1411,7 @@ async function runMyTrades() {
     myTradesData = await fetchJson(url);
     document.getElementById('mytradesMeta').textContent =
       `${myTradesData.num_trades} tracked trade(s) · live P&L refreshed on load`;
+    updateMarketStatus(myTradesData.market_open);
     renderMyTradesTable();
   } catch (e) {
     document.getElementById('mytradesTableWrap').innerHTML = '<div class="empty">Failed to load: ' + (e.message || e) + '</div>';

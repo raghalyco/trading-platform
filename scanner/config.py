@@ -136,6 +136,54 @@ TRENDING_SEND_TELEGRAM = True
 TRENDING_ALERT_INTERVAL_MINUTES = 15  # server-side background recheck cadence, market hours only
 
 # ---------------------------------------------------------------------------
+# Custom Sector/Theme Baskets — hand-curated micro-theme stock groups, for
+# themes with no official tradeable NSE index (e.g. "AI IT Services",
+# "Plastic Pipes & Packaging"). Unlike SECTOR_INDEX_NAMES above (real Kite
+# index instruments), these have no official instrument to price - a
+# synthetic basket value is computed instead (see custom_baskets.py: equal-
+# weighted average of member stocks' closes - an approximation, not an
+# official index methodology). Seed set seen from a reference Telegram bot;
+# add/edit freely - "type" is just a display label (Custom/Thematic/Sectorial).
+CUSTOM_SECTOR_BASKETS = {
+    "Digital / AI IT Services": {
+        "type": "Custom",
+        "symbols": ["NETWEB", "AFFLE", "HAPPSTMNDS", "LTTS", "ZENSARTECH", "PERSISTENT"],
+    },
+    "Digital / AI IT Services - Extended": {
+        "type": "Custom",
+        "symbols": ["NETWEB", "AFFLE", "HAPPSTMNDS", "LTTS", "RATEGAIN", "ZENSARTECH"],
+    },
+    "Financial Market Infrastructure": {
+        "type": "Custom",
+        "symbols": ["KFINTECH", "IEX", "CAMS", "MCX", "BSE", "CDSL"],
+    },
+    "Plastic Pipes & Packaging": {
+        "type": "Custom",
+        "symbols": ["NILKAMAL", "TIMETECHNO", "APOLLOPIPE", "VIPIND", "PRINCEPIPE", "ASTRAL"],
+    },
+    # Official NSE index - pulled dynamically from sector_constituents.py's
+    # real, current NIFTY MEDIA list rather than a hand-copied static list
+    # (more accurate, self-updating). Already tracked in Sector Analysis
+    # too via the real tradeable index instrument; this entry is just to
+    # surface it in this same unified "custom baskets" view.
+    "Nifty Media": {
+        "type": "Sectorial",
+        "source_sector": "NIFTY MEDIA",
+    },
+    # NOT verified against the original reference bot's exact list (its
+    # member stocks were cut off in the screenshot) - this is my own
+    # best-effort construction of real NSE-listed data-center/digital-
+    # infrastructure names. Edit freely if you have the actual list.
+    "Data Center & Digital Infra": {
+        "type": "Custom",
+        "symbols": ["TATACOMM", "STLTECH", "HFCL", "RAILTEL", "NETWEB", "SIFY"],
+    },
+}
+CUSTOM_BASKET_EMA_PERIOD = 20
+CUSTOM_BASKET_BREAKOUT_LOOKBACK = 20  # days, for basket breakout flag - same as SECTOR_BREAKOUT_LOOKBACK
+CUSTOM_BASKET_SEND_TELEGRAM = True
+
+# ---------------------------------------------------------------------------
 # Telegram alerts
 # ---------------------------------------------------------------------------
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")

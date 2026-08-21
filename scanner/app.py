@@ -40,8 +40,11 @@ import trade_tracker
 import strategy_performance
 import index_movers
 import options_chain
+import alert_dedup
+import custom_baskets
 import market_hours
 import trending_alerts
+import telegram_alerts
 from kite_auth import get_kite_session
 from kite_client import KiteDataClient
 
@@ -113,6 +116,7 @@ _sector_cache = {"generated_at": None, "results": []}
 _trending_cache = {"generated_at": None, "sectors": {}}
 _index_movers_cache: dict = {}  # index_label -> {generated_at, payload}
 _option_chain_cache: dict = {}  # underlying -> {generated_at, payload}
+_custom_basket_cache = {"generated_at": None, "results": []}
 # Per-universe cache: mode -> {generated_at, payload}
 _stock_for_day_cache: dict = {}
 _support_bounce_cache: dict = {}
@@ -186,6 +190,43 @@ def _refresh_sector_cache():
     _sector_cache["results"] = results
     print(f"Sector Analysis ready: {len(results)} sector(s).")
     return _sector_cache
+
+
+def _format_custom_basket_alert(row: dict) -> str:
+    sign = "+" if (row.get("pct_change_1d") or 0) >= 0 else ""
+    return "\n".join([
+        "🧩 SECTOR BREAKOUT FOUND",
+        f"{row['name']} ({row.get('type', 'Custom')})",
+        f"₹{row['value']} ({sign}{row.get('pct_change_1d')}%)",
+        f"Stocks: {', '.join(row.get('symbols') or [])}",
+    ])
+
+
+def _refresh_custom_basket_cache():
+    print("Warming Custom Sector Baskets cache...")
+    results = custom_baskets.scan_custom_baskets(_client)
+    _custom_basket_cache["generated_at"] = datetime.now().isoformat()
+    _custom_basket_cache["results"] = results
+    print(f"Custom Sector Baskets ready: {len(results)} basket(s).")
+
+    # Alert only on a FRESH breakout (dedup keyed by basket+date, persisted
+    # across restarts - same alert_dedup pattern as swing_trade/smart_money)
+    # so a basket that's still above its breakout level doesn't re-alert on
+    # every 15-30s poll, only the day it actually breaks out.
+    if config.CUSTOM_BASKET_SEND_TELEGRAM and market_hours.is_market_open():
+        for row in results:
+            if not row.get("breakout_20d"):
+                continue
+            key = f"custom_basket:{row['name']}|{row.get('date')}"
+            if alert_dedup.already_alerted(key):
+                continue
+            alert_dedup.mark_alerted(key)
+            try:
+                telegram_alerts.send_telegram_message(_format_custom_basket_alert(row))
+            except Exception as e:
+                print(f"  [warn] custom basket telegram alert failed for {row['name']}: {e}")
+
+    return _custom_basket_cache
 
 
 def _refresh_trending_cache():
@@ -360,36 +401,40 @@ if (
     _refresh_support_bounce_cache()
     _refresh_swing_trade_cache()
     _refresh_darvax_cache()
+    _refresh_custom_basket_cache()
 
 
 def _trending_alert_loop():
     """Server-side background loop (independent of anyone having the
     dashboard open - same reasoning as signal_engine's background loop):
     every 15 minutes DURING market hours, rechecks Trending Stocks by
-    Sector and sends a Telegram alert only if the trending set actually
-    changed. Sleeps (does nothing) outside market hours and resumes
-    automatically the next session simply because _is_market_open() starts
-    returning True again."""
+    Sector (alerts only if the trending set changed) and Custom Sector
+    Baskets (alerts only on a fresh breakout). Sleeps (does nothing)
+    outside market hours and resumes automatically the next session
+    simply because _is_market_open() starts returning True again."""
     import time as _time
 
     poll_seconds = 60
     interval_seconds = config.TRENDING_ALERT_INTERVAL_MINUTES * 60
     last_check = 0.0
-    print(f"[trending-alerts] background loop started "
+    print(f"[background-alerts] loop started "
           f"(every {config.TRENDING_ALERT_INTERVAL_MINUTES}m during market hours)", flush=True)
 
     while True:
         try:
             if _is_market_open() and (_time.time() - last_check) >= interval_seconds:
                 last_check = _time.time()
-                print("[trending-alerts] rechecking trending stocks...", flush=True)
+                print("[background-alerts] rechecking trending stocks...", flush=True)
                 sectors = live_scan.run_trending_scan(_client, _universe_df)
                 _trending_cache["generated_at"] = datetime.now().isoformat()
                 _trending_cache["sectors"] = sectors
                 sent = trending_alerts.check_and_alert(sectors)
-                print(f"[trending-alerts] {'alert sent' if sent else 'no change, no alert'}", flush=True)
+                print(f"[background-alerts] trending: {'alert sent' if sent else 'no change'}", flush=True)
+
+                print("[background-alerts] rechecking custom sector baskets...", flush=True)
+                _refresh_custom_basket_cache()
         except Exception as e:
-            print(f"[trending-alerts] loop error: {e}", flush=True)
+            print(f"[background-alerts] loop error: {e}", flush=True)
         _time.sleep(poll_seconds)
 
 
@@ -474,6 +519,20 @@ def api_scan_sector():
         "market_open": _is_market_open(),
         "num_sectors": len(_sector_cache["results"]),
         "results": _sector_cache["results"],
+        "cached": not refresh,
+    })
+
+
+@app.route("/api/custom_baskets", methods=["POST", "GET"])
+def api_custom_baskets():
+    refresh = _want_refresh()
+    if _should_refresh(refresh, _custom_basket_cache["generated_at"]):
+        _refresh_custom_basket_cache()
+    return jsonify({
+        "generated_at": _custom_basket_cache["generated_at"],
+        "market_open": _is_market_open(),
+        "num_baskets": len(_custom_basket_cache["results"]),
+        "results": _custom_basket_cache["results"],
         "cached": not refresh,
     })
 
@@ -905,7 +964,7 @@ def api_tracked():
             trade_tracker.refresh_prices(_client, _universe_df)
         status = request.args.get("status")
         trades = trade_tracker.list_tracked(status)
-        return jsonify({"trades": trades, "num_trades": len(trades)})
+        return jsonify({"trades": trades, "num_trades": len(trades), "market_open": _is_market_open()})
     except Exception as e:
         print(f"[tracked] failed: {e}")
         import traceback
