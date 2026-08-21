@@ -335,6 +335,16 @@ def _generate_trades(df, symbol: str, mode: str,
             i += step_bars
             continue
 
+        # Time-of-day cutoffs: mirror the live gate (auto_trade.py) - no
+        # entries before no_entry_before or at/after no_entry_after, so the
+        # backtest doesn't credit itself with entries the live bot would
+        # now refuse (e.g. the volatile opening window before 10am, or the
+        # last-30-minutes window after 3pm).
+        entry_time = pd.Timestamp(sig["entry_ts"]).time()
+        if entry_time < CONFIG.auto_trade.no_entry_before or entry_time >= CONFIG.auto_trade.no_entry_after:
+            i += step_bars
+            continue
+
         future = df.iloc[i + 1 :].reset_index(drop=True)
         future_vix = vix_series.iloc[i + 1 :].reset_index(drop=True) if vix_series is not None else None
         levels = sig["levels"]

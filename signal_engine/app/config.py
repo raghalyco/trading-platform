@@ -115,6 +115,9 @@ class AutoTradeConfig:
     # positions are NOT force-closed - they keep riding until T1 or SL
     # actually hits, however long that takes past this cutoff.
     no_entry_after: _time = _time(15, 0)
+    # Skip the volatile/choppy opening window - no NEW auto-entries before
+    # this time. Existing open positions are unaffected either way.
+    no_entry_before: _time = _time(10, 0)
 
 
 @dataclass

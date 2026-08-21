@@ -33,6 +33,8 @@ def should_auto_enter(signal: dict, otm_steps: int) -> tuple[bool, str]:
         return False, f"session={session}"
 
     now_ist = datetime.now(IST).time()
+    if now_ist < cfg.no_entry_before:
+        return False, f"no new entries before {cfg.no_entry_before.strftime('%H:%M')} IST"
     if now_ist >= cfg.no_entry_after:
         return False, f"no new entries at/after {cfg.no_entry_after.strftime('%H:%M')} IST"
 

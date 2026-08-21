@@ -434,9 +434,9 @@
   <div class="tab-page" id="page-mytrades">
     <div class="topbar">
       <div>
-        <h1>My Trades <span class="live-pill" id="live-mytrades">LIVE</span></h1>
+        <h1>My Trades</h1>
         <p class="meta" id="mytradesMeta">Trades tracked from any screener — click "☆ Track" on a row to add it here · loading…</p>
-        <p class="help-text">Positions tracked from any screener (☆ Track a row anywhere) with live entry/stop/target and P&amp;L — auto-refreshes every 12s while this tab is open.</p>
+        <p class="help-text">A static price-tracking log — the moment you click "☆ Track," the entry price and a live quote are captured once and P&amp;L is calculated from that snapshot. Nothing refreshes after that (not on page reload, not in the background) — P&amp;L stays frozen at whatever it was the moment you tracked it.</p>
       </div>
       <div class="topbar-actions">
         <select class="universe-select" id="mytradesStatus" title="Status filter" onchange="runMyTrades()">
@@ -610,11 +610,9 @@ function updateMarketStatus(marketOpen) {
     if (marketOpen) {
       if (activeTab === 'sector') startLivePolling('sector');
       if (activeTab === 'trending') startLivePolling('trending');
-      if (activeTab === 'mytrades') startLivePolling('mytrades');
     } else {
       stopLivePolling('sector');
       stopLivePolling('trending');
-      stopLivePolling('mytrades');
     }
   }
   marketWasOpen = marketOpen;
@@ -635,7 +633,10 @@ function switchTab(tab) {
   // keep the server running via: python .\app.py
   if (tab === 'intraday') { pollIntradayStatus(); startIntradayPolling(); }
   else { stopIntradayPolling(); }
-  if (tab === 'mytrades') { runMyTrades(); startLivePolling('mytrades'); } else { stopLivePolling('mytrades'); }
+  // My Trades is a manual price-tracking log, not a live feed - loads once
+  // on tab open, no auto-refresh (see api_tracked in app.py, which no
+  // longer live-refreshes prices either).
+  if (tab === 'mytrades') runMyTrades();
   if (tab === 'sector') { startLivePolling('sector'); } else { stopLivePolling('sector'); }
   if (tab === 'trending') { startLivePolling('trending'); } else { stopLivePolling('trending'); }
   if (tab === 'indexmovers' && !indexMoversLoaded) { indexMoversLoaded = true; runIndexMovers(false); }
@@ -652,7 +653,6 @@ function switchTab(tab) {
 const LIVE_POLL_CONFIG = {
   sector: { fn: () => runSectorScan(true), intervalMs: 25000 },
   trending: { fn: () => runTrendingScan(true), intervalMs: 30000 },
-  mytrades: { fn: () => runMyTrades(), intervalMs: 12000 },
 };
 const _liveTimers = {};
 
@@ -1410,7 +1410,7 @@ async function runMyTrades() {
     if (status) url += '?status=' + encodeURIComponent(status);
     myTradesData = await fetchJson(url);
     document.getElementById('mytradesMeta').textContent =
-      `${myTradesData.num_trades} tracked trade(s) · live P&L refreshed on load`;
+      `${myTradesData.num_trades} tracked trade(s) · price recorded at time of tracking`;
     updateMarketStatus(myTradesData.market_open);
     renderMyTradesTable();
   } catch (e) {
@@ -1449,7 +1449,8 @@ function renderMyTradesTable() {
   let html = `<table><thead><tr>
     <th>Symbol</th><th>Source</th><th>Origin</th><th>Status</th>
     <th class="num">Entry</th><th class="num">Stop</th><th class="num">Target</th>
-    <th class="num">Current</th><th class="num">P&amp;L %</th><th>Tracked at</th><th>Chart</th><th></th>
+    <th class="num">Price (at tracking)</th><th class="num">P&amp;L % (frozen)</th>
+    <th>Tracked at</th><th>Chart</th><th></th>
   </tr></thead><tbody>`;
   for (const t of trades) {
     const pnlCls = (t.pnl_pct ?? 0) >= 0 ? 'pos' : 'neg';

@@ -161,6 +161,51 @@ def refresh_prices(kite_client, universe_df) -> list[dict]:
     return updated
 
 
+def snapshot_price_once(kite_client, universe_df, trade_id: int) -> Optional[dict]:
+    """Fetch the live LTP ONE time (right after tracking) and freeze it as
+    current_price/pnl_pct - My Trades is a static log, not a live feed, so
+    this is the only time a trade's price is ever fetched after entry. Lets
+    P&L reflect "how has it moved since I tracked it" without any ongoing
+    polling (see refresh_prices, which is no longer called on every page
+    load/poll - only this one-shot snapshot at track time)."""
+    conn = _connect()
+    row = conn.execute("SELECT * FROM tracked_trades WHERE id = ?", (trade_id,)).fetchone()
+    if row is None:
+        conn.close()
+        return None
+    trade = _row_to_dict(conn, row)
+
+    symbol = trade["symbol"]
+    match = universe_df[universe_df["tradingsymbol"] == symbol]
+    if match.empty:
+        conn.close()
+        return trade
+
+    try:
+        quotes = kite_client.kite.quote([f"NSE:{symbol}"])
+        q = quotes.get(f"NSE:{symbol}")
+        ltp = float(q["last_price"]) if q else None
+    except Exception as e:
+        print(f"  [warn] trade_tracker snapshot_price_once failed for {symbol}: {e}")
+        ltp = None
+
+    if ltp is None:
+        conn.close()
+        return trade
+
+    entry = float(trade["entry_price"])
+    pnl_pct = round((ltp - entry) / entry * 100.0, 2) if entry else 0.0
+    conn.execute(
+        "UPDATE tracked_trades SET current_price=?, pnl_pct=? WHERE id=?",
+        (ltp, pnl_pct, trade_id),
+    )
+    conn.commit()
+    conn.close()
+    trade["current_price"] = ltp
+    trade["pnl_pct"] = pnl_pct
+    return trade
+
+
 def close_trade(trade_id: int, exit_price: Optional[float] = None) -> Optional[dict]:
     conn = _connect()
     row = conn.execute("SELECT * FROM tracked_trades WHERE id = ?", (trade_id,)).fetchone()

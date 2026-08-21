@@ -955,13 +955,18 @@ def api_tracked():
                 chart_url=body.get("chart_url"),
                 notes=body.get("notes"),
             )
+            # One-shot live-price snapshot at track time only - freezes
+            # current_price/pnl_pct as of right now; never refreshed again
+            # (My Trades is a static log, not a live feed - see api_tracked).
+            trade_tracker.snapshot_price_once(_client, _universe_df, trade_id)
             return jsonify({"ok": True, "trade_id": trade_id})
         except Exception as e:
             return jsonify({"error": str(e)}), 500
 
     try:
-        if _is_market_open():
-            trade_tracker.refresh_prices(_client, _universe_df)
+        # My Trades is a manual price-tracking log (entry price at the
+        # moment you clicked "Track"), not a live feed - no LTP/P&L
+        # refresh here at all, on request or otherwise.
         status = request.args.get("status")
         trades = trade_tracker.list_tracked(status)
         return jsonify({"trades": trades, "num_trades": len(trades), "market_open": _is_market_open()})
