@@ -499,7 +499,7 @@
       <div>
         <h1>Episodic Pivot (Delayed EP)</h1>
         <p class="meta" id="episodicPivotMeta">Neglected stock + surprise-reaction day + volume shock, then a tight-range pullback candle · loading…</p>
-        <p class="help-text">Ankur Patel's method: a stock that did nothing (no big move) suddenly reacts to a surprise — results, a new order, a policy change, promoter change — with a big one-day move (5.5%+) on unusually heavy volume ("day-0", &gt;=300% of its own 50-day average). Because Indian circuit filters make the reaction candle itself unsafe to buy, this waits for a tight range-contraction pullback candle afterward: its high is the entry, its low the stop. WATCHING = pullback candle formed (or day-0 just happened), not broken out yet. TRIGGERED = it broke out recently, not gapped-and-chased. "Target" is a technical projection (day-0's own candle range, projected from entry) and gates what shows here (stop capped at 4%, R:R floor 1.5) — "1:3 (book 50%)" is Ankur's own stated convention (book half there, trail the rest below the 20 EMA) shown for reference, it doesn't gate the list.</p>
+        <p class="help-text">Ankur Patel's method: a stock that did nothing (no big move) suddenly reacts to a surprise — results, a new order, a policy change, promoter change — with a big one-day move (5.5%+) on unusually heavy volume ("day-0", &gt;=300% of its own 50-day average). Because Indian circuit filters make the reaction candle itself unsafe to buy, this waits for a tight range-contraction pullback candle afterward: its high is the entry, its low the stop. WATCHING = pullback candle formed (or day-0 just happened), not broken out yet. TRIGGERED = it broke out recently, not gapped-and-chased. "Target" is a technical projection (day-0's own candle range, projected from entry) and gates what shows here (stop capped at 4%, R:R floor 1.5) — "1:3 (book 50%)" is Ankur's own stated convention (book half there, trail the rest below the 20 EMA) shown for reference, it doesn't gate the list. The Signals column layers in Oliver Kell's EMA-stack/price-cycle overlay (2026-08-22): TREND = 10/20 EMA/50 SMA stacked at the pivot (soft scoring bonus, doesn't reject setups), ADD = a later base after this day-0 already broke out once (position-building, not a fresh idea), BLOW-OFF = extended far from the 10 EMA on a volume spike (his cue to take profit/reduce — informational only, doesn't drive an auto-exit).</p>
       </div>
       <div class="topbar-actions">
         <select class="universe-select" id="episodicPivotUniverse" title="Index universe">
@@ -523,7 +523,7 @@
       <div>
         <h1>Episodic Pivot — Backtest (6M) <span id="epBtCached" style="display:none; font-size:11px; font-weight:700; letter-spacing:0.04em; color:var(--text-muted); background:var(--surface-2); border-radius:4px; padding:2px 7px; margin-left:8px; vertical-align:middle;">CACHED</span></h1>
         <p class="meta" id="epBtMeta">Historical trade log using the exact live scanner rules, applied to every past day-0 → pullback → breakout sequence · loading…</p>
-        <p class="help-text">Every trade here used the SAME entry/stop/target gates as the live "Episodic Pivot" tab (config.py's EP_* thresholds) — the only difference is this looks at every qualifying historical setup in the last 6 months, not just each stock's most recent one. Two exit variants are shown because daily bars can't tell us the true intraday sequence on the entry day itself: CONSERVATIVE checks the stop before the target starting the entry day (worst case); OPTIMISTIC skips the stop check on the entry day only (upper bound). Total Return / Max Drawdown assume a fixed 1% of capital risked per trade, summed without compounding — this run had up to <span id="epBtConcurrent">-</span> trades open at once, so a compounding curve would overstate returns. This is a signal-log backtest: no slippage, brokerage, or circuit-filter unfillability is modeled, and it should be read alongside the full written report, not as a standalone verdict.</p>
+        <p class="help-text">Every trade here used the SAME entry/stop/target gates as the live "Episodic Pivot" tab (config.py's EP_* thresholds) — the only difference is this looks at every qualifying historical setup in the last 6 months, not just each stock's most recent one. Three exit variants are shown: CONSERVATIVE checks the stop before the target starting the entry day (worst case, daily bars can't tell us the true intraday sequence); OPTIMISTIC skips the stop check on the entry day only (upper bound); KELL TREND-EXIT (2026-08-22 addition) drops the fixed flagpole target entirely and only exits on the hard stop or a close below both the 10 and 20 EMA — Oliver Kell's "hold the trend, don't take a fixed profit" rule, tested empirically here before it's ever allowed to drive the live scanner's actual exits. Total Return / Max Drawdown assume a fixed 1% of capital risked per trade, summed without compounding — this run had up to <span id="epBtConcurrent">-</span> trades open at once, so a compounding curve would overstate returns. This is a signal-log backtest: no slippage, brokerage, or circuit-filter unfillability is modeled, and it should be read alongside the full written report, not as a standalone verdict.</p>
       </div>
       <button class="primary" id="epBtBtn" onclick="runEpBacktest(true)">Run Backtest</button>
     </div>
@@ -1473,6 +1473,23 @@ function episodicPivotStatusPill(row) {
   return '<span class="pill" style="background:var(--surface-2);color:var(--text-muted)">WATCHING</span>';
 }
 
+// Oliver Kell overlay badges (soft-scoring/informational only — see
+// config.py's EP_KELL_* comments): trend-stack context, ADD-on pyramiding,
+// and blow-off profit-taking cue.
+function kellSignalBadges(row) {
+  let html = '';
+  if (row.kell_trend_stacked) {
+    html += '<span class="pill" style="background:var(--green-bg);color:var(--green);margin-right:4px;" title="10 EMA > 20 EMA > 50 SMA at the pivot candle">TREND</span>';
+  }
+  if (row.is_add_on) {
+    html += '<span class="pill" style="background:#3a2e14;color:#f0b429;margin-right:4px;" title="A later base since this day-0 already broke out once — Kell-style position-building add, not a brand-new idea">ADD</span>';
+  }
+  if (row.is_blowoff) {
+    html += '<span class="pill" style="background:var(--red-bg);color:var(--red);" title="Extended far from the 10 EMA on a volume spike — Kell’s cue to take profit / reduce, not a buy or sell signal by itself">BLOW-OFF</span>';
+  }
+  return html || '<span style="color:var(--text-muted)">—</span>';
+}
+
 function renderEpisodicPivotTable() {
   if (!episodicPivotData || !episodicPivotData.results || !episodicPivotData.results.length) {
     document.getElementById('episodicPivotTableWrap').innerHTML =
@@ -1481,7 +1498,7 @@ function renderEpisodicPivotTable() {
   }
   const rows = genericSort(episodicPivotData.results, episodicPivotSortKey, episodicPivotSortDir);
   const cols = [
-    ['status', 'Status'], ['day0_date', 'Day-0'], ['day0_move_pct', 'Day-0 move'],
+    ['status', 'Status'], ['kell_signals', 'Signals'], ['day0_date', 'Day-0'], ['day0_move_pct', 'Day-0 move'],
     ['day0_rvol_pct', 'R_Vol'], ['pivot_date', 'Pullback candle'],
     ['current_price', 'Price'], ['score', 'Score'],
     ['risk_reward', 'R:R'], ['stop_loss', 'SL'], ['stop_pct', 'Risk %'], ['target', 'Target'],
@@ -1499,6 +1516,7 @@ function renderEpisodicPivotTable() {
     html += `<tr>
       <td><a href="${href}" target="_blank" rel="noopener" style="color:var(--accent);font-weight:600">${s.symbol}</a></td>
       <td>${episodicPivotStatusPill(s)}</td>
+      <td>${kellSignalBadges(s)}</td>
       <td style="color:var(--text-secondary)">${s.day0_date || '—'}</td>
       <td class="num pos">${s.day0_move_pct != null ? fmtPct(s.day0_move_pct) : '—'}</td>
       <td class="num">${s.day0_rvol_pct != null ? s.day0_rvol_pct + '%' : '—'}</td>
@@ -2092,20 +2110,26 @@ function setEpBtSort(key) {
   renderEpBacktest();
 }
 
+const EP_BT_VARIANTS = {
+  pnl_pct:      { key: 'conservative', label: 'Conservative (base case)',  exitDate: 'exit_date',      exitPrice: 'exit_price',      exitReason: 'exit_reason' },
+  pnl_pct_alt:  { key: 'optimistic',   label: 'Optimistic (upper bound)',  exitDate: 'exit_date_alt',  exitPrice: 'exit_price_alt',  exitReason: 'exit_reason_alt' },
+  pnl_pct_kell: { key: 'kell_trend',   label: 'Kell Trend-Exit (no fixed target)', exitDate: 'exit_date_kell', exitPrice: 'exit_price_kell', exitReason: 'exit_reason_kell' },
+};
+
 function renderEpBacktest() {
   const data = epBtData;
   if (!data || !data.trades) {
     document.getElementById('epBtWrap').innerHTML = '<div class="empty">No trades found in the 6-month backtest window.</div>';
     return;
   }
-  const v = data[epBtVariant === 'pnl_pct' ? 'conservative' : 'optimistic'];
+  const meta = EP_BT_VARIANTS[epBtVariant];
+  const v = data[meta.key];
   const pnlKey = epBtVariant;
-  const label = epBtVariant === 'pnl_pct' ? 'Conservative' : 'Optimistic';
+  const label = meta.label;
 
-  let html = `<div style="margin-bottom:0.9rem;">
-    <button class="${epBtVariant === 'pnl_pct' ? 'primary' : ''}" onclick="setEpBtVariant('pnl_pct')" style="margin-right:8px;">Conservative (base case)</button>
-    <button class="${epBtVariant === 'pnl_pct_alt' ? 'primary' : ''}" onclick="setEpBtVariant('pnl_pct_alt')">Optimistic (upper bound)</button>
-  </div>`;
+  let html = '<div style="margin-bottom:0.9rem;">' + Object.entries(EP_BT_VARIANTS).map(([key, m]) =>
+    `<button class="${epBtVariant === key ? 'primary' : ''}" onclick="setEpBtVariant('${key}')" style="margin-right:8px;">${m.label}</button>`
+  ).join('') + '</div>';
 
   const kpis = [
     ['Trades', v.trades, null],
@@ -2160,29 +2184,30 @@ function renderEpBacktest() {
     ['pivot_date', 'Pivot'], ['breakout_date', 'Entry date'], ['entry_fill', 'Entry ₹'],
     ['stop_loss', 'Stop ₹'], ['stop_pct', 'Risk %'], ['target', 'Target ₹'],
     ['risk_reward', 'Planned R:R'], ['score', 'Score'],
-    [epBtVariant === 'pnl_pct' ? 'exit_date' : 'exit_date_alt', 'Exit date'],
-    [epBtVariant === 'pnl_pct' ? 'exit_price' : 'exit_price_alt', 'Exit ₹'],
-    [epBtVariant === 'pnl_pct' ? 'exit_reason' : 'exit_reason_alt', 'Outcome'],
+    [meta.exitDate, 'Exit date'],
+    [meta.exitPrice, 'Exit ₹'],
+    [meta.exitReason, 'Outcome'],
     [pnlKey, 'P&L %'],
   ];
-  const numCols = new Set(['day0_move_pct', 'entry_fill', 'stop_loss', 'stop_pct', 'target', 'risk_reward', 'score', 'exit_price', 'exit_price_alt', 'pnl_pct', 'pnl_pct_alt']);
+  const numCols = new Set(['day0_move_pct', 'entry_fill', 'stop_loss', 'stop_pct', 'target', 'risk_reward', 'score',
+    'exit_price', 'exit_price_alt', 'exit_price_kell', 'pnl_pct', 'pnl_pct_alt', 'pnl_pct_kell']);
   const rows = genericSort(data.trades_detail || [], epBtSortKey, epBtSortDir);
 
   html += '<table><thead><tr>' + cols.map(([key, lbl]) =>
     `<th class="${numCols.has(key) ? 'num' : ''}" onclick="setEpBtSort('${key}')" style="cursor:pointer">${lbl}${sortIndicator(epBtSortKey, key, epBtSortDir)}</th>`
   ).join('') + '</tr></thead><tbody>';
 
-  const reasonCls = { TARGET: 'target_hit', STOP: 'stop_loss', TIME_STOP: 'time_stop', END_OF_DATA: 'time_stop' };
+  const reasonCls = { TARGET: 'target_hit', STOP: 'stop_loss', TIME_STOP: 'time_stop', END_OF_DATA: 'time_stop', EMA_BREAK: 'time_stop' };
   for (const t of rows) {
     const pnl = t[pnlKey];
-    const outcome = t[epBtVariant === 'pnl_pct' ? 'exit_reason' : 'exit_reason_alt'];
+    const outcome = t[meta.exitReason];
     html += `<tr>
       <td>${symbolWithChart(t)}</td><td>${t.day0_date}</td><td class="num">${fmtPct(t.day0_move_pct)}</td>
       <td>${t.pivot_date}</td><td>${t.breakout_date}</td><td class="num">${t.entry_fill.toFixed(2)}</td>
       <td class="num">${t.stop_loss.toFixed(2)}</td><td class="num">${t.stop_pct}%</td><td class="num">${t.target.toFixed(2)}</td>
       <td class="num">${t.risk_reward}</td><td class="num">${t.score}</td>
-      <td>${t[epBtVariant === 'pnl_pct' ? 'exit_date' : 'exit_date_alt']}</td>
-      <td class="num">${(t[epBtVariant === 'pnl_pct' ? 'exit_price' : 'exit_price_alt']).toFixed(2)}</td>
+      <td>${t[meta.exitDate]}</td>
+      <td class="num">${Number(t[meta.exitPrice]).toFixed(2)}</td>
       <td><span class="pill ${reasonCls[outcome] || ''}">${outcome}</span></td>
       <td class="num ${pnl >= 0 ? 'pos' : 'neg'}">${fmtPct(pnl)}</td>
     </tr>`;

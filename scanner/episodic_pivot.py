@@ -104,22 +104,57 @@ def _augment(daily: pd.DataFrame) -> pd.DataFrame:
     df["tight_flag"] = (tight_range_pct <= config.EP_TIGHT_RANGE_MAX_PCT) | \
                         (rng <= config.EP_TIGHT_RANGE_MAX_ATR_MULT * atr14)
 
+    # ---- Oliver Kell overlay: EMA/SMA stack, pullback-to-EMA20 proximity,
+    # trend-break, and blow-off signals. Informational/soft-scoring only —
+    # see config.py's EP_KELL_* block for why none of this hard-gates.
+    df["ema20"] = ind.ema(close, config.EP_KELL_EMA_SLOW)
+    df["sma_trend"] = ind.sma(close, config.EP_KELL_TREND_SMA)
+    df["dist_from_ema20_pct"] = (close - df["ema20"]) / df["ema20"] * 100
+    # Trend-stack: 10 EMA > 20 EMA > 50 SMA, Kell's "above key MAs, stacked".
+    df["kell_trend_stacked"] = (df["ema10"] > df["ema20"]) & (df["ema20"] > df["sma_trend"])
+    df["kell_above_ema20"] = close > df["ema20"]
+    # Trend-break exit condition (backtest 3rd variant only, see ep_backtest.py):
+    # close falls below BOTH 10 and 20 EMA.
+    df["kell_ema_break"] = (close < df["ema10"]) & (close < df["ema20"])
+    # Blow-off: extended far from the 10 EMA on a volume spike vs the same
+    # 50-day average RVOL already computes.
+    df["kell_blowoff_flag"] = (
+        (df["dist_from_ema10_pct"] >= config.EP_KELL_BLOWOFF_MIN_DIST_FROM_EMA10_PCT)
+        & (df["rvol_pct"] >= config.EP_KELL_BLOWOFF_MIN_VOLUME_MULT * 100)
+        & (close > df["ema10"])  # extended ABOVE, not a breakdown
+    )
+
     return df
 
 
-def _score(day0_move_pct, rvol_pct, close_strength, tight_range_pct=None, dist_from_ema10_pct=None) -> float:
+def _score(day0_move_pct, rvol_pct, close_strength, tight_range_pct=None, dist_from_ema10_pct=None,
+           kell_trend_stacked=None, kell_above_ema20=None, pivot_dist_from_ema20_pct=None) -> float:
     """0-100 composite quality score. Volume shock and day-0 move size carry
     the most weight (that's the entire premise of an EP); tightness and
     proximity to EMA10 only apply once a pullback candle actually exists —
-    a fresh day-0 with no pivot candle yet scores lower until one forms."""
+    a fresh day-0 with no pivot candle yet scores lower until one forms.
+
+    kell_trend_stacked/kell_above_ema20/pivot_dist_from_ema20_pct: Oliver
+    Kell's EMA-stack trend-context overlay (config.EP_KELL_*) — a SOFT
+    scoring bonus by design (2026-08-22 decision), never a hard gate. The
+    five original weights below are scaled by 0.82 so the new Kell terms
+    (up to 18 pts) still sum to a 0-100 total, not 118."""
     s = 0.0
-    s += 35 * min(1.0, (rvol_pct or 0) / 1500.0)
-    s += 20 * min(1.0, (day0_move_pct or 0) / 20.0)
-    s += 15 * max(0.0, min(1.0, close_strength or 0))
+    s += 28.7 * min(1.0, (rvol_pct or 0) / 1500.0)
+    s += 16.4 * min(1.0, (day0_move_pct or 0) / 20.0)
+    s += 12.3 * max(0.0, min(1.0, close_strength or 0))
+    if kell_trend_stacked:
+        s += config.EP_KELL_TREND_SCORE_WEIGHT
+    elif kell_above_ema20:
+        s += config.EP_KELL_TREND_SCORE_PARTIAL
+    if pivot_dist_from_ema20_pct is not None:
+        s += config.EP_KELL_PULLBACK_EMA20_SCORE_WEIGHT * max(
+            0.0, 1 - min(1.0, pivot_dist_from_ema20_pct / config.EP_KELL_PULLBACK_EMA20_MAX_PCT)
+        )
     if tight_range_pct is not None:
-        s += 15 * max(0.0, 1 - min(1.0, tight_range_pct / config.EP_TIGHT_RANGE_MAX_PCT))
+        s += 12.3 * max(0.0, 1 - min(1.0, tight_range_pct / config.EP_TIGHT_RANGE_MAX_PCT))
     if dist_from_ema10_pct is not None:
-        s += 15 * max(0.0, 1 - min(1.0, dist_from_ema10_pct / config.EP_TIGHT_RANGE_NEAR_EMA_PCT))
+        s += 12.3 * max(0.0, 1 - min(1.0, dist_from_ema10_pct / config.EP_TIGHT_RANGE_NEAR_EMA_PCT))
     return round(min(100.0, s), 1)
 
 
@@ -141,9 +176,15 @@ def evaluate_symbol_episodic_pivot(symbol: str, daily: pd.DataFrame) -> "dict | 
     day0_range = float(day0["high"] - day0["low"])
 
     # Walk forward from day-0, tracking the latest un-broken tight candle
-    # and the most recent valid (non-chased) breakout of one.
+    # and the most recent valid (non-chased) breakout of one. breakout_count
+    # counts every valid breakout since day-0 (not just the last) — used
+    # for the Kell "ADD-on" pyramiding badge below: a pivot that isn't the
+    # FIRST one since day-0 means an earlier base already broke out, so a
+    # trader following Kell's position-building step would treat this as
+    # adding to an existing idea rather than a brand-new one.
     active_tight = None
     last_breakout = None
+    breakout_count = 0
     for j in range(i0 + 1, n):
         row = df.iloc[j]
         if bool(row["tight_flag"]):
@@ -158,6 +199,7 @@ def evaluate_symbol_episodic_pivot(symbol: str, daily: pd.DataFrame) -> "dict | 
                 gap_pct = (float(row["open"]) - active_tight["high"]) / active_tight["high"] * 100
                 if gap_pct <= config.EP_MAX_CHASE_GAP_PCT:
                     last_breakout = {**active_tight, "breakout_index": j, "breakout_date": row["date"]}
+                    breakout_count += 1
                 active_tight = None
             elif float(row["close"]) < active_tight["low"]:
                 active_tight = None  # base failed before it ever broke out
@@ -179,8 +221,10 @@ def evaluate_symbol_episodic_pivot(symbol: str, daily: pd.DataFrame) -> "dict | 
     entry = stop = target = rr = stop_pct = target_1_3 = None
     pivot_date = None
     tight_range_pct = dist_from_ema10_pct = None
+    pivot_idx = None
     status = "WATCHING"
     days_since_trigger = None
+    is_add_on = False
 
     if last_breakout is not None and (last_idx - last_breakout["breakout_index"]) <= config.EP_TRIGGER_MAX_STALE_DAYS:
         status = "TRIGGERED"
@@ -190,6 +234,8 @@ def evaluate_symbol_episodic_pivot(symbol: str, daily: pd.DataFrame) -> "dict | 
         tight_range_pct = last_breakout["tight_range_pct"]
         dist_from_ema10_pct = last_breakout["dist_from_ema10_pct"]
         days_since_trigger = last_idx - last_breakout["breakout_index"]
+        pivot_idx = last_breakout["index"]
+        is_add_on = config.EP_KELL_ADD_ON_ENABLED and breakout_count > 1
     elif active_tight is not None:
         status = "WATCHING"
         pivot_date = str(pd.to_datetime(active_tight["date"]).date())
@@ -197,6 +243,25 @@ def evaluate_symbol_episodic_pivot(symbol: str, daily: pd.DataFrame) -> "dict | 
         stop = active_tight["low"]
         tight_range_pct = active_tight["tight_range_pct"]
         dist_from_ema10_pct = active_tight["dist_from_ema10_pct"]
+        pivot_idx = active_tight["index"]
+        is_add_on = config.EP_KELL_ADD_ON_ENABLED and breakout_count > 0
+
+    # Oliver Kell overlay at the pivot candle: EMA-stack trend context
+    # (soft scoring bonus, see config.EP_KELL_*) and pullback proximity to
+    # the 20 EMA specifically.
+    kell_trend_stacked = kell_above_ema20 = None
+    pivot_dist_from_ema20_pct = None
+    if pivot_idx is not None:
+        pivot_row = df.iloc[pivot_idx]
+        kell_trend_stacked = bool(pivot_row["kell_trend_stacked"]) if pd.notna(pivot_row["kell_trend_stacked"]) else None
+        kell_above_ema20 = bool(pivot_row["kell_above_ema20"]) if pd.notna(pivot_row["kell_above_ema20"]) else None
+        if pd.notna(pivot_row["dist_from_ema20_pct"]):
+            pivot_dist_from_ema20_pct = round(float(abs(pivot_row["dist_from_ema20_pct"])), 2)
+
+    # Blow-off flag reflects TODAY (the last row) — informational only,
+    # never gates: Kell's cue to take profit/reduce, not enter or exit.
+    last_row = df.iloc[last_idx]
+    is_blowoff = bool(last_row["kell_blowoff_flag"]) if pd.notna(last_row["kell_blowoff_flag"]) else False
 
     if entry is not None and stop is not None:
         risk = entry - stop
@@ -218,6 +283,8 @@ def evaluate_symbol_episodic_pivot(symbol: str, daily: pd.DataFrame) -> "dict | 
     score = _score(
         day0["day0_move_pct"], day0["rvol_pct"], day0["close_strength"],
         tight_range_pct=tight_range_pct, dist_from_ema10_pct=dist_from_ema10_pct,
+        kell_trend_stacked=kell_trend_stacked, kell_above_ema20=kell_above_ema20,
+        pivot_dist_from_ema20_pct=pivot_dist_from_ema20_pct,
     )
     if score < config.EP_MIN_SCORE:
         return None
@@ -235,6 +302,9 @@ def evaluate_symbol_episodic_pivot(symbol: str, daily: pd.DataFrame) -> "dict | 
         "stop_pct": stop_pct,
         "days_since_trigger": days_since_trigger,
         "score": score,
+        "kell_trend_stacked": kell_trend_stacked,
+        "is_blowoff": is_blowoff,
+        "is_add_on": is_add_on,
     }
 
 

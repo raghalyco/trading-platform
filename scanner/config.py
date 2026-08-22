@@ -457,6 +457,45 @@ EP_TRIGGER_MAX_STALE_DAYS = 3          # a breakout older than this drops back o
 EP_SEND_TELEGRAM = True
 
 # ---------------------------------------------------------------------------
+# Oliver Kell overlay — his "price cycle" (blow-off / correction / base /
+# breakout / trend) and EMA-stack trend-context system, layered on top of
+# the EP core above rather than replacing it. Per the 2026-08-22 decision:
+# the trend-context check is a SOFT scoring bonus (does not reject setups —
+# EP's existing hard gates are stop_pct/RR/score only), and the EMA-break
+# exit is evaluated as a 3rd backtest variant (see ep_backtest.py) before
+# it's ever allowed to drive the live scanner's actual exit logic.
+# ---------------------------------------------------------------------------
+EP_KELL_EMA_FAST = 10                  # same as episodic_pivot.py's existing ema10 (momentum line)
+EP_KELL_EMA_SLOW = 20                  # "base/pullback support" line
+EP_KELL_TREND_SMA = 50                 # mid-trend validation line (Kell's "50 SMA")
+
+# Trend-stack scoring bonus — awarded when 10 EMA > 20 EMA > 50 SMA at the
+# pivot candle (Kell: "above key MAs" / "10/20 EMA stacked = trend intact").
+# Soft signal only: a setup failing this still appears, just scores lower.
+EP_KELL_TREND_SCORE_WEIGHT = 10.0      # out of the composite 0-100 score
+EP_KELL_TREND_SCORE_PARTIAL = 4.0      # awarded for "above 20 EMA" alone if not fully stacked
+
+# Pullback-to-EMA proximity — separate from the existing generic
+# EP_TIGHT_RANGE_NEAR_EMA_PCT bonus (which measures distance from EMA10
+# only); this additionally rewards the pivot candle's LOW sitting near/
+# above the 20 EMA specifically (Kell: "pullback entry zone = 10/20 EMA,
+# must hold as support").
+EP_KELL_PULLBACK_EMA20_MAX_PCT = 4.0   # pivot low within this % of EMA20 => full bonus
+EP_KELL_PULLBACK_EMA20_SCORE_WEIGHT = 8.0
+
+# Blow-off flag — informational only (like target_1_3), never gates.
+# Kell: "far from 10 EMA + volume spike => take profit / reduce."
+EP_KELL_BLOWOFF_MIN_DIST_FROM_EMA10_PCT = 12.0
+EP_KELL_BLOWOFF_MIN_VOLUME_MULT = 2.0  # x the 50-day average (reuses EP_RVOL_AVG_PERIOD)
+
+# ADD-on (pyramiding) badge — informational only. A later tight-candle
+# breakout for a symbol that already has an earlier, still-valid (price
+# still above its stop) EP trigger is flagged ADD rather than a fresh,
+# unrelated signal — same idea as Kell's "new base forms -> add on
+# breakout" position-building step.
+EP_KELL_ADD_ON_ENABLED = True
+
+# ---------------------------------------------------------------------------
 # Trade simulation rules
 # ---------------------------------------------------------------------------
 ENTRY_ON = "next_open"          # enter at next trading day's open after signal

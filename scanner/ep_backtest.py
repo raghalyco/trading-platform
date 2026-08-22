@@ -21,6 +21,13 @@ Simulation assumptions (disclosed, not hidden):
     the strategy).
   - Time stop: MAX_HOLDING_DAYS (config.py, 60 sessions) — exit at that
     day's close if neither stop nor target has been hit by then.
+  - THREE exit variants are simulated per trade (see simulate_exit /
+    simulate_exit_trend_break): CONSERVATIVE (base case, above),
+    OPTIMISTIC (stop not checked on the entry day — upper bound), and
+    KELL_TREND (2026-08-22 Oliver Kell overlay: no fixed target at all,
+    exits only on the hard stop or a close below both the 10 and 20 EMA —
+    simulated here BEFORE this exit style is ever allowed to drive the
+    live scanner's actual exits).
   - Universe / window: EP_UNIVERSE (nifty500) symbols, trade ENTRY dates
     restricted to the trailing BACKTEST_MONTHS (6) window
     (config.refresh_backtest_window()), using each symbol's full cached
@@ -161,6 +168,46 @@ def simulate_exit(df: pd.DataFrame, breakout_index: int, entry_fill: float, stop
     }
 
 
+def simulate_exit_trend_break(df: pd.DataFrame, breakout_index: int, stop: float):
+    """3rd exit variant — Oliver Kell's trend-following exit (2026-08-22
+    decision: simulate this as a backtest variant BEFORE it's ever allowed
+    to drive the live scanner). Unlike the Conservative/Optimistic variants,
+    this one has NO fixed price target at all — that's the point of Kell's
+    system: let a confirmed trend run (hold/add) rather than take a
+    flagpole-projected profit, and only exit on a genuine trend break
+    (close below BOTH the 10 and 20 EMA — episodic_pivot.py's
+    kell_ema_break column) or the same hard stop-loss everyone gets. Stop
+    is checked same-day as entry (conservative convention, for apples-to-
+    apples comparability with the base-case variant)."""
+    n = len(df)
+    for k, j in enumerate(range(breakout_index, min(n, breakout_index + config.MAX_HOLDING_DAYS + 1))):
+        row = df.iloc[j]
+        low = float(row["low"])
+        if low <= stop:
+            return {
+                "exit_date": str(pd.to_datetime(row["date"]).date()),
+                "exit_price": round(stop, 2),
+                "exit_reason": "STOP",
+                "holding_days": k,
+            }
+        if k > 0 and bool(row.get("kell_ema_break", False)):
+            return {
+                "exit_date": str(pd.to_datetime(row["date"]).date()),
+                "exit_price": round(float(row["close"]), 2),
+                "exit_reason": "EMA_BREAK",
+                "holding_days": k,
+            }
+    last_j = min(n - 1, breakout_index + config.MAX_HOLDING_DAYS)
+    row = df.iloc[last_j]
+    reason = "TIME_STOP" if (last_j - breakout_index) >= config.MAX_HOLDING_DAYS else "END_OF_DATA"
+    return {
+        "exit_date": str(pd.to_datetime(row["date"]).date()),
+        "exit_price": round(float(row["close"]), 2),
+        "exit_reason": reason,
+        "holding_days": last_j - breakout_index,
+    }
+
+
 RESULTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), config.RESULTS_DIR)
 TRADES_CSV_PATH = os.path.join(RESULTS_DIR, "ep_backtest_trades.csv")
 
@@ -211,11 +258,16 @@ def run_backtest(verbose: bool = True, save_csv: bool = True) -> pd.DataFrame:
             exit_info_alt = simulate_exit(df_aug, t["breakout_index"], t["entry_fill"], t["stop_loss"], t["target"],
                                            stop_check_on_entry_day=False)
             pnl_pct_alt = round((exit_info_alt["exit_price"] - t["entry_fill"]) / t["entry_fill"] * 100, 2)
+            exit_info_kell = simulate_exit_trend_break(df_aug, t["breakout_index"], t["stop_loss"])
+            pnl_pct_kell = round((exit_info_kell["exit_price"] - t["entry_fill"]) / t["entry_fill"] * 100, 2)
             trade = {
                 **t, **exit_info, "pnl_pct": pnl_pct,
                 "exit_date_alt": exit_info_alt["exit_date"], "exit_price_alt": exit_info_alt["exit_price"],
                 "exit_reason_alt": exit_info_alt["exit_reason"], "holding_days_alt": exit_info_alt["holding_days"],
                 "pnl_pct_alt": pnl_pct_alt,
+                "exit_date_kell": exit_info_kell["exit_date"], "exit_price_kell": exit_info_kell["exit_price"],
+                "exit_reason_kell": exit_info_kell["exit_reason"], "holding_days_kell": exit_info_kell["holding_days"],
+                "pnl_pct_kell": pnl_pct_kell,
             }
             all_trades.append(trade)
 

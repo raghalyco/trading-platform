@@ -5,11 +5,15 @@ avg win/loss, realized R:R, total return, max drawdown, monthly breakdown,
 best/worst stocks — computed fresh from whatever trade log is on disk (or
 a freshly-run one), never hardcoded.
 
-Two variants are always reported side by side (see ep_backtest.py's
+Three variants are always reported side by side (see ep_backtest.py's
 docstring for why): CONSERVATIVE (stop checked same-day as entry — base
 case) and OPTIMISTIC (stop not checked on entry day — upper bound), since
 daily OHLC bars can't tell us the true intrabar sequence on the entry day
-itself and that single assumption swings the result substantially.
+itself and that single assumption swings the result substantially; and
+KELL_TREND (2026-08-22 Oliver Kell overlay — no fixed target, exits only
+on the stop or a close below both the 10 and 20 EMA), simulated here as a
+genuine empirical comparison before this exit style is ever allowed to
+drive the live scanner's actual exits.
 
 Position sizing note: "Total Return" / "Max Drawdown" use a fixed 1% of
 initial capital risked per trade, summed WITHOUT compounding — up to ~69
@@ -47,7 +51,7 @@ def _variant_stats(df: pd.DataFrame, pnl_col: str) -> dict:
     else:
         max_dd_pts = 0.0
 
-    exit_col = "exit_reason" if pnl_col == "pnl_pct" else "exit_reason_alt"
+    exit_col = {"pnl_pct": "exit_reason", "pnl_pct_alt": "exit_reason_alt", "pnl_pct_kell": "exit_reason_kell"}.get(pnl_col, "exit_reason")
     exit_counts = df[exit_col].value_counts().to_dict() if n else {}
 
     return {
@@ -72,7 +76,7 @@ def compute_summary(df: pd.DataFrame) -> dict:
         return {
             "trades": 0, "unique_symbols": 0, "entry_date_min": None, "entry_date_max": None,
             "conservative": _variant_stats(df if df is not None else pd.DataFrame(columns=["pnl_pct", "stop_pct", "risk_reward", "exit_reason"]), "pnl_pct"),
-            "optimistic": None, "monthly": [], "best_stocks": [], "worst_stocks": [], "max_concurrent_positions": 0,
+            "optimistic": None, "kell_trend": None, "monthly": [], "best_stocks": [], "worst_stocks": [], "max_concurrent_positions": 0,
         }
 
     df = df.copy()
@@ -82,6 +86,7 @@ def compute_summary(df: pd.DataFrame) -> dict:
 
     conservative = _variant_stats(df, "pnl_pct")
     optimistic = _variant_stats(df, "pnl_pct_alt") if "pnl_pct_alt" in df.columns else None
+    kell_trend = _variant_stats(df, "pnl_pct_kell") if "pnl_pct_kell" in df.columns else None
 
     # Max concurrent open positions (sizing/diversification context).
     events = []
@@ -122,6 +127,7 @@ def compute_summary(df: pd.DataFrame) -> dict:
         "max_concurrent_positions": max_c,
         "conservative": conservative,
         "optimistic": optimistic,
+        "kell_trend": kell_trend,
         "monthly": monthly,
         "best_stocks": best_stocks,
         "worst_stocks": worst_stocks,
