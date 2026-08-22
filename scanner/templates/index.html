@@ -247,6 +247,7 @@
   <div class="nav-group">
     <div class="nav-group-label">Episodic Pivot</div>
     <div class="nav-item cat-strategy" data-tab="episodicpivot">Episodic Pivot (Delayed EP)</div>
+    <div class="nav-item cat-strategy sub" data-tab="epbacktest">↳ Backtest (6M)</div>
   </div>
 
   <div class="nav-group">
@@ -274,6 +275,7 @@
   <div class="mobile-nav-item" data-tab="darvax" title="DarvaX (Darvas Box)">📦</div>
   <div class="mobile-nav-item" data-tab="intraday" title="Intraday Monitor">⏱️</div>
   <div class="mobile-nav-item" data-tab="episodicpivot" title="Episodic Pivot (Delayed EP)">🚀</div>
+  <div class="mobile-nav-item" data-tab="epbacktest" title="Episodic Pivot Backtest (6M)">📉</div>
   <div class="mobile-nav-item" data-tab="sourcecode" title="Source Code">🗂️</div>
   <div class="mobile-nav-item" data-tab="mytrades" title="My Trades">⭐</div>
   <div class="mobile-nav-item" data-tab="backtest" title="Performance / Backtest">🧾</div>
@@ -512,6 +514,21 @@
     </div>
     <div class="card">
       <div id="episodicPivotTableWrap"><div class="loading">Loading startup cache…</div></div>
+    </div>
+  </div>
+
+  <!-- ============ TAB: Episodic Pivot Backtest (6M) ============ -->
+  <div class="tab-page" id="page-epbacktest">
+    <div class="topbar">
+      <div>
+        <h1>Episodic Pivot — Backtest (6M) <span id="epBtCached" style="display:none; font-size:11px; font-weight:700; letter-spacing:0.04em; color:var(--text-muted); background:var(--surface-2); border-radius:4px; padding:2px 7px; margin-left:8px; vertical-align:middle;">CACHED</span></h1>
+        <p class="meta" id="epBtMeta">Historical trade log using the exact live scanner rules, applied to every past day-0 → pullback → breakout sequence · loading…</p>
+        <p class="help-text">Every trade here used the SAME entry/stop/target gates as the live "Episodic Pivot" tab (config.py's EP_* thresholds) — the only difference is this looks at every qualifying historical setup in the last 6 months, not just each stock's most recent one. Two exit variants are shown because daily bars can't tell us the true intraday sequence on the entry day itself: CONSERVATIVE checks the stop before the target starting the entry day (worst case); OPTIMISTIC skips the stop check on the entry day only (upper bound). Total Return / Max Drawdown assume a fixed 1% of capital risked per trade, summed without compounding — this run had up to <span id="epBtConcurrent">-</span> trades open at once, so a compounding curve would overstate returns. This is a signal-log backtest: no slippage, brokerage, or circuit-filter unfillability is modeled, and it should be read alongside the full written report, not as a standalone verdict.</p>
+      </div>
+      <button class="primary" id="epBtBtn" onclick="runEpBacktest(true)">Run Backtest</button>
+    </div>
+    <div class="card">
+      <div id="epBtWrap"><div class="loading">Loading startup cache…</div></div>
     </div>
   </div>
 
@@ -760,6 +777,7 @@ function switchTab(tab) {
   if (tab === 'backtest') { runStrategyPerformance(); runIndustryPerformance(); }
   if (tab === 'episodicpivot' && !episodicPivotData) { runEpisodicPivot(false); }
   if (tab === 'sourcecode' && !codeTreeData) { loadCodeTree(); }
+  if (tab === 'epbacktest' && !epBtData) { runEpBacktest(false); }
 }
 
 // ---------------- Live auto-refresh (Sector Analysis / Trending / My Trades) ----------------
@@ -2037,6 +2055,141 @@ async function runIndustryPerformance() {
     document.getElementById('industryPerfWrap').innerHTML = '<div class="empty">Failed: ' + (e.message || e) + '</div>';
   }
   btn.disabled = false; btn.textContent = 'Refresh';
+}
+
+// ---------------- Episodic Pivot Backtest (6M) ----------------
+let epBtData = null;
+let epBtSortKey = 'breakout_date', epBtSortDir = -1;
+let epBtVariant = 'pnl_pct'; // 'pnl_pct' (Conservative) or 'pnl_pct_alt' (Optimistic)
+
+async function runEpBacktest(refresh = false) {
+  const btn = document.getElementById('epBtBtn');
+  btn.disabled = true; btn.textContent = refresh ? 'Running (15-25s)…' : 'Loading...';
+  document.getElementById('epBtWrap').innerHTML =
+    '<div class="loading">' + (refresh ? 'Re-running the full 6-month backtest over the Nifty 500 cache…' : 'Loading last backtest result…') + '</div>';
+  try {
+    const res = await fetch('/api/episodic_pivot/backtest' + (refresh ? '?refresh=1' : ''));
+    epBtData = await res.json();
+    renderEpBacktest();
+    document.getElementById('epBtCached').style.display = refresh ? 'none' : 'inline-block';
+    document.getElementById('epBtMeta').textContent =
+      `${epBtData.trades || 0} trades · ${epBtData.unique_symbols || 0} symbols · ${epBtData.entry_date_min || '—'} to ${epBtData.entry_date_max || '—'} · generated ${epBtData.generated_at ? new Date(epBtData.generated_at).toLocaleString() : ''}`;
+    document.getElementById('epBtConcurrent').textContent = epBtData.max_concurrent_positions ?? '—';
+  } catch (e) {
+    document.getElementById('epBtWrap').innerHTML = '<div class="empty">Failed: ' + (e.message || e) + '</div>';
+  }
+  btn.disabled = false; btn.textContent = 'Run Backtest';
+}
+
+function setEpBtVariant(v) {
+  epBtVariant = v;
+  renderEpBacktest();
+}
+
+function setEpBtSort(key) {
+  epBtSortDir = (epBtSortKey === key) ? -epBtSortDir : -1;
+  epBtSortKey = key;
+  renderEpBacktest();
+}
+
+function renderEpBacktest() {
+  const data = epBtData;
+  if (!data || !data.trades) {
+    document.getElementById('epBtWrap').innerHTML = '<div class="empty">No trades found in the 6-month backtest window.</div>';
+    return;
+  }
+  const v = data[epBtVariant === 'pnl_pct' ? 'conservative' : 'optimistic'];
+  const pnlKey = epBtVariant;
+  const label = epBtVariant === 'pnl_pct' ? 'Conservative' : 'Optimistic';
+
+  let html = `<div style="margin-bottom:0.9rem;">
+    <button class="${epBtVariant === 'pnl_pct' ? 'primary' : ''}" onclick="setEpBtVariant('pnl_pct')" style="margin-right:8px;">Conservative (base case)</button>
+    <button class="${epBtVariant === 'pnl_pct_alt' ? 'primary' : ''}" onclick="setEpBtVariant('pnl_pct_alt')">Optimistic (upper bound)</button>
+  </div>`;
+
+  const kpis = [
+    ['Trades', v.trades, null],
+    ['Win rate', v.win_rate_pct + '%', v.win_rate_pct >= v.breakeven_win_rate_pct ? 'pos' : 'neg'],
+    ['Breakeven WR needed', v.breakeven_win_rate_pct + '%', null],
+    ['Avg win / loss', fmtPct(v.avg_win_pct) + ' / ' + fmtPct(v.avg_loss_pct), null],
+    ['Win/loss ratio', v.win_loss_ratio, null],
+    ['Avg R-multiple', v.avg_r_multiple + 'R', v.avg_r_multiple >= 0 ? 'pos' : 'neg'],
+    ['Total return (1% risk/trade)', fmtPct(v.total_return_pct), v.total_return_pct >= 0 ? 'pos' : 'neg'],
+    ['Max drawdown', v.max_drawdown_pts + ' pts', 'neg'],
+  ];
+  html += '<div class="kpis">' + kpis.map(([lbl, value, cls]) =>
+    `<div class="kpi"><p class="label">${lbl}</p><p class="value ${cls || ''}">${value}</p></div>`
+  ).join('') + '</div>';
+
+  const exitCounts = Object.entries(v.exit_reason_counts || {}).map(([k, c]) => `${k}: ${c}`).join(' · ');
+  html += `<p class="meta" style="margin-bottom:1.1rem;">${label} exits — ${exitCounts}</p>`;
+
+  // Monthly breakdown
+  if (data.monthly && data.monthly.length) {
+    html += '<p class="section-title">Monthly breakdown (conservative)</p>';
+    html += '<table><thead><tr><th>Month</th><th class="num">Trades</th><th class="num">Win rate</th><th class="num">Avg P&L</th><th class="num">Total P&L</th></tr></thead><tbody>';
+    for (const m of data.monthly) {
+      html += `<tr><td>${m.month}</td><td class="num">${m.trades}</td><td class="num">${m.win_rate_pct}%</td>
+        <td class="num ${m.avg_pnl_pct >= 0 ? 'pos' : 'neg'}">${fmtPct(m.avg_pnl_pct)}</td>
+        <td class="num ${m.total_pnl_pct >= 0 ? 'pos' : 'neg'}">${fmtPct(m.total_pnl_pct)}</td></tr>`;
+    }
+    html += '</tbody></table>';
+  }
+
+  // Best / worst stocks
+  const stockTable = (rows, title) => {
+    let h = `<p class="section-title">${title}</p><table><thead><tr><th>Symbol</th><th class="num">Trades</th><th class="num">Win rate</th><th class="num">Avg P&L</th><th class="num">Total P&L</th></tr></thead><tbody>`;
+    for (const s of rows) {
+      h += `<tr><td>${symbolWithChart(s)}</td><td class="num">${s.trades}</td><td class="num">${s.win_rate_pct}%</td>
+        <td class="num ${s.avg_pnl_pct >= 0 ? 'pos' : 'neg'}">${fmtPct(s.avg_pnl_pct)}</td>
+        <td class="num ${s.total_pnl_pct >= 0 ? 'pos' : 'neg'}">${fmtPct(s.total_pnl_pct)}</td></tr>`;
+    }
+    return h + '</tbody></table>';
+  };
+  if (data.best_stocks && data.best_stocks.length) {
+    html += '<div style="display:grid; grid-template-columns: 1fr 1fr; gap: 1.5rem;">'
+      + '<div>' + stockTable(data.best_stocks, 'Best performing stocks') + '</div>'
+      + '<div>' + stockTable(data.worst_stocks, 'Worst performing stocks') + '</div>'
+      + '</div>';
+  }
+
+  // Full trade log
+  html += `<p class="section-title">Full trade log — ${label} exit</p>`;
+  const cols = [
+    ['symbol', 'Symbol'], ['day0_date', 'Day-0'], ['day0_move_pct', 'Day-0 move'],
+    ['pivot_date', 'Pivot'], ['breakout_date', 'Entry date'], ['entry_fill', 'Entry ₹'],
+    ['stop_loss', 'Stop ₹'], ['stop_pct', 'Risk %'], ['target', 'Target ₹'],
+    ['risk_reward', 'Planned R:R'], ['score', 'Score'],
+    [epBtVariant === 'pnl_pct' ? 'exit_date' : 'exit_date_alt', 'Exit date'],
+    [epBtVariant === 'pnl_pct' ? 'exit_price' : 'exit_price_alt', 'Exit ₹'],
+    [epBtVariant === 'pnl_pct' ? 'exit_reason' : 'exit_reason_alt', 'Outcome'],
+    [pnlKey, 'P&L %'],
+  ];
+  const numCols = new Set(['day0_move_pct', 'entry_fill', 'stop_loss', 'stop_pct', 'target', 'risk_reward', 'score', 'exit_price', 'exit_price_alt', 'pnl_pct', 'pnl_pct_alt']);
+  const rows = genericSort(data.trades_detail || [], epBtSortKey, epBtSortDir);
+
+  html += '<table><thead><tr>' + cols.map(([key, lbl]) =>
+    `<th class="${numCols.has(key) ? 'num' : ''}" onclick="setEpBtSort('${key}')" style="cursor:pointer">${lbl}${sortIndicator(epBtSortKey, key, epBtSortDir)}</th>`
+  ).join('') + '</tr></thead><tbody>';
+
+  const reasonCls = { TARGET: 'target_hit', STOP: 'stop_loss', TIME_STOP: 'time_stop', END_OF_DATA: 'time_stop' };
+  for (const t of rows) {
+    const pnl = t[pnlKey];
+    const outcome = t[epBtVariant === 'pnl_pct' ? 'exit_reason' : 'exit_reason_alt'];
+    html += `<tr>
+      <td>${symbolWithChart(t)}</td><td>${t.day0_date}</td><td class="num">${fmtPct(t.day0_move_pct)}</td>
+      <td>${t.pivot_date}</td><td>${t.breakout_date}</td><td class="num">${t.entry_fill.toFixed(2)}</td>
+      <td class="num">${t.stop_loss.toFixed(2)}</td><td class="num">${t.stop_pct}%</td><td class="num">${t.target.toFixed(2)}</td>
+      <td class="num">${t.risk_reward}</td><td class="num">${t.score}</td>
+      <td>${t[epBtVariant === 'pnl_pct' ? 'exit_date' : 'exit_date_alt']}</td>
+      <td class="num">${(t[epBtVariant === 'pnl_pct' ? 'exit_price' : 'exit_price_alt']).toFixed(2)}</td>
+      <td><span class="pill ${reasonCls[outcome] || ''}">${outcome}</span></td>
+      <td class="num ${pnl >= 0 ? 'pos' : 'neg'}">${fmtPct(pnl)}</td>
+    </tr>`;
+  }
+  html += '</tbody></table>';
+
+  document.getElementById('epBtWrap').innerHTML = html;
 }
 
 // ---------------- Source Code viewer ----------------

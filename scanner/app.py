@@ -43,6 +43,7 @@ import options_chain
 import alert_dedup
 import custom_baskets
 import episodic_pivot
+import ep_backtest_report
 import code_browser
 import market_hours
 import trending_alerts
@@ -906,6 +907,26 @@ def api_episodic_pivot():
         import traceback
         traceback.print_exc()
         return jsonify({"error": str(e), "results": [], "num_results": 0}), 500
+
+
+@app.route("/api/episodic_pivot/backtest", methods=["POST", "GET"])
+def api_episodic_pivot_backtest():
+    """6-month historical backtest of the Episodic Pivot rules (see
+    ep_backtest.py / ep_backtest_report.py) — every historical day-0 ->
+    tight-candle -> breakout sequence per symbol, simulated against the
+    exact same entry/stop/target gates the live scanner uses. Takes ~15-25s
+    on the cached Nifty 500 daily data, so it's on-demand only (no startup
+    warm-cache) - the last run's trade log is cached to results/ and
+    reloaded instantly unless ?refresh=1 is passed."""
+    try:
+        refresh = _want_refresh()
+        report = ep_backtest_report.get_report(refresh=refresh)
+        return jsonify(report)
+    except Exception as e:
+        print(f"[episodic_pivot/backtest] failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e), "trades": 0, "trades_detail": []}), 500
 
 
 @app.route("/api/swing_trade/chart/<path:symbol>")
