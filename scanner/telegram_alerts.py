@@ -140,6 +140,52 @@ def format_swing_trade_alert(hit: dict) -> str:
     return "\n".join(lines)
 
 
+def format_episodic_pivot_alert(hit: dict) -> str:
+    """Telegram payload for a fresh Episodic Pivot (delayed EP) trigger —
+    a neglected stock's day-0 reaction candle followed by a tight-range
+    pullback candle whose high just broke out."""
+    symbol = hit["symbol"]
+    day0_date = hit.get("day0_date")
+    day0_move = hit.get("day0_move_pct")
+    rvol = hit.get("day0_rvol_pct")
+    pivot_date = hit.get("pivot_date")
+    entry = hit.get("entry_price")
+    stop = hit.get("stop_loss")
+    stop_pct = hit.get("stop_pct")
+    target = hit.get("target")
+    target_1_3 = hit.get("target_1_3")
+    trail_ema = hit.get("trail_ema_period")
+    rr = hit.get("risk_reward")
+    score = hit.get("score")
+    chart_url = hit.get("tv_chart_url") or f"https://in.tradingview.com/symbols/NSE-{symbol}/"
+
+    lines = [f"🚀 <b>{symbol}</b> — Episodic Pivot TRIGGERED"]
+    if day0_date is not None:
+        lines.append(f"Day-0 reaction: {day0_date}" + (f" (+{day0_move:.1f}%)" if day0_move is not None else ""))
+    if rvol is not None:
+        lines.append(f"Volume shock: {rvol:.0f}% of 50D avg")
+    if pivot_date is not None:
+        lines.append(f"Pullback candle: {pivot_date}")
+    if entry is not None:
+        lines.append(f"Entry (GTT above): ₹{entry:.2f}")
+    if stop is not None:
+        stop_txt = f"Stop-loss: ₹{stop:.2f}"
+        if stop_pct is not None:
+            stop_txt += f" ({stop_pct:.1f}%)"
+        lines.append(stop_txt)
+    if target is not None:
+        lines.append(f"Target: ₹{target:.2f}")
+    if rr is not None:
+        lines.append(f"R:R: {rr:.2f}")
+    if target_1_3 is not None:
+        lines.append(f"Ankur's 1:3 (book ~50%): ₹{target_1_3:.2f} — trail rest below {trail_ema or 20} EMA")
+    if score is not None:
+        lines.append(f"Score: {score:.0f}")
+    lines.append(f"Chart: {chart_url}")
+    lines.append("<i>Delayed EP — do not chase if it's already gapped up big. Alert only, manage the trade yourself.</i>")
+    return "\n".join(lines)
+
+
 if __name__ == "__main__":
     ok = send_telegram_message("✅ Test message from kite_scanner_bot — Telegram alerts are wired up correctly.")
     print("Sent OK" if ok else "Failed — check TELEGRAM_BOT_TOKEN/TELEGRAM_CHAT_ID in .env")

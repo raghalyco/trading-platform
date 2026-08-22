@@ -72,6 +72,11 @@
   table.oc-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
   table.oc-table th, table.oc-table td { padding: 5px 8px; text-align: center; }
   table.oc-table tr.atm-row { background: var(--surface-2); font-weight: 700; }
+  .sub-tabs { display: flex; gap: 6px; margin: 4px 0 14px; flex-wrap: wrap; }
+  .sub-tab { background: var(--surface-2); color: var(--text-secondary); border: 1px solid var(--border);
+    border-radius: 7px; padding: 6px 14px; font-size: 12.5px; font-weight: 600; cursor: pointer; }
+  .sub-tab.active { background: var(--accent); color: white; border-color: var(--accent); }
+  .sub-tab:hover:not(.active) { color: var(--text); }
   button.primary {
     background: var(--accent); color: white; border: none; border-radius: 8px;
     padding: 9px 16px; font-size: 13px; font-weight: 600; cursor: pointer;
@@ -94,7 +99,15 @@
   .breadth-label .up-dot { color: var(--green); } .breadth-label .down-dot { color: var(--red); }
 
   .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
-    padding: 1.25rem; margin-bottom: 1.5rem; }
+    padding: 1.25rem; margin-bottom: 1.5rem; overflow-x: auto; }
+  /* Wide tables (many num columns, e.g. Support Bounce) scroll horizontally
+     WITHIN the card instead of spilling past its edges - the symbol column
+     stays pinned so you always know which row you're looking at. */
+  .card table th:first-child, .card table td:first-child {
+    position: sticky; left: 0; background: var(--surface); z-index: 1;
+  }
+  table.dense { font-size: 12px; }
+  table.dense th, table.dense td { padding: 7px 6px; }
   .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 1.25rem; }
   .kpi { background: var(--surface-2); border-radius: 10px; padding: 0.9rem; }
   .kpi .label { font-size: 12px; color: var(--text-muted); margin: 0 0 4px; }
@@ -163,7 +176,43 @@
     th, td { padding: 8px 6px; }
     .card { padding: 0.85rem; }
     .kpis { grid-template-columns: repeat(2, 1fr); }
+    .code-browser { flex-direction: column; height: auto !important; }
+    .code-tree-pane { width: 100% !important; max-height: 260px; }
   }
+
+  /* ---------------- Source Code viewer ---------------- */
+  .code-browser { display: flex; gap: 0; height: 75vh; border: 1px solid var(--border); border-radius: 10px; overflow: hidden; }
+  .code-tree-pane {
+    width: 280px; flex-shrink: 0; background: var(--surface-2); border-right: 1px solid var(--border);
+    overflow-y: auto; padding: 0.6rem 0.4rem; font-size: 13px;
+  }
+  .code-tree-search { width: 100%; box-sizing: border-box; margin-bottom: 0.5rem; padding: 7px 9px;
+    background: var(--surface); border: 1px solid var(--border); border-radius: 7px; color: var(--text); font-size: 13px; }
+  .code-tree-search:focus { outline: none; border-color: var(--accent); }
+  .code-tree-node { user-select: none; }
+  .code-tree-row { display: flex; align-items: center; gap: 5px; padding: 4px 6px; border-radius: 6px; cursor: pointer; white-space: nowrap; }
+  .code-tree-row:hover { background: var(--surface); }
+  .code-tree-row.active-file { background: var(--surface); color: var(--accent); font-weight: 600; }
+  .code-tree-row.not-viewable { opacity: 0.4; cursor: default; }
+  .code-tree-row .ico { flex-shrink: 0; width: 14px; text-align: center; }
+  .code-tree-children { margin-left: 16px; }
+  .code-view-pane { flex: 1; display: flex; flex-direction: column; min-width: 0; background: var(--bg); }
+  .code-view-header { display: flex; align-items: center; justify-content: space-between; gap: 10px;
+    padding: 0.6rem 0.9rem; border-bottom: 1px solid var(--border); background: var(--surface); flex-shrink: 0; }
+  .code-view-path { font-family: 'SF Mono', Consolas, monospace; font-size: 12.5px; color: var(--text-secondary); overflow: hidden; text-overflow: ellipsis; }
+  .code-view-actions { display: flex; gap: 8px; flex-shrink: 0; }
+  .code-view-actions button { font-size: 12px; padding: 5px 10px; border-radius: 6px; border: 1px solid var(--border);
+    background: var(--surface-2); color: var(--text-secondary); cursor: pointer; }
+  .code-view-actions button:hover { color: var(--text); border-color: var(--accent); }
+  .code-view-body { flex: 1; overflow: auto; margin: 0; padding: 0.9rem 1rem; }
+  .code-view-body code { font-family: 'SF Mono', Consolas, 'Courier New', monospace; font-size: 12.5px; line-height: 1.6;
+    color: var(--text); white-space: pre; }
+  .code-line-no { display: inline-block; width: 3.4em; color: var(--text-muted); user-select: none; text-align: right; margin-right: 1em; }
+  .code-search-results { padding: 0.4rem; }
+  .code-search-hit { padding: 6px 8px; border-radius: 6px; cursor: pointer; margin-bottom: 2px; }
+  .code-search-hit:hover { background: var(--surface); }
+  .code-search-hit .path { font-family: 'SF Mono', Consolas, monospace; font-size: 12px; color: var(--accent); word-break: break-all; }
+  .code-search-hit .line { font-size: 11.5px; color: var(--text-muted); padding-left: 8px; word-break: break-all; }
 </style>
 </head>
 <body>
@@ -196,6 +245,16 @@
   </div>
 
   <div class="nav-group">
+    <div class="nav-group-label">Episodic Pivot</div>
+    <div class="nav-item cat-strategy" data-tab="episodicpivot">Episodic Pivot (Delayed EP)</div>
+  </div>
+
+  <div class="nav-group">
+    <div class="nav-group-label">Developer</div>
+    <div class="nav-item cat-strategy" data-tab="sourcecode">Source Code</div>
+  </div>
+
+  <div class="nav-group">
     <div class="nav-group-label">My Trading</div>
     <div class="nav-item cat-trades" data-tab="mytrades">My Trades</div>
     <div class="nav-item cat-trades" data-tab="backtest">Performance / Backtest</div>
@@ -214,6 +273,8 @@
   <div class="mobile-nav-item" data-tab="swing" title="Swing Trade (Weekly)">📅</div>
   <div class="mobile-nav-item" data-tab="darvax" title="DarvaX (Darvas Box)">📦</div>
   <div class="mobile-nav-item" data-tab="intraday" title="Intraday Monitor">⏱️</div>
+  <div class="mobile-nav-item" data-tab="episodicpivot" title="Episodic Pivot (Delayed EP)">🚀</div>
+  <div class="mobile-nav-item" data-tab="sourcecode" title="Source Code">🗂️</div>
   <div class="mobile-nav-item" data-tab="mytrades" title="My Trades">⭐</div>
   <div class="mobile-nav-item" data-tab="backtest" title="Performance / Backtest">🧾</div>
 </nav>
@@ -360,18 +421,18 @@
       <div>
         <h1>Previous Support Bounce</h1>
         <p class="meta" id="supportMeta">Ascending trendline / multi-touch horizontal support · Smart Money buy zone · loading…</p>
-        <p class="help-text">Finds stocks bouncing off a previously-established support level (an ascending trendline or a horizontal level touched 2+ times before). Stop-loss sits just below that support; entries close to the bounce score higher than ones already extended away from it.</p>
+        <p class="help-text">Finds stocks bouncing off a previously-established support level (an ascending trendline or a horizontal level touched 2+ times before). Applies a full trader-style review before surfacing a setup: bearish structure (CHoCH/BOS) is excluded, RSI already overbought is excluded, and a breakout with weak volume + a weak close is treated as a likely fakeout and excluded. Shows Entry/SL (=invalidation)/T1/T2/R:R for surviving setups — SM score reflects structure, volume, and momentum context together, not just distance from support.</p>
       </div>
       <div class="topbar-actions">
-        <select class="universe-select" id="supportUniverse" title="Index universe">
-          <option value="nifty50" {% if support_bounce_universe == 'nifty50' %}selected{% endif %}>Nifty 50</option>
-          <option value="nifty100" {% if support_bounce_universe == 'nifty100' %}selected{% endif %}>Nifty 100</option>
-          <option value="nifty200" {% if support_bounce_universe == 'nifty200' %}selected{% endif %}>Nifty 200</option>
-          <option value="nifty500" {% if support_bounce_universe == 'nifty500' %}selected{% endif %}>Nifty 500</option>
-          <option value="fno" {% if support_bounce_universe == 'fno' %}selected{% endif %}>F&amp;O</option>
-        </select>
         <button class="primary" id="supportBtn" onclick="runSupportBounce(true)">Run Scan</button>
       </div>
+    </div>
+    <div class="sub-tabs" id="supportUniverseTabs">
+      <button class="sub-tab active" data-universe="nifty50" onclick="switchSupportUniverse('nifty50')">Nifty 50</button>
+      <button class="sub-tab" data-universe="nifty100" onclick="switchSupportUniverse('nifty100')">Nifty 100</button>
+      <button class="sub-tab" data-universe="nifty200" onclick="switchSupportUniverse('nifty200')">Nifty 200</button>
+      <button class="sub-tab" data-universe="nifty500" onclick="switchSupportUniverse('nifty500')">Nifty 500</button>
+      <button class="sub-tab" data-universe="fno" onclick="switchSupportUniverse('fno')">F&amp;O</button>
     </div>
     <div class="card">
       <div id="supportTableWrap"><div class="loading">Loading startup cache…</div></div>
@@ -427,6 +488,60 @@
     </div>
     <div class="card">
       <div id="darvaxTableWrap"><div class="loading">Loading startup cache…</div></div>
+    </div>
+  </div>
+
+  <!-- ============ TAB: Episodic Pivot (Delayed EP) ============ -->
+  <div class="tab-page" id="page-episodicpivot">
+    <div class="topbar">
+      <div>
+        <h1>Episodic Pivot (Delayed EP)</h1>
+        <p class="meta" id="episodicPivotMeta">Neglected stock + surprise-reaction day + volume shock, then a tight-range pullback candle · loading…</p>
+        <p class="help-text">Ankur Patel's method: a stock that did nothing (no big move) suddenly reacts to a surprise — results, a new order, a policy change, promoter change — with a big one-day move (5.5%+) on unusually heavy volume ("day-0", &gt;=300% of its own 50-day average). Because Indian circuit filters make the reaction candle itself unsafe to buy, this waits for a tight range-contraction pullback candle afterward: its high is the entry, its low the stop. WATCHING = pullback candle formed (or day-0 just happened), not broken out yet. TRIGGERED = it broke out recently, not gapped-and-chased. "Target" is a technical projection (day-0's own candle range, projected from entry) and gates what shows here (stop capped at 4%, R:R floor 1.5) — "1:3 (book 50%)" is Ankur's own stated convention (book half there, trail the rest below the 20 EMA) shown for reference, it doesn't gate the list.</p>
+      </div>
+      <div class="topbar-actions">
+        <select class="universe-select" id="episodicPivotUniverse" title="Index universe">
+          <option value="nifty50" {% if episodic_pivot_universe == 'nifty50' %}selected{% endif %}>Nifty 50</option>
+          <option value="nifty100" {% if episodic_pivot_universe == 'nifty100' %}selected{% endif %}>Nifty 100</option>
+          <option value="nifty200" {% if episodic_pivot_universe == 'nifty200' %}selected{% endif %}>Nifty 200</option>
+          <option value="nifty500" {% if episodic_pivot_universe == 'nifty500' %}selected{% endif %}>Nifty 500</option>
+          <option value="fno" {% if episodic_pivot_universe == 'fno' %}selected{% endif %}>F&amp;O</option>
+        </select>
+        <button class="primary" id="episodicPivotBtn" onclick="runEpisodicPivot(true)">Run Scan</button>
+      </div>
+    </div>
+    <div class="card">
+      <div id="episodicPivotTableWrap"><div class="loading">Loading startup cache…</div></div>
+    </div>
+  </div>
+
+  <!-- ============ TAB: Source Code ============ -->
+  <div class="tab-page" id="page-sourcecode">
+    <div class="topbar">
+      <div>
+        <h1>Source Code</h1>
+        <p class="meta">Browse every file in this scanner/ app, read-only</p>
+        <p class="help-text">A read-only view into this app's own code — scanner/ only, nothing outside it. Click a file in the tree to view it, search across filenames and contents, or download a file. The .env/access_token and cache/data folders are excluded on purpose (secrets and non-code data), so nothing sensitive is ever exposed here.</p>
+      </div>
+    </div>
+    <div class="card" style="padding:0;">
+      <div class="code-browser">
+        <div class="code-tree-pane">
+          <input type="text" class="code-tree-search" id="codeSearchInput" placeholder="Search files or code…"
+                 oninput="onCodeSearchInput()">
+          <div id="codeTreeWrap"><div class="loading">Loading file tree…</div></div>
+        </div>
+        <div class="code-view-pane">
+          <div class="code-view-header">
+            <div class="code-view-path" id="codeViewPath">Select a file from the tree to view it</div>
+            <div class="code-view-actions" id="codeViewActions" style="display:none;">
+              <span id="codeViewMeta" style="color:var(--text-muted); font-size:12px;"></span>
+              <button onclick="downloadCurrentCodeFile()">⬇ Download</button>
+            </div>
+          </div>
+          <pre class="code-view-body" id="codeViewBody"><code style="color:var(--text-muted);">No file selected.</code></pre>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -643,6 +758,8 @@ function switchTab(tab) {
   if (tab === 'optionchain' && !optionChainLoaded) { optionChainLoaded = true; runOptionChain(false); }
   if (tab === 'custombaskets' && !customBasketsLoaded) { customBasketsLoaded = true; runCustomBaskets(false); }
   if (tab === 'backtest') { runStrategyPerformance(); runIndustryPerformance(); }
+  if (tab === 'episodicpivot' && !episodicPivotData) { runEpisodicPivot(false); }
+  if (tab === 'sourcecode' && !codeTreeData) { loadCodeTree(); }
 }
 
 // ---------------- Live auto-refresh (Sector Analysis / Trending / My Trades) ----------------
@@ -1082,32 +1199,63 @@ function renderStockdayBacktest() {
 }
 
 // ---------------- Previous Support Bounce ----------------
+// Every universe tab is precomputed server-side at app startup (see
+// app.py's cache-warm block, which now loops all 5 modes), so switching
+// tabs here is instant - each tab's data is fetched into supportDataByMode
+// once (on first visit to that tab) and reused after that; "Run Scan"
+// force-refreshes only whichever tab is currently active.
 let supportData = null;
+let supportDataByMode = {};
+let currentSupportUniverse = 'nifty50';
 let supportSortKey = 'smart_money_score', supportSortDir = -1;
 
-async function runSupportBounce(refresh = true) {
+function switchSupportUniverse(mode) {
+  currentSupportUniverse = mode;
+  document.querySelectorAll('#supportUniverseTabs .sub-tab').forEach(el =>
+    el.classList.toggle('active', el.dataset.universe === mode));
+  if (supportDataByMode[mode]) {
+    supportData = supportDataByMode[mode];
+    renderSupportBounceMeta();
+    renderSupportBounceTable();
+  } else {
+    runSupportBounce(false, mode);
+  }
+}
+
+async function runSupportBounce(refresh = true, mode = null) {
+  mode = mode || currentSupportUniverse;
   const btn = document.getElementById('supportBtn');
-  const mode = stockdayUniverseMode('supportUniverse');
   btn.disabled = true; btn.textContent = refresh ? 'Scanning...' : 'Loading...';
-  if (refresh || !supportData) {
+  if (refresh || !supportDataByMode[mode]) {
     document.getElementById('supportTableWrap').innerHTML =
       '<div class="loading">' + (refresh ? 'Scanning support touch/bounce + Smart Money buy zone…' : 'Loading startup cache…') + '</div>';
   }
   try {
     let url = '/api/support_bounce?universe=' + encodeURIComponent(mode);
     if (refresh) url += '&refresh=1';
-    supportData = await fetchJson(url);
-    const stamp = new Date(supportData.generated_at).toLocaleTimeString();
-    const src = supportData.cached ? 'startup cache' : 'fresh scan';
-    const label = supportData.universe_label || mode;
-    document.getElementById('supportMeta').textContent =
-      `${supportData.num_results} buy-zone · ${label} · scanned ${supportData.scanned}/${supportData.universe_size} · ${src} · ${stamp} · click Run Scan to refresh`;
-    updateMarketStatus(supportData.market_open);
-    renderSupportBounceTable();
+    const data = await fetchJson(url);
+    supportDataByMode[mode] = data;
+    if (mode === currentSupportUniverse) {
+      supportData = data;
+      renderSupportBounceMeta();
+      updateMarketStatus(data.market_open);
+      renderSupportBounceTable();
+    }
   } catch (e) {
-    document.getElementById('supportTableWrap').innerHTML = '<div class="empty">Scan failed: ' + (e.message || e) + '</div>';
+    if (mode === currentSupportUniverse) {
+      document.getElementById('supportTableWrap').innerHTML = '<div class="empty">Scan failed: ' + (e.message || e) + '</div>';
+    }
   }
   btn.disabled = false; btn.textContent = 'Run Scan';
+}
+
+function renderSupportBounceMeta() {
+  if (!supportData) return;
+  const stamp = new Date(supportData.generated_at).toLocaleTimeString();
+  const src = supportData.cached ? 'startup cache' : 'fresh scan';
+  const label = supportData.universe_label || currentSupportUniverse;
+  document.getElementById('supportMeta').textContent =
+    `${supportData.num_results} buy-zone · ${label} · scanned ${supportData.scanned}/${supportData.universe_size} · ${src} · ${stamp} · click Run Scan to refresh`;
 }
 
 function setSupportSort(key) {
@@ -1127,14 +1275,16 @@ function renderSupportBounceTable() {
     ['support_type', 'Support type'], ['event', 'Event'],
     ['previous_support', 'Support'], ['current_price', 'Price'],
     ['distance_from_support_pct', 'Dist %'], ['touch_count', 'Touches'],
-    ['volume_trend', 'Volume'], ['market_structure', 'Structure'],
+    ['volume_trend', 'Volume'], ['rsi', 'RSI'], ['market_structure', 'Structure'],
+    ['entry_price', 'Entry'], ['stop_loss', 'SL / Invalidation'], ['target', 'T1'], ['target2', 'T2'],
+    ['risk_reward', 'R:R'],
     ['smart_money_signal', 'SM signal'], ['smart_money_score', 'SM score'],
   ];
   const numCols = new Set([
-    'previous_support', 'current_price', 'distance_from_support_pct', 'touch_count',
-    'smart_money_score',
+    'previous_support', 'current_price', 'distance_from_support_pct', 'touch_count', 'rsi',
+    'entry_price', 'stop_loss', 'target', 'target2', 'risk_reward', 'smart_money_score',
   ]);
-  let html = '<table><thead><tr><th></th>' + cols.map(([key, label]) =>
+  let html = '<table class="dense"><thead><tr><th></th>' + cols.map(([key, label]) =>
     `<th class="${numCols.has(key) ? 'num' : ''}" onclick="setSupportSort('${key}')" style="cursor:pointer">${label}${sortIndicator(supportSortKey, key, supportSortDir)}</th>`
   ).join('') + '<th></th></tr></thead><tbody>';
   for (const s of rows) {
@@ -1145,6 +1295,7 @@ function renderSupportBounceTable() {
     const structCls = String(s.market_structure || '').startsWith('Bullish') ? 'pos'
       : String(s.market_structure || '').startsWith('Bearish') ? 'neg' : '';
     const stype = s.support_type || s.pattern || 'Support';
+    const rsiCls = s.rsi != null && s.rsi >= 70 ? 'neg' : (s.rsi != null && s.rsi <= 40 ? 'pos' : '');
     html += `<tr>
       <td>${symbolWithChart(s)}</td>
       <td style="color:var(--text-secondary)">${stype}</td>
@@ -1154,7 +1305,13 @@ function renderSupportBounceTable() {
       <td class="num ${distCls}">${fmtPct(dist)}</td>
       <td class="num">${s.touch_count ?? '—'}</td>
       <td>${s.volume_trend || '—'}</td>
+      <td class="num ${rsiCls}">${s.rsi ?? '—'}</td>
       <td class="${structCls}">${s.market_structure || '—'}</td>
+      <td class="num">${s.entry_price != null ? '₹' + Number(s.entry_price).toFixed(2) : '—'}</td>
+      <td class="num neg" title="${s.invalidation_note || ''}">${s.stop_loss != null ? '₹' + Number(s.stop_loss).toFixed(2) : '—'}</td>
+      <td class="num pos">${s.target != null ? '₹' + Number(s.target).toFixed(2) : '—'}</td>
+      <td class="num pos">${s.target2 != null ? '₹' + Number(s.target2).toFixed(2) : '—'}</td>
+      <td class="num">${s.risk_reward != null ? '1:' + Number(s.risk_reward).toFixed(2) : '—'}</td>
       <td>${sig}</td>
       <td class="num">${Number(s.smart_money_score).toFixed(0)}</td>
       <td>${trackBtnHtml('support_bounce', s.symbol, s.entry_price ?? s.current_price, s.stop_loss, s.target, s.chart_url || chart)}</td>
@@ -1256,6 +1413,90 @@ function renderSwingTradeTable() {
   }
   html += '</tbody></table>';
   document.getElementById('swingTableWrap').innerHTML = html;
+}
+
+// ---------------- Episodic Pivot (Delayed EP) ----------------
+let episodicPivotData = null;
+let episodicPivotSortKey = 'score', episodicPivotSortDir = -1;
+
+async function runEpisodicPivot(refresh = true) {
+  const btn = document.getElementById('episodicPivotBtn');
+  const mode = stockdayUniverseMode('episodicPivotUniverse');
+  btn.disabled = true; btn.textContent = refresh ? 'Scanning...' : 'Loading...';
+  if (refresh || !episodicPivotData) {
+    document.getElementById('episodicPivotTableWrap').innerHTML =
+      '<div class="loading">' + (refresh ? 'Scanning for neglected-stock reactions + tight-range pullbacks…' : 'Loading startup cache…') + '</div>';
+  }
+  try {
+    let url = '/api/episodic_pivot?universe=' + encodeURIComponent(mode);
+    if (refresh) url += '&refresh=1';
+    episodicPivotData = await fetchJson(url);
+    const stamp = new Date(episodicPivotData.generated_at).toLocaleTimeString();
+    const src = episodicPivotData.cached ? 'startup cache' : 'fresh scan';
+    const label = episodicPivotData.universe_label || mode;
+    document.getElementById('episodicPivotMeta').textContent =
+      `${episodicPivotData.num_results} setup(s) · ${label} · scanned ${episodicPivotData.scanned}/${episodicPivotData.universe_size} · ${src} · ${stamp} · click Run Scan to refresh`;
+    updateMarketStatus(episodicPivotData.market_open);
+    renderEpisodicPivotTable();
+  } catch (e) {
+    document.getElementById('episodicPivotTableWrap').innerHTML = '<div class="empty">Scan failed: ' + (e.message || e) + '</div>';
+  }
+  btn.disabled = false; btn.textContent = 'Run Scan';
+}
+
+function setEpisodicPivotSort(key) {
+  if (episodicPivotSortKey === key) { episodicPivotSortDir *= -1; } else { episodicPivotSortKey = key; episodicPivotSortDir = -1; }
+  renderEpisodicPivotTable();
+}
+window.setEpisodicPivotSort = setEpisodicPivotSort;
+
+function episodicPivotStatusPill(row) {
+  if (row.status === 'TRIGGERED') return '<span class="pill target_hit">TRIGGERED</span>';
+  return '<span class="pill" style="background:var(--surface-2);color:var(--text-muted)">WATCHING</span>';
+}
+
+function renderEpisodicPivotTable() {
+  if (!episodicPivotData || !episodicPivotData.results || !episodicPivotData.results.length) {
+    document.getElementById('episodicPivotTableWrap').innerHTML =
+      '<div class="empty">No neglected-stock reaction + pullback setups currently qualify.</div>';
+    return;
+  }
+  const rows = genericSort(episodicPivotData.results, episodicPivotSortKey, episodicPivotSortDir);
+  const cols = [
+    ['status', 'Status'], ['day0_date', 'Day-0'], ['day0_move_pct', 'Day-0 move'],
+    ['day0_rvol_pct', 'R_Vol'], ['pivot_date', 'Pullback candle'],
+    ['current_price', 'Price'], ['score', 'Score'],
+    ['risk_reward', 'R:R'], ['stop_loss', 'SL'], ['stop_pct', 'Risk %'], ['target', 'Target'],
+    ['target_1_3', "1:3 (book 50%)"],
+  ];
+  const numCols = new Set([
+    'day0_move_pct', 'day0_rvol_pct', 'current_price', 'score',
+    'risk_reward', 'stop_loss', 'stop_pct', 'target', 'target_1_3',
+  ]);
+  let html = '<table><thead><tr><th></th>' + cols.map(([key, label]) =>
+    `<th class="${numCols.has(key) ? 'num' : ''}" onclick="setEpisodicPivotSort('${key}')" style="cursor:pointer">${label}${sortIndicator(episodicPivotSortKey, key, episodicPivotSortDir)}</th>`
+  ).join('') + '<th></th></tr></thead><tbody>';
+  for (const s of rows) {
+    const href = s.chart_url || s.tv_chart_url;
+    html += `<tr>
+      <td><a href="${href}" target="_blank" rel="noopener" style="color:var(--accent);font-weight:600">${s.symbol}</a></td>
+      <td>${episodicPivotStatusPill(s)}</td>
+      <td style="color:var(--text-secondary)">${s.day0_date || '—'}</td>
+      <td class="num pos">${s.day0_move_pct != null ? fmtPct(s.day0_move_pct) : '—'}</td>
+      <td class="num">${s.day0_rvol_pct != null ? s.day0_rvol_pct + '%' : '—'}</td>
+      <td style="color:var(--text-secondary)">${s.pivot_date || 'not formed yet'}</td>
+      <td class="num">₹${Number(s.current_price).toFixed(2)}</td>
+      <td class="num">${Number(s.score).toFixed(0)}</td>
+      <td class="num">${s.risk_reward != null ? Number(s.risk_reward).toFixed(2) : '—'}</td>
+      <td class="num neg">${s.stop_loss != null ? '₹' + Number(s.stop_loss).toFixed(2) : '—'}</td>
+      <td class="num">${s.stop_pct != null ? fmtPct(s.stop_pct) : '—'}</td>
+      <td class="num pos">${s.target != null ? '₹' + Number(s.target).toFixed(2) : '—'}</td>
+      <td class="num" style="color:var(--text-secondary)" title="Ankur's own convention: book ~50% here, trail the rest below the ${s.trail_ema_period || 20} EMA">${s.target_1_3 != null ? '₹' + Number(s.target_1_3).toFixed(2) : '—'}</td>
+      <td>${s.entry_price != null ? trackBtnHtml('episodic_pivot', s.symbol, s.entry_price, s.stop_loss, s.target, href) : ''}</td>
+    </tr>`;
+  }
+  html += '</tbody></table>';
+  document.getElementById('episodicPivotTableWrap').innerHTML = html;
 }
 
 // ---------------- DarvaX (Darvas Box) ----------------
@@ -1798,6 +2039,122 @@ async function runIndustryPerformance() {
   btn.disabled = false; btn.textContent = 'Refresh';
 }
 
+// ---------------- Source Code viewer ----------------
+let codeTreeData = null;
+let currentCodeFile = null; // {path, content, ...}
+
+async function loadCodeTree() {
+  document.getElementById('codeTreeWrap').innerHTML = '<div class="loading">Loading file tree…</div>';
+  try {
+    const res = await fetch('/api/code/tree');
+    codeTreeData = await res.json();
+    renderCodeTree();
+  } catch (e) {
+    document.getElementById('codeTreeWrap').innerHTML = '<div class="empty">Failed to load: ' + (e.message || e) + '</div>';
+  }
+}
+
+function renderCodeTree() {
+  if (!codeTreeData || !codeTreeData.children) {
+    document.getElementById('codeTreeWrap').innerHTML = '<div class="empty">No files found.</div>';
+    return;
+  }
+  document.getElementById('codeTreeWrap').innerHTML = renderCodeTreeNodes(codeTreeData.children, 0);
+}
+
+function renderCodeTreeNodes(nodes, depth) {
+  let html = '<div class="code-tree-children" style="margin-left:' + (depth === 0 ? 0 : 0) + 'px;">';
+  for (const n of nodes) {
+    if (n.type === 'dir') {
+      html += `<div class="code-tree-node">
+        <div class="code-tree-row" onclick="toggleCodeDir(this)">
+          <span class="ico">📁</span><span>${escapeHtml(n.name)}</span>
+        </div>
+        <div class="code-tree-children" style="display:none;">${renderCodeTreeNodes(n.children, depth + 1)}</div>
+      </div>`;
+    } else {
+      const cls = n.viewable ? '' : ' not-viewable';
+      const click = n.viewable ? `onclick="openCodeFile('${n.path.replace(/'/g, "\\'")}')"` : '';
+      html += `<div class="code-tree-row file-row${cls}" data-path="${escapeHtml(n.path)}" ${click}>
+        <span class="ico">📄</span><span>${escapeHtml(n.name)}</span>
+      </div>`;
+    }
+  }
+  html += '</div>';
+  return html;
+}
+
+function toggleCodeDir(el) {
+  const kids = el.nextElementSibling;
+  if (kids) kids.style.display = (kids.style.display === 'none') ? 'block' : 'none';
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+async function openCodeFile(path) {
+  document.getElementById('codeViewPath').textContent = path;
+  document.getElementById('codeViewBody').innerHTML = '<code style="color:var(--text-muted);">Loading…</code>';
+  document.getElementById('codeViewActions').style.display = 'none';
+  document.querySelectorAll('.code-tree-row.file-row').forEach(el => el.classList.toggle('active-file', el.dataset.path === path));
+  try {
+    const res = await fetch('/api/code/file?path=' + encodeURIComponent(path));
+    if (!res.ok) throw new Error('not found');
+    const data = await res.json();
+    currentCodeFile = data;
+    const lines = data.content.split('\n');
+    let body = '<code>';
+    for (let i = 0; i < lines.length; i++) {
+      body += '<span class="code-line-no">' + (i + 1) + '</span>' + escapeHtml(lines[i]) + '\n';
+    }
+    body += '</code>';
+    document.getElementById('codeViewBody').innerHTML = body;
+    document.getElementById('codeViewMeta').textContent = data.lines + ' lines · ' + (data.size || 0).toLocaleString() + ' bytes';
+    document.getElementById('codeViewActions').style.display = 'flex';
+  } catch (e) {
+    document.getElementById('codeViewBody').innerHTML = '<code style="color:var(--red);">Failed to load file: ' + (e.message || e) + '</code>';
+  }
+}
+
+function downloadCurrentCodeFile() {
+  if (!currentCodeFile) return;
+  window.open('/api/code/download?path=' + encodeURIComponent(currentCodeFile.path), '_blank');
+}
+
+let codeSearchTimer = null;
+function onCodeSearchInput() {
+  clearTimeout(codeSearchTimer);
+  const q = document.getElementById('codeSearchInput').value.trim();
+  if (!q) { renderCodeTree(); return; }
+  codeSearchTimer = setTimeout(() => runCodeSearch(q), 250);
+}
+
+async function runCodeSearch(q) {
+  document.getElementById('codeTreeWrap').innerHTML = '<div class="loading">Searching…</div>';
+  try {
+    const res = await fetch('/api/code/search?q=' + encodeURIComponent(q));
+    const data = await res.json();
+    if (!data.results || !data.results.length) {
+      document.getElementById('codeTreeWrap').innerHTML = '<div class="empty" style="padding:0.6rem;">No matches.</div>';
+      return;
+    }
+    let html = '<div class="code-search-results">';
+    for (const r of data.results) {
+      html += `<div class="code-search-hit" onclick="openCodeFile('${r.path.replace(/'/g, "\\'")}')">
+        <div class="path">${escapeHtml(r.path)}</div>`;
+      for (const m of r.line_matches.slice(0, 3)) {
+        html += `<div class="line">${m.line_no}: ${escapeHtml(m.text)}</div>`;
+      }
+      html += '</div>';
+    }
+    html += '</div>';
+    document.getElementById('codeTreeWrap').innerHTML = html;
+  } catch (e) {
+    document.getElementById('codeTreeWrap').innerHTML = '<div class="empty">Search failed: ' + (e.message || e) + '</div>';
+  }
+}
+
 // Initial load: show startup-cached results on every scanner tab.
 // Run Scan buttons force a fresh refresh (?refresh=1).
 runSectorScan(false);
@@ -1806,6 +2163,7 @@ runStockForDay(false);
 runSupportBounce(false);
 runSwingTrade(false);
 runDarvax(false);
+runEpisodicPivot(false);
 runMyTrades();
 // Sector Analysis is the default active tab on load — start its live poll
 // immediately (other tabs' polling starts when you switch to them).

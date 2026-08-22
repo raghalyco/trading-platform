@@ -286,6 +286,8 @@ SUPPORT_BOUNCE_RETEST_MAX_BARS = 25           # bars allowed for a re-test after
 SUPPORT_BOUNCE_RETEST_BAND_PCT = 3.0          # % band around the broken level for a re-test
 SUPPORT_BOUNCE_MIN_CLOSE_STRENGTH = 0.6       # close in the top 40% of the bar's range = "strong"
 SUPPORT_BOUNCE_VOLUME_SPIKE_MULT = 1.5        # breakout volume >= this x SMA counts as "high volume"
+SUPPORT_BOUNCE_MAX_RSI = 75.0                 # reject buy-zone setups already this overbought (fakeout/reversal risk)
+SUPPORT_BOUNCE_MIN_RR = 1.2                   # reject target-too-close-to-stop setups (already-too-extended past support)
 
 # Final buy-zone gate — applied uniformly to EVERY result (pattern-based buy
 # zone AND raw Pine Smart Money BUY/SELL alike). Pine's BUY signal alone has
@@ -389,6 +391,70 @@ DARVAX_WEEKLY_MIN_SCORE = 30
 DARVAX_WEEKLY_UPTREND_EMA_PERIOD = 30      # weekly EMA30 ~ daily EMA150, a similar "real trend" bar
 DARVAX_WEEKLY_UPTREND_LOOKBACK_BARS = 10
 DARVAX_WEEKLY_MAX_EXTENSION_PCT = 12.0
+
+# ---------------------------------------------------------------------------
+# Episodic Pivot (delayed EP) — Ankur Patel's method ("Master In One" podcast /
+# Swing Trading Simplified): a NEGLECTED stock reacts to a surprise catalyst
+# (results, new order, policy change, promoter change, black-swan news) with
+# a big one-day move on unusually heavy volume ("day-0"), then a tight
+# range-contraction pullback candle forms — THAT candle's high is the
+# (delayed) entry trigger, its low the stop. Indian circuit filters make it
+# unsafe to buy day-0 itself, hence "delayed". See episodic_pivot.py.
+# ---------------------------------------------------------------------------
+EP_UNIVERSE = "nifty500"              # "nifty50" | "nifty100" | "nifty200" | "nifty500" | "fno"
+EP_LOOKBACK_DAYS = 400                 # daily history needed: 50D RVOL avg + neglect window + EMA/ATR warmup
+
+# "Surprise" gate — no big move in the window BEFORE day-0 (else the news was
+# already priced in and it isn't a surprise to fund houses / retail).
+# Podcast, verbatim: "if before the earnings, if the stock is moving 30% in
+# the first week... it is a simple thing that there is no surprise element."
+EP_NEGLECT_LOOKBACK_DAYS = 10
+EP_NEGLECT_MAX_PRIOR_MOVE_PCT = 30.0
+
+# Day-0 reaction gate — big move, up-close, and heavy volume vs the stock's
+# OWN 50-day average (the "R_Vol" the podcast tracks via the free SSK
+# indicator; podcast examples ran 1000-11000%). Both numbers below are
+# verbatim from the podcast: "either 5.5+... if any stock 5.5% got closed
+# and 3 times volume... how much is R_Vol in this? 1131... if R_Vol is
+# above 300 then it is enough."
+EP_MIN_DAY0_MOVE_PCT = 5.5              # verbatim podcast floor (5%-circuit stocks are excluded separately by EP_MIN_RVOL_MULT/close-strength naturally being hard to hit at 5%)
+EP_MIN_RVOL_MULT = 3.0                 # >= 300% of the 50-day average volume (verbatim: "R_Vol above 300 then it is enough")
+EP_RVOL_AVG_PERIOD = 50
+EP_MIN_CLOSE_STRENGTH = 0.6            # close must sit in the top 40% of the day's range (rejects doji/fade days)
+
+# Delayed entry — track the latest un-broken tight/small-range candle formed
+# after day-0, up to EP_LOOKFORWARD_DAYS out. Its high = entry, its low = stop.
+EP_LOOKFORWARD_DAYS = 20
+EP_TIGHT_RANGE_MAX_PCT = 3.0           # (high-low)/close <= this % counts as "tight"
+EP_TIGHT_RANGE_MAX_ATR_MULT = 0.8      # ...or <= this x ATR(14), whichever is looser
+EP_TIGHT_RANGE_NEAR_EMA_PCT = 6.0      # scoring bonus only (not a hard gate) — "closer to 10 EMA = better reward"
+
+# Risk/reward — GATING target is a genuine technical projection (the day-0
+# candle's own range/"flagpole" projected up from entry, "trade it like a
+# flag"), so risk_reward is always a real computed ratio, never a fixed
+# multiple of the stop that would make the R:R gate a tautology (this is the
+# deliberate fix for the confidence-vs-R:R mismatch flagged in the
+# signal_engine app). Setups failing either gate are dropped, not shown.
+#
+# Ankur's OWN stated exit convention is different and NOT what gates the
+# scanner: a flat 1:3 ("you have to exit in 1:3... take out my first 50%
+# quantity in 1:3... trail half with 20 EMA"). We still SURFACE that number
+# (target_1_3 field) for reference/Telegram alerts — it just isn't what
+# decides whether a setup appears in the list.
+EP_MAX_STOP_PCT = 4.0                  # hard risk cap (podcast: 2.5% if screen-active, 4% if part-time)
+EP_TARGET_FLAGPOLE_MULT = 1.0          # gating target = entry + this x (day-0 high - day-0 low)
+EP_TARGET_R_MULT_INFO = 3.0            # informational only: Ankur's literal 1:3 partial-booking target = entry + this x risk
+EP_TRAIL_EMA_PERIOD_INFO = 20          # informational only: EMA he trails the back half below ("50 will be too late, I will say 20")
+EP_MIN_RR = 1.5
+EP_MIN_SCORE = 40                      # 0-100 composite quality floor (volume shock + move size + close strength + tightness + EMA proximity)
+
+# "Don't chase" — if the breakout day gaps open more than this % above the
+# tight candle's high, skip it (podcast: wait for the next low-risk chance
+# rather than paying up for an already-extended gap).
+EP_MAX_CHASE_GAP_PCT = 3.0
+EP_TRIGGER_MAX_STALE_DAYS = 3          # a breakout older than this drops back out of the TRIGGERED list
+
+EP_SEND_TELEGRAM = True
 
 # ---------------------------------------------------------------------------
 # Trade simulation rules

@@ -42,6 +42,8 @@ import index_movers
 import options_chain
 import alert_dedup
 import custom_baskets
+import episodic_pivot
+import code_browser
 import market_hours
 import trending_alerts
 import telegram_alerts
@@ -122,6 +124,7 @@ _stock_for_day_cache: dict = {}
 _support_bounce_cache: dict = {}
 _swing_trade_cache: dict = {}
 _darvax_cache: dict = {}
+_episodic_pivot_cache: dict = {}
 
 
 def _enrich_hits(hits):
@@ -313,6 +316,25 @@ def _refresh_support_bounce_cache(mode=None):
     return payload
 
 
+def _refresh_support_bounce_all_cache():
+    """Startup-only: scans every unique symbol across all 5 universe tabs
+    ONCE (Nifty 500 is a superset of 50/100/200) and partitions the result
+    into each tab's cache slot - avoids the old approach of running 5 full,
+    heavily-overlapping scans back to back at startup. A single tab's "Run
+    Scan" button still uses _refresh_support_bounce_cache(mode) above for
+    an on-demand single-universe refresh."""
+    print("Warming Previous Support Bounce cache (all 5 tabs, combined scan)...")
+    payloads = support_bounce.scan_support_bounce_all_universes(_client)
+    for mode, payload in payloads.items():
+        _support_bounce_cache[mode] = {
+            "generated_at": payload["generated_at"],
+            "payload": payload,
+        }
+        support_bounce.rehydrate_charts(payload.get("charts"))
+    total_unique = len({r["symbol"] for p in payloads.values() for r in p.get("results", [])})
+    print(f"Support Bounce ready: all 5 tabs warmed, {total_unique} unique symbol(s) hit across tabs.")
+
+
 def _refresh_swing_trade_cache(mode=None):
     mode = mode or (config.SWING_TRADE_UNIVERSE or "nifty200")
     try:
@@ -352,6 +374,54 @@ def _refresh_darvax_cache(mode=None):
         f"DarvaX ready: {payload.get('num_results', 0)} hit(s) on "
         f"{payload.get('universe_label', mode)}."
     )
+    return payload
+
+
+def _refresh_episodic_pivot_cache(mode=None):
+    mode = mode or (config.EP_UNIVERSE or "nifty500")
+    try:
+        mode = universe_mod.normalize_nifty_mode(mode)
+    except ValueError:
+        mode = "nifty500"
+    print(f"Warming Episodic Pivot cache ({mode})...")
+    payload = episodic_pivot.scan_episodic_pivot(_client, _universe_df, universe_mode=mode)
+    _episodic_pivot_cache[mode] = {
+        "generated_at": payload["generated_at"],
+        "payload": payload,
+    }
+    print(
+        f"Episodic Pivot ready: {payload.get('num_results', 0)} hit(s) on "
+        f"{payload.get('universe_label', mode)}."
+    )
+
+    # Alert + auto-track only on a FRESH trigger (dedup keyed by symbol +
+    # pivot date, same pattern as swing_trade/custom_baskets), and only
+    # during market hours.
+    if config.EP_SEND_TELEGRAM and market_hours.is_market_open():
+        for row in payload.get("results") or []:
+            if row.get("status") != "TRIGGERED":
+                continue
+            key = f"episodic_pivot:{row['symbol']}|{row.get('pivot_date')}"
+            if alert_dedup.already_alerted(key):
+                continue
+            alert_dedup.mark_alerted(key)
+            try:
+                telegram_alerts.send_telegram_message(
+                    telegram_alerts.format_episodic_pivot_alert(row)
+                )
+            except Exception as e:
+                print(f"  [warn] episodic-pivot telegram alert failed for {row['symbol']}: {e}")
+            if config.AUTO_TRACK_ENABLED:
+                try:
+                    trade_tracker.auto_track_if_new(
+                        symbol=row["symbol"], source="episodic_pivot",
+                        entry_price=row.get("entry_price"),
+                        stop_loss=row.get("stop_loss"), target=row.get("target"),
+                        chart_url=row.get("tv_chart_url"),
+                    )
+                except Exception as e:
+                    print(f"  [warn] episodic-pivot auto-track failed for {row['symbol']}: {e}")
+
     return payload
 
 
@@ -398,10 +468,15 @@ if (
     _refresh_sector_cache()
     _refresh_trending_cache()
     _refresh_stock_for_day_cache()
-    _refresh_support_bounce_cache()
+    # Previous Support Bounce: warm ALL universe tabs at startup with ONE
+    # combined scan (Nifty 500 is a superset of 50/100/200 - scanning each
+    # tab separately was redundantly re-fetching/re-evaluating the same
+    # symbols up to 5x over).
+    _refresh_support_bounce_all_cache()
     _refresh_swing_trade_cache()
     _refresh_darvax_cache()
     _refresh_custom_basket_cache()
+    _refresh_episodic_pivot_cache()
 
 
 def _trending_alert_loop():
@@ -458,6 +533,7 @@ def index():
         support_bounce_universe=config.SUPPORT_BOUNCE_UNIVERSE or "nifty100",
         swing_trade_universe=config.SWING_TRADE_UNIVERSE or "nifty200",
         darvax_universe=config.DARVAX_UNIVERSE or "nifty200",
+        episodic_pivot_universe=config.EP_UNIVERSE or "nifty500",
     )
 
 
@@ -649,6 +725,16 @@ def _swing_trade_universe_arg() -> str:
         return "nifty200"
 
 
+def _episodic_pivot_universe_arg() -> str:
+    from flask import request
+    import universe as universe_mod
+    raw = (request.args.get("universe") or config.EP_UNIVERSE or "nifty500")
+    try:
+        return universe_mod.normalize_nifty_mode(raw)
+    except ValueError:
+        return "nifty500"
+
+
 @app.route("/api/stock_for_day", methods=["POST", "GET"])
 def api_stock_for_day():
     """Smart Money structure scan on selected Nifty universe — BUY-eligible only."""
@@ -793,6 +879,33 @@ def api_swing_trade():
 def swing_chart_page(symbol):
     """Weekly candlestick chart with resistance line/box + breakout markers."""
     return render_template("swing_chart.html", symbol=str(symbol).upper())
+
+
+@app.route("/api/episodic_pivot", methods=["POST", "GET"])
+def api_episodic_pivot():
+    """Episodic Pivot (delayed EP): neglected stock + surprise-reaction
+    day + volume shock, then a tight-range pullback candle whose high is
+    the (delayed) entry trigger."""
+    try:
+        mode = _episodic_pivot_universe_arg()
+        refresh = _want_refresh()
+        cached = _episodic_pivot_cache.get(mode) or {}
+        if _should_refresh(refresh, cached.get("generated_at")):
+            _refresh_episodic_pivot_cache(mode)
+            cached = _episodic_pivot_cache[mode]
+        out = dict(cached.get("payload") or {})
+        for row in out.get("results") or []:
+            sym = row.get("symbol")
+            if sym:
+                row["chart_url"] = row.get("tv_chart_url") or episodic_pivot.tradingview_chart_url(sym)
+        out["market_open"] = _is_market_open()
+        out["cached"] = not refresh
+        return jsonify(out)
+    except Exception as e:
+        print(f"[episodic_pivot] failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e), "results": [], "num_results": 0}), 500
 
 
 @app.route("/api/swing_trade/chart/<path:symbol>")
@@ -1055,6 +1168,50 @@ def api_performance_industry():
         })
     except Exception as e:
         return jsonify({"error": str(e), "industries": []}), 500
+
+
+@app.route("/api/code/tree")
+def api_code_tree():
+    """File tree for the Source Code viewer tab — scanner/ folder only,
+    read-only, secrets/caches excluded (see code_browser.py)."""
+    try:
+        return jsonify(code_browser.build_tree())
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/code/file")
+def api_code_file():
+    from flask import request
+    rel_path = request.args.get("path", "")
+    out = code_browser.read_file(rel_path)
+    if out is None:
+        return jsonify({"error": "not found or not viewable"}), 404
+    return jsonify(out)
+
+
+@app.route("/api/code/search")
+def api_code_search():
+    from flask import request
+    q = request.args.get("q", "")
+    try:
+        return jsonify({"query": q, "results": code_browser.search(q)})
+    except Exception as e:
+        return jsonify({"error": str(e), "results": []}), 500
+
+
+@app.route("/api/code/download")
+def api_code_download():
+    from flask import request, Response
+    rel_path = request.args.get("path", "")
+    out = code_browser.read_file(rel_path)
+    if out is None:
+        return jsonify({"error": "not found or not viewable"}), 404
+    filename = rel_path.rsplit("/", 1)[-1] or "file.txt"
+    return Response(
+        out["content"], mimetype="text/plain",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 if __name__ == "__main__":
