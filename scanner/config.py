@@ -455,6 +455,7 @@ EP_MAX_CHASE_GAP_PCT = 3.0
 EP_TRIGGER_MAX_STALE_DAYS = 3          # a breakout older than this drops back out of the TRIGGERED list
 
 EP_SEND_TELEGRAM = True
+EP_ALERT_INTERVAL_MINUTES = 15         # server-side background recheck cadence for fresh EP breakouts, market hours only (same cadence as TRENDING_ALERT_INTERVAL_MINUTES)
 
 # ---------------------------------------------------------------------------
 # Oliver Kell overlay — his "price cycle" (blow-off / correction / base /

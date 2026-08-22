@@ -158,6 +158,17 @@ def format_episodic_pivot_alert(hit: dict) -> str:
     rr = hit.get("risk_reward")
     score = hit.get("score")
     chart_url = hit.get("tv_chart_url") or f"https://in.tradingview.com/symbols/NSE-{symbol}/"
+    kell_stacked = hit.get("kell_trend_stacked")
+    is_blowoff = hit.get("is_blowoff")
+    is_add_on = hit.get("is_add_on")
+
+    badges = []
+    if kell_stacked:
+        badges.append("📈 Trend-stacked (10>20 EMA>50 SMA)")
+    if is_add_on:
+        badges.append("➕ ADD-on (later breakout, same day-0)")
+    if is_blowoff:
+        badges.append("⚠️ Extended/blow-off risk")
 
     lines = [f"🚀 <b>{symbol}</b> — Episodic Pivot TRIGGERED"]
     if day0_date is not None:
@@ -181,6 +192,8 @@ def format_episodic_pivot_alert(hit: dict) -> str:
         lines.append(f"Ankur's 1:3 (book ~50%): ₹{target_1_3:.2f} — trail rest below {trail_ema or 20} EMA")
     if score is not None:
         lines.append(f"Score: {score:.0f}")
+    for b in badges:
+        lines.append(b)
     lines.append(f"Chart: {chart_url}")
     lines.append("<i>Delayed EP — do not chase if it's already gapped up big. Alert only, manage the trade yourself.</i>")
     return "\n".join(lines)

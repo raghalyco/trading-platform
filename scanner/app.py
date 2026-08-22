@@ -514,12 +514,42 @@ def _trending_alert_loop():
         _time.sleep(poll_seconds)
 
 
+def _episodic_pivot_alert_loop():
+    """Server-side background loop for Episodic Pivot, same pattern as
+    _trending_alert_loop above: every EP_ALERT_INTERVAL_MINUTES DURING
+    market hours, re-scans Episodic Pivot so a fresh WATCHING->TRIGGERED
+    breakout gets picked up and Telegram-alerted (via
+    _refresh_episodic_pivot_cache's existing alert/dedup logic) even if
+    nobody has the dashboard open and nobody clicks "Run Scan" - e.g. a
+    breakout that fires Monday morning while the app is unattended.
+    Sleeps outside market hours and resumes automatically the next
+    session simply because _is_market_open() starts returning True again."""
+    import time as _time
+
+    poll_seconds = 60
+    interval_seconds = config.EP_ALERT_INTERVAL_MINUTES * 60
+    last_check = 0.0
+    print(f"[background-alerts] episodic-pivot loop started "
+          f"(every {config.EP_ALERT_INTERVAL_MINUTES}m during market hours)", flush=True)
+
+    while True:
+        try:
+            if _is_market_open() and (_time.time() - last_check) >= interval_seconds:
+                last_check = _time.time()
+                print("[background-alerts] rechecking episodic pivot...", flush=True)
+                _refresh_episodic_pivot_cache()
+        except Exception as e:
+            print(f"[background-alerts] episodic-pivot loop error: {e}", flush=True)
+        _time.sleep(poll_seconds)
+
+
 if (
     _os.environ.get("WERKZEUG_RUN_MAIN") == "true"
     or _os.environ.get("FLASK_DEBUG", "1") in ("0", "false", "False")
 ):
     import threading as _threading
     _threading.Thread(target=_trending_alert_loop, daemon=True).start()
+    _threading.Thread(target=_episodic_pivot_alert_loop, daemon=True).start()
 
 
 @app.route("/")
