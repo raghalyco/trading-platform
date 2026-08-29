@@ -217,8 +217,8 @@ def get_signal(
     otm_steps: int = Query(0, ge=0, le=5),
 ):
     mode = mode.upper()
-    if mode not in ("SCALP", "SMART_TRADE"):
-        return {"error": "mode must be SCALP or SMART_TRADE"}
+    if mode not in ("SCALP", "SMART_TRADE", "GBB"):
+        return {"error": "mode must be SCALP, SMART_TRADE, or GBB"}
     try:
         signal = generate_signal(feed, symbol, mode, risk_mgr, otm_steps=otm_steps)
         signal["auto_trade_enabled"] = CONFIG.auto_trade.enabled

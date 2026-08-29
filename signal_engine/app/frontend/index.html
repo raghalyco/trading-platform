@@ -63,6 +63,7 @@ body{
 }
 .toggle-btn.active.scalp{background:var(--green-btn); color:#fff; border-color:var(--green-btn);}
 .toggle-btn.active.smart{background:#7c3aed; color:#fff; border-color:#7c3aed;}
+.toggle-btn.active.gbb{background:#e07b00; color:#fff; border-color:#e07b00;}
 .toggle-btn.active.atm{background:var(--blue); color:#fff; border-color:var(--blue);}
 .divider{height:1px; background:var(--line); margin:8px 0;}
 .signal-head{display:flex; justify-content:space-between; align-items:flex-start; gap:8px;}
@@ -183,8 +184,9 @@ table.trades tr.open td:first-child{box-shadow:inset 3px 0 0 var(--blue);}
     </div>
 
     <div class="toggle-row">
-      <button type="button" class="toggle-btn scalp active" data-mode="SCALP" onclick="setMode('SCALP')">Scalp</button>
+      <button type="button" class="toggle-btn scalp" data-mode="SCALP" onclick="setMode('SCALP')">Scalp</button>
       <button type="button" class="toggle-btn smart" data-mode="SMART_TRADE" onclick="setMode('SMART_TRADE')">Smart trade</button>
+      <button type="button" class="toggle-btn gbb active" data-mode="GBB" onclick="setMode('GBB')">GBB</button>
     </div>
     <div class="toggle-row">
       <button type="button" class="toggle-btn atm active" data-otm="0" onclick="setOtm(0)">ATM</button>
@@ -253,6 +255,7 @@ table.trades tr.open td:first-child{box-shadow:inset 3px 0 0 var(--blue);}
       <option value="">All modes</option>
       <option value="SCALP">Scalp</option>
       <option value="SMART_TRADE">Smart trade</option>
+      <option value="GBB">GBB Setup</option>
     </select>
     <select id="jDays" onchange="loadJournal()">
       <option value="7">7 days</option>
@@ -286,6 +289,7 @@ table.trades tr.open td:first-child{box-shadow:inset 3px 0 0 var(--blue);}
       <select id="btMode">
         <option value="SCALP">Scalp</option>
         <option value="SMART_TRADE">Smart trade</option>
+        <option value="GBB">GBB Setup</option>
       </select>
       <select id="btMonths">
         <option value="1">1 month</option>
@@ -321,7 +325,7 @@ table.trades tr.open td:first-child{box-shadow:inset 3px 0 0 var(--blue);}
 </nav>
 
 <script>
-let currentMode = 'SCALP';
+let currentMode = 'GBB';
 let currentOtm = 0;
 let refreshSeconds = 6;
 let countdown = refreshSeconds;
@@ -471,7 +475,11 @@ function agreeCount(components, side){
   const keys = Object.keys(components || {});
   if (!keys.length) return {n:0, total:0};
   let n = 0;
-  keys.forEach(k => { if (components[k] === side) n++; });
+  // GBB's votes are plain booleans (true = fired); SCALP/SMART_TRADE's
+  // votes are "CE"/"PE"/null per component - comparing a boolean to the
+  // side string was always false, undercounting GBB's agreement to 0
+  // regardless of how many setups actually fired.
+  keys.forEach(k => { const v = components[k]; if (typeof v === 'boolean' ? v : v === side) n++; });
   return {n, total: keys.length};
 }
 
@@ -546,17 +554,26 @@ function render(d){
   titleEl.textContent = head.title;
   titleEl.className = 'signal-title ' + head.cls;
 
-  const modeLabel = (d.mode || 'SCALP').replace('_TRADE',' trade').replace('_',' ');
-  document.getElementById('modeBadge').textContent =
-    modeLabel.charAt(0) + modeLabel.slice(1).toLowerCase();
+  document.getElementById('modeBadge').textContent = d.mode === 'GBB' ? 'GBB'
+    : (() => { const m = (d.mode || 'SCALP').replace('_TRADE',' trade').replace('_',' ');
+               return m.charAt(0) + m.slice(1).toLowerCase(); })();
 
   const pct = d.confidence_pct || 0;
   const band = confBand(pct);
-  const agree = agreeCount(d.components, side);
   const confLine = document.getElementById('confLine');
   confLine.className = 'conf-line ' + band;
-  confLine.innerHTML =
-    `<span class="conf-pill">${confWord(pct)}</span> confidence, ${agree.n} of ${agree.total || 7} components agree`;
+  if (d.mode === 'GBB') {
+    // GBB isn't a democratic "N of 7 agree" vote - it's a weighted score
+    // (Break&Retest/VWAP/EMA worth more than RSI/MACD/Volume/Sweep), so
+    // showing its own grade is more honest than forcing it into the
+    // SCALP/SMART_TRADE "components agree" phrasing.
+    const gbb = d.gbb || {};
+    confLine.innerHTML = `<span class="conf-pill">${confWord(pct)}</span> confidence · grade ${gbb.grade || '—'}`;
+  } else {
+    const agree = agreeCount(d.components, side);
+    confLine.innerHTML =
+      `<span class="conf-pill">${confWord(pct)}</span> confidence, ${agree.n} of ${agree.total || 7} components agree`;
+  }
 
   const strikeType = currentOtm === 0 ? 'ATM' : (currentOtm + ' OTM');
   const strike = (rec && rec.strike) || d.atm_strike || '';
@@ -586,18 +603,33 @@ function render(d){
   pctEl.textContent = pct + '%';
   pctEl.className = 'conf-pct' + (band === 'low' ? ' low' : '');
 
-  const pa = d.price_action || {};
-  const dir = (pa.direction || '').toLowerCase();
-  const pat = (pa.pattern || '').toLowerCase().replace(/_/g,' ');
-  document.getElementById('whyPa').textContent =
-    `${dir ? dir.charAt(0).toUpperCase()+dir.slice(1) : '—'} price action, ${pat || '—'}, ${pa.score ?? '—'} of ${pa.max_score ?? '—'}`;
+  if (d.mode === 'GBB') {
+    // GBB's votes are booleans keyed by setup name (break_retest, vwap,
+    // ema, rsi, macd, volume, liquidity_sweep), not the CE/PE-per-
+    // component vote SCALP/SMART_TRADE use - and its "why" is the state/
+    // grade from its own state machine, not a price-action pattern.
+    const gbb = d.gbb || {};
+    document.getElementById('whyPa').textContent =
+      `${gbb.state || '—'} · grade ${gbb.grade || '—'} · ${gbb.confidence_pct ?? '—'}% confidence`;
+  } else {
+    const pa = d.price_action || {};
+    const dir = (pa.direction || '').toLowerCase();
+    const pat = (pa.pattern || '').toLowerCase().replace(/_/g,' ');
+    document.getElementById('whyPa').textContent =
+      `${dir ? dir.charAt(0).toUpperCase()+dir.slice(1) : '—'} price action, ${pat || '—'}, ${pa.score ?? '—'} of ${pa.max_score ?? '—'}`;
+  }
 
   updateAutoTradeBox(d);
 
   const indRow = document.getElementById('indRow');
   indRow.innerHTML = '';
   Object.keys(d.components || {}).forEach(c => {
-    const on = !isWait && d.components[c] === side;
+    // GBB's votes are plain booleans (true = that setup/confirmation
+    // fired); SCALP/SMART_TRADE's votes are "CE"/"PE"/null per component -
+    // comparing a boolean to the side string was always false, so every
+    // GBB bar showed as "off" regardless of its actual vote.
+    const raw = d.components[c];
+    const on = !isWait && (typeof raw === 'boolean' ? raw : raw === side);
     indRow.innerHTML += `<div class="ind-col"><div class="ind-bar ${on ? 'on '+sideClass : ''}"></div><span>${c.toLowerCase()}</span></div>`;
   });
 

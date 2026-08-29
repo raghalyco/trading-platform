@@ -1368,11 +1368,48 @@ def evaluate_symbol_support_bounce(
     if not sm_buy and not sm_sell and not zone["buy_zone"]:
         return None
 
-    # A "Bearish CHoCH" structure label directly contradicts a long/buy-zone
-    # thesis - drop it. Not applied to sm_sell rows, where a bearish CHoCH
-    # is the CONFIRMING signal, not noise to filter out.
+    # A bearish structure label (CHoCH or BOS) directly contradicts a
+    # long/buy-zone thesis - drop it. Not applied to sm_sell rows, where a
+    # bearish read is the CONFIRMING signal, not noise to filter out.
+    # (Previously only "Bearish CHoCH" was excluded - "Bearish BOS" slipped
+    # through with the same contradiction: a stock breaking DOWN in
+    # structure being surfaced as a BUY-zone READY setup.)
     structure_label = label.get("structure") or _structure_status(daily)
-    if structure_label == "Bearish CHoCH" and not sm_sell:
+    if structure_label in ("Bearish CHoCH", "Bearish BOS") and not sm_sell:
+        return None
+
+    # ---- Professional-trader-style quality gates: RSI, MA trend context,
+    # and breakout genuineness (fakeout check) - on top of the structure/
+    # support checks above. Reject setups that fail on momentum context or
+    # look like an unconfirmed breakout, instead of surfacing everything
+    # that merely cleared the buy-zone/distance bar.
+    close = daily["close"].astype(float)
+    rsi_val = float(ind.rsi(close).iloc[-1]) if len(close) >= 15 else None
+    ema20 = ind.ema(close, 20)
+    ema50 = ind.ema(close, 50) if len(close) >= 50 else None
+    above_ema20 = bool(close.iloc[-1] > ema20.iloc[-1]) if pd.notna(ema20.iloc[-1]) else None
+    ema20_rising = bool(ema20.iloc[-1] > ema20.iloc[-5]) if len(ema20) >= 6 and pd.notna(ema20.iloc[-5]) else None
+    above_ema50 = (
+        bool(close.iloc[-1] > ema50.iloc[-1]) if ema50 is not None and pd.notna(ema50.iloc[-1]) else None
+    )
+
+    # Deeply overbought RSI right at a "support bounce" is a contradiction -
+    # a genuine bounce off support should still have room to run, not be
+    # already stretched into overbought territory (higher fakeout/reversal
+    # risk chasing here). Only applies to the long/buy-zone thesis.
+    if not sm_sell and rsi_val is not None and rsi_val >= config.SUPPORT_BOUNCE_MAX_RSI:
+        return None
+
+    # Breakout-type events specifically: require volume + close-strength
+    # confirmation together, not just a distance-from-support pass. A
+    # breakout with a weak close (long wick back into the range) AND
+    # unremarkable volume is a classic fakeout pattern - drop it rather
+    # than surface it as a confirmed setup.
+    is_breakout_event = "breakout" in (event.get("event") or "").lower()
+    weak_volume = (event.get("volume_ratio") or 0) < config.SUPPORT_BOUNCE_VOLUME_SPIKE_MULT
+    weak_close = (event.get("close_strength") or 0) < config.SUPPORT_BOUNCE_MIN_CLOSE_STRENGTH
+    likely_fakeout = is_breakout_event and weak_volume and weak_close
+    if likely_fakeout and not sm_sell:
         return None
 
     if sm_buy or sm_sell:
@@ -1395,6 +1432,19 @@ def evaluate_symbol_support_bounce(
         ) else "READY"
         confidence = label.get("confidence") or zone["confidence"]
 
+    # Hard R:R floor - catches "already too extended past support/
+    # resistance" setups directly and reliably, regardless of pattern type
+    # (wedge/triangle/trendline/horizontal). A pattern's own support/
+    # resistance lines are drawn from OLDER pivots; once price has broken
+    # out, run to a fresh high, and partially pulled back, the distance-
+    # from-support % check above can still pass (price is still within a
+    # few % of that old support line) even though the setup is clearly no
+    # longer "just touching/just crossing" it - target is now much closer
+    # than the stop, and the R:R number says so even when % distance
+    # doesn't. Reject rather than surface a target-closer-than-stop trade.
+    if rr is not None and rr < config.SUPPORT_BOUNCE_MIN_RR:
+        return None
+
     # Reward breakout-type events that re-tested the broken level, broke out
     # on high volume, and closed strong — these are the setups worth
     # surfacing first; a bare breakout with no re-test and a weak close
@@ -1406,7 +1456,38 @@ def evaluate_symbol_support_bounce(
         retest_bonus += 8.0
     if (event.get("close_strength") or 0) >= config.SUPPORT_BOUNCE_MIN_CLOSE_STRENGTH:
         retest_bonus += 5.0
-    score = min(100.0, score + retest_bonus)
+
+    # Momentum/trend context (RSI + EMA alignment) as a real scoring input,
+    # not just a pass/fail gate above - this is also what stops every row
+    # landing on the exact same saturated score: two setups that clear the
+    # same structure/volume bar still separate on how healthy their
+    # momentum backdrop actually is.
+    momentum_adj = 0.0
+    if above_ema20 and ema20_rising:
+        momentum_adj += 4.0
+    elif above_ema20 is False:
+        momentum_adj -= 8.0
+    if above_ema50:
+        momentum_adj += 3.0
+    elif above_ema50 is False:
+        momentum_adj -= 5.0
+    if rsi_val is not None:
+        # Peaks near RSI 50 (healthy, room to run both ways), tapers off
+        # toward extremes - a support bounce with RSI already near 70+ has
+        # less room before it's fighting overbought resistance.
+        momentum_adj += max(-6.0, min(4.0, (55.0 - abs(rsi_val - 50.0)) * 0.15))
+
+    # Cap below 100 (not at it) so scores actually differentiate instead of
+    # a large fraction of results all saturating at the exact same ceiling.
+    score = min(98.0, max(0.0, score + retest_bonus + momentum_adj))
+
+    # Second target + an explicit invalidation level/condition, per the
+    # "provide entry, exit, stoploss, T1, T2, R:R and invalidation" review
+    # format - T2 extends the same distance again past T1 (doubling the R
+    # multiple), invalidation is the same support/stop level stated as an
+    # explicit condition rather than just a number.
+    target2 = round(target + (target - entry), 2) if (target is not None and entry is not None) else None
+    invalidation_price = stop
 
     chart_payload = build_chart_payload(symbol, daily, {
         **event,
@@ -1442,6 +1523,12 @@ def evaluate_symbol_support_bounce(
         "entry_price": entry,
         "stop_loss": stop,
         "target": target,
+        "target2": target2,
+        "invalidation_price": invalidation_price,
+        "invalidation_note": f"Close back below ₹{invalidation_price} (the support level) invalidates this setup",
+        "rsi": round(rsi_val, 1) if rsi_val is not None else None,
+        "above_ema20": above_ema20,
+        "above_ema50": above_ema50,
         "support_age_bars": event["support_age_bars"],
         "timestamp": pd.to_datetime(daily["date"].iloc[-1]).isoformat(),
         "chart_url": local_chart_url(symbol),
@@ -1538,3 +1625,104 @@ def scan_support_bounce(
         "results": results,
         "charts": charts,
     }
+
+
+_SB_ALL_MODES = ("nifty50", "nifty100", "nifty200", "nifty500", "fno")
+
+
+def scan_support_bounce_all_universes(kite_client) -> dict:
+    """Scans each UNIQUE symbol across all 5 universe tabs exactly ONCE,
+    then partitions the single result set per tab - instead of the old
+    approach of running 5 separate full scans back to back (nifty50,
+    nifty100, nifty200, nifty500, fno). Nifty 500 is a superset of
+    50/100/200, so those were re-scanning heavily overlapping symbol lists
+    from scratch every time; a 100-symbol scan alone took ~3 minutes in
+    practice, making the old 5-tab startup warm 10+ minutes of mostly
+    redundant work. Returns {mode: payload_dict} for all 5 modes, each
+    shaped exactly like scan_support_bounce()'s return value."""
+    mode_dfs = {}
+    mode_symbols = {}
+    for mode in _SB_ALL_MODES:
+        try:
+            df = universe_mod.build_nifty_index_universe(kite_client, mode)
+        except Exception as e:
+            print(f"  [warn] support-bounce universe {mode} failed ({e})")
+            df = pd.DataFrame(columns=["instrument_token", "tradingsymbol"])
+        mode_dfs[mode] = df
+        mode_symbols[mode] = set(df["tradingsymbol"]) if not df.empty else set()
+
+    # Building the universe DataFrames above is cheap (just NSE constituent
+    # CSVs + a Kite instrument-dump filter, no historical data fetched
+    # yet) - the union dedup below is what actually avoids the expensive
+    # part (fetching + evaluating daily history) happening more than once
+    # per symbol.
+    combined = pd.concat(list(mode_dfs.values()), ignore_index=True)
+    if not combined.empty:
+        combined = combined.drop_duplicates(subset="tradingsymbol").reset_index(drop=True)
+
+    today = datetime.now().date()
+    from_date = today - timedelta(days=config.SUPPORT_BOUNCE_LOOKBACK_DAYS)
+    all_results = []
+    clear_chart_cache()
+    print(f"Support bounce: scanning combined universe "
+          f"({len(combined)} unique symbols across all 5 tabs, was up to "
+          f"{sum(len(s) for s in mode_symbols.values())} symbol-scans before dedup)...")
+
+    for _, row in tqdm(combined.iterrows(), total=len(combined), desc="Support bounce (combined)"):
+        symbol = row["tradingsymbol"]
+        token = row["instrument_token"]
+        try:
+            daily = kite_client.get_daily_history(token, symbol, from_date, today)
+            if daily.empty or len(daily) < 80:
+                continue
+            hit = evaluate_symbol_support_bounce(symbol, daily)
+            if hit:
+                all_results.append(hit)
+                if config.AUTO_TRACK_ENABLED and hit.get("smart_money_signal") == "BUY":
+                    try:
+                        trade_tracker.auto_track_if_new(
+                            symbol=symbol, source="support_bounce",
+                            entry_price=hit.get("entry_price") or hit.get("current_price"),
+                            stop_loss=hit.get("stop_loss"), target=hit.get("target"),
+                            chart_url=hit.get("chart_url"),
+                        )
+                    except Exception as e:
+                        print(f"  [warn] support-bounce auto-track failed for {symbol}: {e}")
+        except Exception as e:
+            print(f"  [warn] support-bounce skipped {symbol}: {e}")
+            continue
+
+    def _sort_key(r):
+        return (
+            1 if r.get("structure_confirmed") else 0,
+            1 if r.get("smart_money_signal") == "BUY" else 0,
+            r.get("smart_money_score") or 0,
+            -(abs(r.get("distance_from_support_pct") or 99)),
+            r.get("touch_count") or 0,
+            r.get("risk_reward") or 0,
+        )
+    all_results.sort(key=_sort_key, reverse=True)
+
+    generated_at = datetime.now().isoformat()
+    payloads = {}
+    for mode in _SB_ALL_MODES:
+        symbols = mode_symbols[mode]
+        mode_results = [r for r in all_results if r["symbol"] in symbols]
+        charts = {
+            str(r["symbol"]).upper(): get_chart_payload(r["symbol"])
+            for r in mode_results
+            if get_chart_payload(r["symbol"]) is not None
+        }
+        payloads[mode] = {
+            "generated_at": generated_at,
+            "universe_mode": mode,
+            "universe_label": universe_mod.nifty_mode_label(mode),
+            "universe_size": len(mode_dfs[mode]),
+            "scanned": len(mode_dfs[mode]),
+            "num_results": len(mode_results),
+            "results": mode_results,
+            "charts": charts,
+        }
+        print(f"  {mode}: {len(mode_results)} buy-zone hit(s) of {len(mode_dfs[mode])}")
+
+    return payloads

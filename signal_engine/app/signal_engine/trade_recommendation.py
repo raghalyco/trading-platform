@@ -167,7 +167,13 @@ def build_trade_recommendation(
     # only targets entry + Rs 12) - override so what's shown always matches
     # what actually happens. Stop-loss is untouched: live_capture really
     # does use the ATR-based index stop re-priced into premium terms.
-    if mid is not None:
+    if mode == "GBB" and mid is not None and prem_sl is not None and prem_sl < mid:
+        # GBB uses a RATIO target (1:1.5 on the premium), not the fixed
+        # +12-point rule SCALP uses - reward scales with how wide the
+        # structure-based stop actually is, per the spec's premium
+        # example (entry Rs40, risk Rs20 -> target Rs40+20*1.5=Rs70).
+        prem_t1 = round(mid + (mid - prem_sl) * CONFIG.gbb.rr_multiple, 2)
+    elif mid is not None:
         prem_t1 = round(mid + CONFIG.auto_trade.target_premium_points, 2)
 
     # Cap the top of the displayed entry band so even the WORST (highest)

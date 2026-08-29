@@ -124,6 +124,35 @@ def scalp_levels(entry_price: float, side: str, atr_value: float) -> dict:
     }
 
 
+def gbb_levels(entry_price: float, side: str, structure_stop: float | None,
+               atr_value: float) -> dict:
+    """GBB mode: structure-based SL (the Break & Retest level / retest
+    extreme from gbb_setup.py), falling back to 1x ATR only if no
+    structure stop is available yet (e.g. a VWAP/EMA-only setup with no
+    live Break & Retest). Index-level R:R here is a fixed 1.5 purely for
+    display/journal consistency - the REAL 1:1.5 ratio that matters is
+    computed on the option PREMIUM by trade_recommendation.py's GBB
+    branch, same separation SCALP/SMART_TRADE already use."""
+    cfg = CONFIG.gbb
+    sign = 1 if side == "CE" else -1
+    sl = structure_stop if structure_stop is not None else entry_price - sign * atr_value * 1.0
+    risk = abs(entry_price - sl)
+    t1 = entry_price + sign * risk * cfg.rr_multiple
+    t2 = entry_price + sign * risk * (cfg.rr_multiple + 1.0)
+
+    return {
+        "mode": "GBB",
+        "timeframe": "5m setup / 1m confirmation",
+        "entry": round(entry_price, 2),
+        "target1": round(t1, 2),
+        "target2": round(t2, 2),
+        "stop_loss": round(sl, 2),
+        "rr": cfg.rr_multiple,
+        "max_hold_minutes": cfg.max_hold_minutes,
+        "note": "Break & Retest / VWAP / EMA confluence - structure SL, 1:1.5 premium target",
+    }
+
+
 def smart_trade_levels(df: pd.DataFrame, side: str, atr_value: float, symbol: str = "NIFTY") -> dict:
     cfg = CONFIG.smart
     entry_price = float(df.iloc[-1]["close"])

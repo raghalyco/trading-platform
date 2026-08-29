@@ -10,7 +10,8 @@ from app.price_action.patterns import detect_pattern, pa_bonus_points
 from app.signal_engine.scorer import score_components, compute_score, verdict_label
 from app.signal_engine.smart_scorer import score_smart_trade, compute_smart_score, SMART_TRADE_COMPONENTS
 from app.signal_engine.confidence import confidence_pct, confidence_label, build_cautions
-from app.signal_engine.modes import scalp_levels, smart_trade_levels, current_expiry_date_iso
+from app.signal_engine.modes import scalp_levels, smart_trade_levels, gbb_levels, current_expiry_date_iso
+from app.signal_engine.gbb_setup import compute_gbb_signal
 from app.signal_engine.risk import RiskManager
 from app.signal_engine.orb import check_orb_breakout
 from app.signal_engine.retest import check_retest
@@ -54,7 +55,7 @@ def _get_intraday_zones(feed: DataFeed, symbol: str) -> dict:
 def generate_signal(feed: DataFeed, symbol: str, mode: str, risk_mgr: RiskManager,
                     otm_steps: int | None = None) -> dict:
     """
-    mode: 'SCALP' or 'SMART_TRADE'
+    mode: 'SCALP', 'SMART_TRADE', or 'GBB'
     """
     df = feed.get_ohlcv_1m(symbol, lookback_minutes=120)
     spot = feed.get_spot_price(symbol)
@@ -62,8 +63,26 @@ def generate_signal(feed: DataFeed, symbol: str, mode: str, risk_mgr: RiskManage
     is_expiry = feed.is_expiry_day(symbol)
     df_5m = resample_ohlcv(df, "5min")
 
-    # 1. base component scoring - SCALP and SMART TRADE use different scorers
-    if mode == "SCALP":
+    # 1. base component scoring - SCALP, SMART TRADE, and GBB each use a
+    # different scorer/setup-detection engine
+    if mode == "GBB":
+        # GBB needs a genuine SESSION vwap (anchored at market open), not
+        # the short 120-minute rolling window the other two modes use for
+        # everything else - fetch a longer lookback just for this branch.
+        df_gbb_1m = feed.get_ohlcv_1m(symbol, lookback_minutes=400)
+        df_gbb_5m = resample_ohlcv(df_gbb_1m, "5min")
+        gbb = compute_gbb_signal(df_gbb_5m, df_gbb_1m, CONFIG.gbb.min_grade_score_pct)
+        side = gbb["side"]
+        if side is None:
+            side = "CE"  # no live setup - keep a side so downstream code doesn't crash; verdict below forces WAIT
+        # Rescaled onto the same 0-7 range min_base_score/auto_trade.py's
+        # gate already uses, so the shared anti-overtrading/score gate
+        # keeps working for GBB without needing mode-aware changes there.
+        base = {"score": round(gbb["score"] / gbb["max_score"] * 7, 1) if gbb["max_score"] else 0, "side": side}
+        max_components = 7
+        comp = {"votes": gbb["votes"]}
+        smart_extra = {"gbb": gbb}
+    elif mode == "SCALP":
         comp = score_components(df)
         base = compute_score(comp["votes"])
         side = base["side"]  # CE or PE
@@ -89,7 +108,17 @@ def generate_signal(feed: DataFeed, symbol: str, mode: str, risk_mgr: RiskManage
     total_score = base["score"] + bonus
     max_score = max_components + 2  # base components + up to 2 PA bonus
 
-    verdict = verdict_label(total_score, side, max_components)
+    if mode == "GBB":
+        gbb_grade = smart_extra["gbb"]["grade"]
+        gbb_state = smart_extra["gbb"]["state"]
+        if gbb_grade == "NO TRADE" or smart_extra["gbb"]["side"] is None:
+            verdict = "WAIT - " + gbb_state
+        elif gbb_grade in ("A+", "A"):
+            verdict = ("STRONG BUY" if side == "CE" else "STRONG SELL")
+        else:
+            verdict = "BUY" if side == "CE" else "SELL"
+    else:
+        verdict = verdict_label(total_score, side, max_components)
 
     # 3. target/SL levels for the chosen mode
     # Uses 5-min ATR as the base volatility unit - 1-min ATR alone produces
@@ -97,7 +126,9 @@ def generate_signal(feed: DataFeed, symbol: str, mode: str, risk_mgr: RiskManage
     # scalp/swing levels (see config.py comments for calibration notes).
     atr_value = float(atr(df_5m).iloc[-1]) if len(df_5m) > 14 else float(atr(df).iloc[-1])
     entry_price = float(df.iloc[-1]["close"])
-    if mode == "SCALP":
+    if mode == "GBB":
+        levels = gbb_levels(entry_price, side, smart_extra["gbb"].get("structure_stop"), atr_value)
+    elif mode == "SCALP":
         levels = scalp_levels(entry_price, side, atr_value)
     else:
         levels = smart_trade_levels(df, side, atr_value, symbol)
@@ -111,7 +142,8 @@ def generate_signal(feed: DataFeed, symbol: str, mode: str, risk_mgr: RiskManage
     pct = confidence_pct(base["score"], max_components)
     label = confidence_label(pct)
     sl_points = abs(levels["entry"] - levels["stop_loss"])
-    cautions = build_cautions(df, is_expiry, sl_points, spot)
+    cautions = build_cautions(df, is_expiry, sl_points, spot, mode=mode,
+                               gbb_result=smart_extra.get("gbb") if mode == "GBB" else None)
     if is_monthly_expiry_today(symbol):
         cautions.append(
             f"{symbol} Monthly Expiry (rule uncertain - verify against your broker's contract notes)"

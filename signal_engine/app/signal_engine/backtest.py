@@ -34,7 +34,8 @@ from app.indicators.multi_tf import resample_ohlcv
 from app.price_action.patterns import detect_pattern, pa_bonus_points
 from app.signal_engine.scorer import score_components, compute_score, verdict_label
 from app.signal_engine.smart_scorer import score_smart_trade, compute_smart_score
-from app.signal_engine.modes import scalp_levels, smart_trade_levels, expiry_date_iso_for
+from app.signal_engine.modes import scalp_levels, smart_trade_levels, gbb_levels, expiry_date_iso_for
+from app.signal_engine.gbb_setup import compute_gbb_signal
 from app.signal_engine.option_pricing import estimate_premium
 from app.signal_engine.regime import classify_regime
 from app.signal_engine.trade_chart import IST, candles_to_list
@@ -227,7 +228,18 @@ def _signal_at(df_slice, symbol: str, mode: str,
     if len(df_5m) < 5:
         df_5m = df_slice
 
-    if mode == "SCALP":
+    gbb_result = None
+    if mode == "GBB":
+        # df_slice already accumulates every bar up to this point in the
+        # walk-forward loop (session_vwap resets per calendar day itself,
+        # see gbb_setup.py), so no separate longer fetch is needed here
+        # the way orchestrator.py's live path needs one.
+        gbb_result = compute_gbb_signal(df_5m, df_slice, CONFIG.gbb.min_grade_score_pct)
+        side = gbb_result["side"] or "CE"
+        base = {"score": round(gbb_result["score"] / gbb_result["max_score"] * 7, 1) if gbb_result["max_score"] else 0,
+                "side": side}
+        max_components = 7
+    elif mode == "SCALP":
         comp = score_components(df_slice)
         base = compute_score(comp["votes"])
         side = base["side"]
@@ -241,7 +253,15 @@ def _signal_at(df_slice, symbol: str, mode: str,
     pa = detect_pattern(df_slice)
     bonus = pa_bonus_points(pa, side)
     total_score = base["score"] + bonus
-    verdict = verdict_label(total_score, side, max_components)
+
+    if mode == "GBB":
+        if gbb_result["side"] is None or gbb_result["grade"] == "NO TRADE" or gbb_result["state"] != "CONFIRMED":
+            return None
+        verdict = "STRONG BUY" if (gbb_result["grade"] in ("A+", "A") and side == "CE") else \
+                  "STRONG SELL" if (gbb_result["grade"] in ("A+", "A") and side == "PE") else \
+                  ("BUY" if side == "CE" else "SELL")
+    else:
+        verdict = verdict_label(total_score, side, max_components)
 
     if "WAIT" in verdict:
         return None
@@ -257,7 +277,10 @@ def _signal_at(df_slice, symbol: str, mode: str,
         return None
 
     entry = float(df_slice.iloc[-1]["close"])
-    if mode == "SCALP":
+    if mode == "GBB":
+        levels = gbb_levels(entry, side, gbb_result.get("structure_stop"), atr_value)
+        max_hold = levels["max_hold_minutes"]
+    elif mode == "SCALP":
         levels = scalp_levels(entry, side, atr_value)
         max_hold = levels["max_hold_minutes"]
     else:
@@ -449,8 +472,8 @@ def run_backtest(df, symbol: str = "NIFTY", mode: str = "SCALP",
     iv_multiplier: overrides CONFIG.option_pricing.iv_multiplier for this run.
     """
     mode = mode.upper()
-    if mode not in ("SCALP", "SMART_TRADE"):
-        raise ValueError("mode must be SCALP or SMART_TRADE")
+    if mode not in ("SCALP", "SMART_TRADE", "GBB"):
+        raise ValueError("mode must be SCALP, SMART_TRADE, or GBB")
 
     bar_minutes = max(1, int(bar_minutes))
     n = len(df)

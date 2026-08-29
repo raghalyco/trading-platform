@@ -40,15 +40,31 @@ def _partial_tf_cautions(df_1m: pd.DataFrame) -> list:
 
 
 def build_cautions(df_1m: pd.DataFrame, is_expiry_day: bool, sl_points: float,
-                    spot: float) -> list:
+                    spot: float, mode: str = "SCALP", gbb_result: dict | None = None) -> list:
     cautions = []
-
     cfg = CONFIG.signal
-    latest_range_pct = candle_range_pct(df_1m).iloc[-1]
-    if latest_range_pct < cfg.caution_range_pct:
-        cautions.append(f"Choppy - range <{cfg.caution_range_pct}%")
 
-    cautions.extend(_partial_tf_cautions(df_1m))
+    if mode == "GBB":
+        # GBB has its OWN, more complete chop detection (VWAP whipsaw +
+        # EMA compression + low ATR percentile - see gbb_setup.py's
+        # chop_filter) - the generic single-candle range check below was
+        # built for the 7-point scorer and doesn't reflect GBB's actual
+        # logic, so it's skipped here in favour of GBB's real state.
+        if gbb_result and gbb_result.get("state") == "CHOP":
+            cautions.append("Choppy - VWAP whipsaw / EMA compression detected")
+        if gbb_result and gbb_result.get("state") == "EXTENDED":
+            cautions.append("Extended move - avoid chasing, wait for pullback/retest")
+        # GBB's setup timeframe is 5M, not 15M - the 15M-still-forming
+        # caution doesn't apply to a mode that never looks at a 15M bar.
+        if df_1m is not None and not df_1m.empty:
+            minute = pd.Timestamp(df_1m["timestamp"].iloc[-1]).minute
+            if minute % 5 != 4:
+                cautions.append("5M candle still forming - GBB setup may change")
+    else:
+        latest_range_pct = candle_range_pct(df_1m).iloc[-1]
+        if latest_range_pct < cfg.caution_range_pct:
+            cautions.append(f"Choppy - range <{cfg.caution_range_pct}%")
+        cautions.extend(_partial_tf_cautions(df_1m))
 
     if is_expiry_day:
         cautions.append("Expiry day - trade with caution")

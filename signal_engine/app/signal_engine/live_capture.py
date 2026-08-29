@@ -93,11 +93,21 @@ def capture_entry(
             "recommendation": rec,
         }
 
-    # Fixed OPTION PREMIUM points target (not index points) - this is the
-    # actual exit rule for every captured trade, replacing the ATR-derived
-    # target1. Applies identically to CE and PE: the premium always moves
-    # in the buyer's favor as the trade works, regardless of side.
-    t1_premium = round(entry_premium + CONFIG.auto_trade.target_premium_points, 2)
+    if mode == "GBB":
+        # GBB uses a RATIO target (1:1.5 on premium, off the structure-
+        # based stop) - rec["levels_premium"]["target1"] already computed
+        # this exact number (trade_recommendation.py's GBB branch), so
+        # reuse it directly rather than recomputing here and risking the
+        # two drifting apart (the exact bug fixed earlier for SCALP's
+        # display vs. actual capture mismatch).
+        t1_premium = round(float(pl.get("target1") or entry_premium), 2)
+    else:
+        # Fixed OPTION PREMIUM points target (not index points) - this is
+        # the actual exit rule for every captured SCALP/SMART_TRADE trade,
+        # replacing the ATR-derived target1. Applies identically to CE and
+        # PE: the premium always moves in the buyer's favor as the trade
+        # works, regardless of side.
+        t1_premium = round(entry_premium + CONFIG.auto_trade.target_premium_points, 2)
 
     lot_size = LOT_SIZES.get(symbol, 65)
     trade_id = journal.log_entry(

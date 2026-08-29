@@ -38,6 +38,17 @@ class ScalpConfig:
 
 
 @dataclass
+class GbbConfig:
+    """GBB mode - ported from the 'Setup Scanner [GBB]' Pine Script
+    indicator, an independent third mode alongside SCALP/SMART_TRADE (see
+    gbb_setup.py). Structure-based SL, fixed 1:1.5 premium R:R rather than
+    an ATR-multiple target/stop pair."""
+    rr_multiple: float = 1.5
+    max_hold_minutes: int = 30
+    min_grade_score_pct: float = 40.0   # below this -> NO TRADE regardless of side
+
+
+@dataclass
 class SmartTradeConfig:
     timeframe: str = "5m"
     # Same 5-min ATR baseline as SCALP, sized wider since SMART TRADE holds
@@ -125,6 +136,7 @@ class AppConfig:
     risk: RiskConfig = field(default_factory=RiskConfig)
     scalp: ScalpConfig = field(default_factory=ScalpConfig)
     smart: SmartTradeConfig = field(default_factory=SmartTradeConfig)
+    gbb: GbbConfig = field(default_factory=GbbConfig)
     signal: SignalConfig = field(default_factory=SignalConfig)
     option_pricing: OptionPricingConfig = field(default_factory=OptionPricingConfig)
     auto_trade: AutoTradeConfig = field(default_factory=AutoTradeConfig)
