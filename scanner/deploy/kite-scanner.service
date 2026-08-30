@@ -1,0 +1,36 @@
+[Unit]
+Description=Kite Scanner Bot (Flask + gunicorn)
+After=network.target
+
+[Service]
+Type=simple
+# Adjust User/Group and paths if you didn't deploy to /home/ubuntu/trading-platform
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/trading-platform/scanner
+EnvironmentFile=/home/ubuntu/trading-platform/.env
+# FLASK_DEBUG=0 is REQUIRED here, not optional: app.py only runs its
+# startup cache warm-up and the background Telegram-alert threads
+# (_trending_alert_loop, _episodic_pivot_alert_loop) when either
+# WERKZEUG_RUN_MAIN=="true" (Flask's own dev-server reloader child) or
+# FLASK_DEBUG is "0"/"false"/"False". Under gunicorn neither is set by
+# default, so without this line the app would come up with an EMPTY
+# cache and NO background alerts, silently.
+Environment=FLASK_DEBUG=0
+# --workers 1 is REQUIRED, not a tuning choice: app.py keeps its scanner
+# caches and the two background alert-loop threads as plain in-process
+# state. A second gunicorn worker would be a second, independent Python
+# process with its own copy of that state - meaning duplicate Telegram
+# alerts (each worker's loop would alert on the same fresh breakout) and
+# requests randomly served from whichever worker's cache happens to be
+# stale. Use --threads for concurrency instead, not more workers.
+ExecStart=/home/ubuntu/trading-platform/scanner/.venv/bin/gunicorn app:app --workers 1 --threads 4 --bind 0.0.0.0:8000 --timeout 120
+Restart=always
+RestartSec=5
+# Cap memory so a runaway scan gets restarted by systemd instead of the
+# kernel OOM-killer taking down SSH too - raise this if you're on a
+# smaller-than-default OCI shape.
+MemoryMax=1200M
+
+[Install]
+WantedBy=multi-user.target

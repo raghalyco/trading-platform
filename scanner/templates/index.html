@@ -4,45 +4,60 @@
 <meta charset="UTF-8">
 <title>Kite Scanner Dashboard</title>
 <style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Manrope:wght@400;500;600;700;800&display=swap');
   :root {
-    --bg: #0d0d0c; --surface: #171715; --surface-2: #1e1e1b; --border: #2b2b27;
-    --text: #f2f1ec; --text-secondary: #9a998f; --text-muted: #6b6a64;
-    --green: #22c58a; --green-bg: #0f2e24; --red: #f0554a; --red-bg: #331815;
-    --accent: #5b8cff;
+    /* Palette ported from the "Trading Dashboard" reference (Replit) - a dark
+       terminal theme with a mint/teal primary accent, replacing the previous
+       blue-accent palette. Every component below still references these same
+       tokens, so this block is the entire theme surface for the whole app. */
+    --bg: #11141d; --bg-deep: #0c0f16;
+    --surface: #151a23; --surface-2: #181e28; --surface-hover: #1b222d;
+    --border: #242d38; --border-soft: #202631;
+    --text: #edf3f3; --text-secondary: #b7c1c7; --text-muted: #697583;
+    --green: #5fe0bc; --green-bg: rgba(86, 223, 186, 0.11);
+    --red: #fa7c76; --red-bg: rgba(250, 124, 118, 0.12);
+    --amber: #f0bd64; --amber-bg: rgba(240, 189, 100, 0.12);
+    --accent: #56dfba; --accent-strong: #74e5c6;
+    --font-sans: 'Manrope', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    --font-mono: 'DM Mono', 'SF Mono', Consolas, monospace;
   }
   * { box-sizing: border-box; }
   body {
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    font-family: var(--font-sans);
     background: var(--bg); color: var(--text); margin: 0; display: flex; min-height: 100vh;
   }
   .sidebar {
-    width: 220px; background: var(--surface); border-right: 1px solid var(--border);
+    width: 240px; background: var(--bg-deep); border-right: 1px solid var(--border-soft);
     padding: 1.25rem 1rem; flex-shrink: 0;
   }
-  .brand { display: flex; align-items: center; gap: 10px; margin-bottom: 4px; }
-  .brand .logo { width: 34px; height: 34px; border-radius: 8px; background: var(--accent);
-    display: flex; align-items: center; justify-content: center; font-weight: 700; }
-  .brand-name { font-weight: 700; font-size: 15px; }
-  .brand-sub { font-size: 12px; color: var(--text-muted); margin: 0 0 1rem 44px; }
+  .brand { display: flex; align-items: center; gap: 11px; margin-bottom: 4px; }
+  .brand .logo { width: 32px; height: 32px; border-radius: 9px; background: var(--accent); color: #0b1919;
+    display: flex; align-items: center; justify-content: center; font-weight: 800; letter-spacing: -0.06em;
+    box-shadow: 0 0 22px rgba(86, 223, 186, 0.18); }
+  .brand-name { font-weight: 800; font-size: 15px; letter-spacing: -0.02em; }
+  .brand-sub { font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); margin: 0 0 1rem 43px;
+    text-transform: uppercase; letter-spacing: 0.06em; }
   .status-pill {
-    display: inline-flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 600;
+    display: inline-flex; align-items: center; gap: 7px; font-family: var(--font-mono); font-size: 11px; font-weight: 500;
     padding: 5px 10px; border-radius: 20px; margin-bottom: 1.5rem;
   }
   .status-pill.open { background: var(--green-bg); color: var(--green); }
   .status-pill.closed { background: var(--surface-2); color: var(--text-muted); }
-  .status-pill .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+  .status-pill .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor;
+    box-shadow: 0 0 0 4px color-mix(in srgb, currentColor 15%, transparent); }
   .nav-group { margin-bottom: 1.1rem; }
-  .nav-group-label { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em;
-    color: var(--text-muted); padding: 0 10px; margin-bottom: 5px; }
-  .nav-item { padding: 9px 10px 9px 16px; border-radius: 7px; font-size: 14px; color: var(--text-secondary);
-    cursor: pointer; margin-bottom: 2px; border-left: 3px solid transparent; }
+  .nav-group-label { font-family: var(--font-mono); font-size: 10px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.1em;
+    color: var(--text-muted); padding: 0 12px; margin-bottom: 6px; }
+  .nav-item { padding: 9px 10px 9px 16px; border-radius: 8px; font-size: 12.5px; font-weight: 600; color: var(--text-secondary);
+    cursor: pointer; margin-bottom: 2px; border-left: 3px solid transparent;
+    transition: background .18s ease, color .18s ease, transform .18s ease; }
   .nav-item.active { background: var(--surface-2); color: var(--text); }
-  .nav-item:hover { color: var(--text); }
-  .nav-item.sub { padding-left: 34px; font-size: 13px; color: var(--text-muted); border-left-color: transparent !important; }
+  .nav-item:hover { color: var(--text); background: var(--surface-hover); transform: translateX(2px); }
+  .nav-item.sub { padding-left: 34px; font-size: 12px; font-weight: 500; color: var(--text-muted); border-left-color: transparent !important; }
   .nav-item.sub.active { color: var(--text); }
-  .nav-item.cat-overview.active { border-left-color: var(--accent); }
-  .nav-item.cat-strategy.active { border-left-color: #f0b429; }
-  .nav-item.cat-trades.active { border-left-color: var(--green); }
+  .nav-item.cat-overview.active { border-left-color: transparent; box-shadow: inset 2px 0 0 var(--accent); }
+  .nav-item.cat-strategy.active { border-left-color: transparent; box-shadow: inset 2px 0 0 var(--amber); }
+  .nav-item.cat-trades.active { border-left-color: transparent; box-shadow: inset 2px 0 0 var(--green); }
 
   .mobile-nav { display: none; }
 
@@ -50,55 +65,58 @@
   .tab-page { display: none; }
   .tab-page.active { display: block; }
   .topbar { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.25rem; }
-  .topbar h1 { font-size: 19px; margin: 0; }
-  .topbar .meta { font-size: 13px; color: var(--text-muted); margin-top: 2px; }
+  .topbar h1 { font-family: var(--font-sans); font-weight: 800; font-size: 20px; letter-spacing: -0.03em; margin: 0; }
+  .topbar .meta { font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); margin-top: 4px;
+    text-transform: uppercase; letter-spacing: 0.04em; }
   .topbar .help-text { font-size: 12.5px; color: var(--text-muted); margin-top: 4px; max-width: 640px; line-height: 1.4; }
-  .live-pill { display: none; font-size: 11px; font-weight: 700; letter-spacing: 0.04em; color: #fff; background: #e5484d; border-radius: 4px; padding: 2px 7px; margin-left: 8px; vertical-align: middle; animation: live-pulse 1.6s ease-in-out infinite; }
+  .live-pill { display: none; font-family: var(--font-mono); font-size: 11px; font-weight: 700; letter-spacing: 0.04em; color: #0b1919; background: var(--accent); border-radius: 4px; padding: 2px 7px; margin-left: 8px; vertical-align: middle; animation: live-pulse 1.6s ease-in-out infinite; }
   @keyframes live-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.55; } }
   .mover-row { display: grid; grid-template-columns: 90px 1fr 70px; gap: 10px; align-items: center; padding: 5px 0; font-size: 13px; }
   .mover-bar-track { background: var(--surface-2); border-radius: 3px; height: 16px; overflow: hidden; position: relative; }
   .mover-bar-fill { height: 100%; border-radius: 3px; }
-  .mover-bar-fill.pos { background: #2fbf71; }
-  .mover-bar-fill.neg { background: #e5484d; }
+  .mover-bar-fill.pos { background: var(--green); }
+  .mover-bar-fill.neg { background: var(--red); }
   .movers-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
   @media (max-width: 900px) { .movers-columns { grid-template-columns: 1fr; } }
   .oc-summary { display: flex; gap: 18px; flex-wrap: wrap; margin-bottom: 14px; }
-  .oc-summary .stat { background: var(--surface-2); border-radius: 8px; padding: 8px 14px; }
-  .oc-summary .stat .lbl { font-size: 11px; color: var(--text-muted); }
-  .oc-summary .stat .val { font-size: 16px; font-weight: 700; }
+  .oc-summary .stat { background: var(--surface-2); border: 1px solid var(--border); border-radius: 8px; padding: 8px 14px; }
+  .oc-summary .stat .lbl { font-family: var(--font-mono); font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.05em; }
+  .oc-summary .stat .val { font-family: var(--font-mono); font-size: 16px; font-weight: 500; }
   .oc-oi-bar { height: 12px; border-radius: 2px; }
-  .oc-oi-bar.ce { background: #e5484d; }
-  .oc-oi-bar.pe { background: #2fbf71; }
+  .oc-oi-bar.ce { background: var(--red); }
+  .oc-oi-bar.pe { background: var(--green); }
   table.oc-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
   table.oc-table th, table.oc-table td { padding: 5px 8px; text-align: center; }
   table.oc-table tr.atm-row { background: var(--surface-2); font-weight: 700; }
-  .sub-tabs { display: flex; gap: 6px; margin: 4px 0 14px; flex-wrap: wrap; }
-  .sub-tab { background: var(--surface-2); color: var(--text-secondary); border: 1px solid var(--border);
-    border-radius: 7px; padding: 6px 14px; font-size: 12.5px; font-weight: 600; cursor: pointer; }
-  .sub-tab.active { background: var(--accent); color: white; border-color: var(--accent); }
-  .sub-tab:hover:not(.active) { color: var(--text); }
+  .sub-tabs { display: flex; gap: 3px; margin: 4px 0 14px; flex-wrap: wrap; }
+  .sub-tab { background: transparent; color: var(--text-muted); border: 0;
+    border-radius: 6px; padding: 7px 13px; font-size: 11px; font-weight: 700; cursor: pointer; transition: .18s; }
+  .sub-tab.active { background: var(--green-bg); color: var(--accent-strong); }
+  .sub-tab:hover:not(.active) { color: var(--text-secondary); }
   button.primary {
-    background: var(--accent); color: white; border: none; border-radius: 8px;
-    padding: 9px 16px; font-size: 13px; font-weight: 600; cursor: pointer;
+    background: var(--accent); color: #0b1919; border: 1px solid var(--accent); border-radius: 7px;
+    padding: 9px 16px; font-size: 12.5px; font-weight: 700; cursor: pointer; transition: .18s ease;
   }
+  button.primary:hover:not(:disabled) { background: var(--accent-strong); box-shadow: 0 5px 20px rgba(86, 223, 186, 0.14); }
   button.primary:disabled { opacity: 0.5; cursor: default; }
   button.secondary {
-    background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
-    border-radius: 8px; padding: 9px 16px; font-size: 13px; font-weight: 600; cursor: pointer;
+    background: var(--surface-2); color: var(--text-secondary); border: 1px solid var(--border);
+    border-radius: 7px; padding: 9px 16px; font-size: 12.5px; font-weight: 700; cursor: pointer; transition: .18s ease;
   }
+  button.secondary:hover { color: var(--text); border-color: var(--accent); }
   .topbar-actions { display: flex; align-items: center; gap: 10px; }
   select.universe-select {
-    background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
-    border-radius: 8px; padding: 9px 12px; font-size: 13px; font-weight: 600; cursor: pointer;
+    background: var(--surface-2); color: var(--text-secondary); border: 1px solid var(--border);
+    border-radius: 7px; padding: 9px 12px; font-size: 12.5px; font-weight: 700; cursor: pointer;
   }
 
   .breadth-bar { height: 6px; border-radius: 3px; overflow: hidden; display: flex; margin: 10px 0 6px; background: var(--surface-2); }
   .breadth-bar .up { background: var(--green); }
   .breadth-bar .down { background: var(--red); }
-  .breadth-label { font-size: 12px; color: var(--text-secondary); display: flex; gap: 16px; margin-bottom: 1.25rem; }
+  .breadth-label { font-family: var(--font-mono); font-size: 11px; color: var(--text-secondary); display: flex; gap: 16px; margin-bottom: 1.25rem; }
   .breadth-label .up-dot { color: var(--green); } .breadth-label .down-dot { color: var(--red); }
 
-  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 9px;
     padding: 1.25rem; margin-bottom: 1.5rem; overflow-x: auto; }
   /* Wide tables (many num columns, e.g. Support Bounce) scroll horizontally
      WITHIN the card instead of spilling past its edges - the symbol column
@@ -109,46 +127,51 @@
   table.dense { font-size: 12px; }
   table.dense th, table.dense td { padding: 7px 6px; }
   .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 1.25rem; }
-  .kpi { background: var(--surface-2); border-radius: 10px; padding: 0.9rem; }
-  .kpi .label { font-size: 12px; color: var(--text-muted); margin: 0 0 4px; }
-  .kpi .value { font-size: 21px; font-weight: 700; margin: 0; }
+  .kpi { background: var(--surface); border: 1px solid var(--border); border-radius: 9px; padding: 0.9rem; }
+  .kpi .label { font-family: var(--font-mono); font-size: 10px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.06em; margin: 0 0 6px; }
+  .kpi .value { font-family: var(--font-mono); font-size: 22px; font-weight: 500; letter-spacing: -0.03em; margin: 0; }
   .kpi .value.pos { color: var(--green); } .kpi .value.neg { color: var(--red); }
 
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
-  th { color: var(--text-muted); font-weight: 500; font-size: 11px; text-transform: uppercase; letter-spacing: 0.03em; }
+  th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--border); white-space: nowrap;
+    font-family: var(--font-mono); }
+  th { color: var(--text-muted); font-weight: 500; font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.05em; }
   td.num, th.num { text-align: right; }
-  .sym-badge { display: inline-flex; align-items: center; justify-content: center; width: 26px; height: 26px;
-    border-radius: 6px; background: var(--surface-2); font-size: 10px; font-weight: 700; margin-right: 8px; }
+  tbody tr { transition: background .16s ease; }
+  tbody tr:hover { background: var(--surface-hover); }
+  .sym-badge { display: inline-flex; align-items: center; justify-content: center; width: 27px; height: 27px;
+    border-radius: 7px; background: var(--green-bg); color: var(--accent-strong); border: 1px solid rgba(86, 223, 186, 0.22);
+    font-family: var(--font-mono); font-size: 10px; font-weight: 500; margin-right: 8px; }
   .pos { color: var(--green); } .neg { color: var(--red); }
-  .pill { font-size: 11px; padding: 3px 8px; border-radius: 6px; }
+  .pill { font-family: var(--font-mono); font-size: 10.5px; padding: 3px 8px; border-radius: 6px; }
   .pill.target_hit { background: var(--green-bg); color: var(--green); }
   .pill.stop_hit { background: var(--red-bg); color: var(--red); }
-  .pill.time_stop { background: var(--surface-2); color: var(--text-secondary); }
+  .pill.time_stop { background: var(--amber-bg); color: var(--amber); }
   .pill.stop_loss { background: var(--red-bg); color: var(--red); }
   .empty { color: var(--text-muted); font-size: 13px; padding: 2rem 0; text-align: center; }
   .loading { color: var(--text-muted); font-size: 13px; padding: 2rem 0; text-align: center; }
   .track-btn {
-    font-size: 11px; font-weight: 600; padding: 4px 8px; border-radius: 6px;
-    border: 1px solid var(--border); background: #1e1e1b; color: var(--text-secondary);
-    cursor: pointer; white-space: nowrap;
+    font-family: var(--font-mono); font-size: 10.5px; font-weight: 500; padding: 4px 8px; border-radius: 6px;
+    border: 1px solid var(--border); background: var(--surface-2); color: var(--text-secondary);
+    cursor: pointer; white-space: nowrap; transition: .18s ease;
   }
-  .track-btn:hover { color: var(--ready, #f0b429); border-color: var(--ready, #f0b429); }
+  .track-btn:hover { color: var(--amber); border-color: var(--amber); }
   .track-btn:disabled { opacity: 0.5; cursor: default; }
   .pill.open_trade { background: var(--surface-2); color: var(--text-secondary); }
-  .section-title { font-size: 13px; color: var(--text-secondary); margin: 0 0 10px; font-weight: 600; }
+  .section-title { font-size: 13px; color: var(--text-secondary); margin: 0 0 10px; font-weight: 700; }
   .nday-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1.5rem; }
   @media (max-width: 900px) { .nday-grid { grid-template-columns: 1fr; } }
   .trending-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 1rem; }
-  .sector-card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 1rem; }
-  .sector-card h3 { font-size: 14px; margin: 0 0 10px; font-weight: 600; }
+  .sector-card { background: var(--surface); border: 1px solid var(--border); border-radius: 9px; padding: 1rem; transition: .18s ease; }
+  .sector-card:hover { border-color: var(--accent); transform: translateY(-1px); }
+  .sector-card h3 { font-size: 13px; margin: 0 0 10px; font-weight: 700; }
   .sector-card .stock-row { display: flex; justify-content: space-between; align-items: center;
-    padding: 7px 0; border-bottom: 1px solid var(--border); font-size: 13px; }
+    padding: 7px 0; border-bottom: 1px solid var(--border); font-size: 12.5px; font-family: var(--font-mono); }
   .sector-card .stock-row:last-child { border-bottom: none; }
   .sector-card .stock-row .sym { font-weight: 500; }
-  .sector-card .stock-row .chg { font-weight: 600; }
+  .sector-card .stock-row .chg { font-weight: 500; }
   @keyframes flash-highlight {
-    0% { background: rgba(34, 197, 138, 0.35); }
+    0% { background: rgba(86, 223, 186, 0.3); }
     100% { background: transparent; }
   }
   .dir-up { color: var(--green); }
@@ -713,7 +736,7 @@ function smSignalPill(row) {
   if (sig === 'SELL') return '<span class="pill stop_hit">SELL</span>';
   if (sig === 'READY') {
     const side = row.smart_money_side ? ` ${row.smart_money_side}` : '';
-    return `<span class="pill" style="background:#3a2e14;color:#f0b429">READY${side}</span>`;
+    return `<span class="pill" style="background:rgba(240,189,100,.12);color:#f0bd64">READY${side}</span>`;
   }
   return '<span class="pill" style="background:var(--surface-2);color:var(--text-muted)">NEUTRAL</span>';
 }
@@ -851,8 +874,8 @@ async function runOptionChain(forceRefresh) {
     }).join('');
     wrap.innerHTML = `
       <div class="oc-summary">
-        <div class="stat"><div class="lbl">Total CE OI</div><div class="val" style="color:#e5484d">${d.total_ce_oi ?? '—'}</div></div>
-        <div class="stat"><div class="lbl">Total PE OI</div><div class="val" style="color:#2fbf71">${d.total_pe_oi ?? '—'}</div></div>
+        <div class="stat"><div class="lbl">Total CE OI</div><div class="val" style="color:#fa7c76">${d.total_ce_oi ?? '—'}</div></div>
+        <div class="stat"><div class="lbl">Total PE OI</div><div class="val" style="color:#5fe0bc">${d.total_pe_oi ?? '—'}</div></div>
         <div class="stat"><div class="lbl">PCR</div><div class="val">${d.pcr ?? '—'}</div></div>
         <div class="stat"><div class="lbl">Sentiment</div><div class="val">${d.sentiment}</div></div>
       </div>
@@ -881,7 +904,7 @@ async function runCustomBaskets(forceRefresh) {
       const sign = (r.pct_change_1d ?? 0) >= 0 ? '+' : '';
       const cls = (r.pct_change_1d ?? 0) >= 0 ? 'pos' : 'neg';
       const breakoutBadge = r.breakout_20d
-        ? '<span class="pill" style="background:#0f2e24;color:#22c58a">🎯 BREAKOUT</span>'
+        ? '<span class="pill" style="background:rgba(86,223,186,.11);color:#5fe0bc">🎯 BREAKOUT</span>'
         : '<span class="pill" style="background:var(--surface-2);color:var(--text-muted)">—</span>';
       return `<tr>
         <td><strong>${r.name}</strong></td>
@@ -929,8 +952,8 @@ async function runIndexMovers(forceRefresh) {
     const gainersHtml = (d.top_gainers || []).map(r => barRow(r, 'pos')).join('') || '<div class="empty">None</div>';
     const losersHtml = (d.top_losers || []).map(r => barRow(r, 'neg')).join('') || '<div class="empty">None</div>';
     wrap.innerHTML = `<div class="movers-columns">
-      <div><h3 style="margin:0 0 8px;font-size:14px;color:#2fbf71">Top contributors (up)</h3>${gainersHtml}</div>
-      <div><h3 style="margin:0 0 8px;font-size:14px;color:#e5484d">Top contributors (down)</h3>${losersHtml}</div>
+      <div><h3 style="margin:0 0 8px;font-size:14px;color:#5fe0bc">Top contributors (up)</h3>${gainersHtml}</div>
+      <div><h3 style="margin:0 0 8px;font-size:14px;color:#fa7c76">Top contributors (down)</h3>${losersHtml}</div>
     </div>`;
   } catch (e) {
     wrap.innerHTML = '<div class="empty">Failed: ' + (e.message || e) + '</div>';
@@ -1376,7 +1399,7 @@ window.setSwingSort = setSwingSort;
 
 function swingStatusPill(row) {
   if (row.status === 'TRIGGERED') return '<span class="pill target_hit">TRIGGERED</span>';
-  if (row.status === 'CANDIDATE') return '<span class="pill" style="background:#3a2e14;color:#f0b429">CANDIDATE</span>';
+  if (row.status === 'CANDIDATE') return '<span class="pill" style="background:rgba(240,189,100,.12);color:#f0bd64">CANDIDATE</span>';
   return '<span class="pill" style="background:var(--surface-2);color:var(--text-muted)">WATCHING</span>';
 }
 
@@ -1482,7 +1505,7 @@ function kellSignalBadges(row) {
     html += '<span class="pill" style="background:var(--green-bg);color:var(--green);margin-right:4px;" title="10 EMA > 20 EMA > 50 SMA at the pivot candle">TREND</span>';
   }
   if (row.is_add_on) {
-    html += '<span class="pill" style="background:#3a2e14;color:#f0b429;margin-right:4px;" title="A later base since this day-0 already broke out once — Kell-style position-building add, not a brand-new idea">ADD</span>';
+    html += '<span class="pill" style="background:rgba(240,189,100,.12);color:#f0bd64;margin-right:4px;" title="A later base since this day-0 already broke out once — Kell-style position-building add, not a brand-new idea">ADD</span>';
   }
   if (row.is_blowoff) {
     html += '<span class="pill" style="background:var(--red-bg);color:var(--red);" title="Extended far from the 10 EMA on a volume spike — Kell’s cue to take profit / reduce, not a buy or sell signal by itself">BLOW-OFF</span>';
@@ -1574,9 +1597,9 @@ function setDarvaxSort(key) {
 window.setDarvaxSort = setDarvaxSort;
 
 function darvaxStatusPill(row) {
-  if (row.status === 'INVALIDATED') return '<span class="pill" style="background:#3a1414;color:#f0554a">INVALIDATED</span>';
+  if (row.status === 'INVALIDATED') return '<span class="pill" style="background:rgba(250,124,118,.12);color:#fa7c76">INVALIDATED</span>';
   if (row.status === 'TRIGGERED') return '<span class="pill target_hit">TRIGGERED</span>';
-  return '<span class="pill" style="background:#0f2e24;color:#22c58a">BREAKOUT</span>';
+  return '<span class="pill" style="background:rgba(86,223,186,.11);color:#5fe0bc">BREAKOUT</span>';
 }
 
 function darvaxChartHref(symbol) {
@@ -1638,11 +1661,11 @@ function renderDarvaxTable() {
   const activeSorted = genericSort(active, darvaxSortKey, darvaxSortDir);
   const invalidatedSorted = [...invalidated].sort((a, b) => (b.quality || 0) - (a.quality || 0));
 
-  let html = `<h3 style="margin:0 0 8px;font-size:14px;color:#2fbf71">✅ Following the pattern (${activeSorted.length})</h3>`;
+  let html = `<h3 style="margin:0 0 8px;font-size:14px;color:#5fe0bc">✅ Following the pattern (${activeSorted.length})</h3>`;
   html += activeSorted.length
     ? darvaxTableHtml(activeSorted, true)
     : '<div class="empty">Nothing currently active.</div>';
-  html += `<h3 style="margin:20px 0 8px;font-size:14px;color:#e5484d">⚠️ Just broke the pattern (${invalidatedSorted.length})</h3>`;
+  html += `<h3 style="margin:20px 0 8px;font-size:14px;color:#fa7c76">⚠️ Just broke the pattern (${invalidatedSorted.length})</h3>`;
   html += invalidatedSorted.length
     ? darvaxTableHtml(invalidatedSorted, false)
     : '<div class="empty">None recently invalidated.</div>';
@@ -1735,7 +1758,7 @@ function renderMyTradesTable() {
     const chartHref = t.chart_url || '#';
     const originBadge = t.origin === 'auto'
       ? '<span class="pill" style="background:var(--surface-2);color:var(--text-secondary)">auto</span>'
-      : '<span class="pill" style="background:#0f2e24;color:#22c58a">manual</span>';
+      : '<span class="pill" style="background:rgba(86,223,186,.11);color:#5fe0bc">manual</span>';
     html += `<tr>
       <td style="font-weight:600">${t.symbol}</td>
       <td style="color:var(--text-secondary)">${t.source}</td>

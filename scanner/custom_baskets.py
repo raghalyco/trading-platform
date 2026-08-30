@@ -43,10 +43,24 @@ def _resolve_tokens(kite_client, symbols: list) -> dict:
 
 def compute_basket_value_series(kite_client, symbols: list, lookback_days: int) -> pd.DataFrame:
     """Equal-weighted average of member stocks' daily closes, aligned by
-    date. Returns DataFrame[date, value] sorted ascending."""
+    date. Returns DataFrame[date, value, norm_value] sorted ascending.
+
+    'value' is the raw rupee average of closes - what's displayed as the
+    basket's VALUE, kept exactly as before.
+
+    'norm_value' rebases every member to its own first available close =
+    100 before averaging, so each member contributes an equal-weighted
+    PERCENTAGE move rather than an equal-weighted RUPEE amount. This is
+    used only for breakout detection (see compute_basket_metrics): a
+    basket like "Financial Market Infrastructure" (KFINTECH, IEX, CAMS,
+    MCX, BSE, CDSL) mixes members trading at very different absolute price
+    levels, so a straight average of raw closes is really price-level-
+    weighted - a single high-priced constituent moving on its own can push
+    the raw 'value' to a fresh N-day high (tagging a false BREAKOUT) even
+    when no member individually made a fresh high. norm_value fixes that."""
     tokens = _resolve_tokens(kite_client, symbols)
     if not tokens:
-        return pd.DataFrame(columns=["date", "value"])
+        return pd.DataFrame(columns=["date", "value", "norm_value"])
 
     today = date.today()
     from_date = today - timedelta(days=lookback_days)
@@ -60,26 +74,41 @@ def compute_basket_value_series(kite_client, symbols: list, lookback_days: int) 
         frames.append(s.set_index("date")["close"])
 
     if not frames:
-        return pd.DataFrame(columns=["date", "value"])
+        return pd.DataFrame(columns=["date", "value", "norm_value"])
 
     combined = pd.concat(frames, axis=1)
     value = combined.mean(axis=1, skipna=True)
-    out = value.reset_index()
-    out.columns = ["date", "value"]
+
+    def _rebase(col: pd.Series) -> pd.Series:
+        base = col.dropna()
+        if base.empty:
+            return col
+        return col / base.iloc[0] * 100.0
+
+    norm_value = combined.apply(_rebase, axis=0).mean(axis=1, skipna=True)
+
+    out = pd.DataFrame({"value": value, "norm_value": norm_value}).reset_index()
+    out.columns = ["date", "value", "norm_value"]
     out = out.dropna(subset=["value"]).sort_values("date").reset_index(drop=True)
     return out
 
 
 def compute_basket_metrics(value_series: pd.DataFrame) -> dict:
-    """Same EMA/N-day-high breakout logic as
-    sector_scanner.compute_sector_metrics, applied to the synthetic
-    basket value series instead of a real tradeable index."""
+    """Same N-day-high breakout logic as sector_scanner.compute_sector_metrics
+    (close > rolling max of the prior CUSTOM_BASKET_BREAKOUT_LOOKBACK days),
+    applied to the synthetic basket series instead of a real tradeable index -
+    except the breakout check runs on 'norm_value' (each member rebased to
+    100 at its own first available close, then averaged), not the raw rupee
+    'value'. See compute_basket_value_series' docstring: comparing the raw
+    average against its own rolling high let one high-priced constituent's
+    move alone tag the whole basket as a BREAKOUT with no member actually
+    at a fresh N-day high - this is the fix for that false positive."""
     df = value_series.copy()
     if len(df) < config.CUSTOM_BASKET_BREAKOUT_LOOKBACK + 2:
         return None
 
     df["ema"] = ind.ema(df["value"], config.CUSTOM_BASKET_EMA_PERIOD)
-    df["nday_high"] = df["value"].rolling(config.CUSTOM_BASKET_BREAKOUT_LOOKBACK).max().shift(1)
+    df["norm_nday_high"] = df["norm_value"].rolling(config.CUSTOM_BASKET_BREAKOUT_LOOKBACK).max().shift(1)
 
     last = df.iloc[-1]
     prev_1d = df.iloc[-2] if len(df) >= 2 else None
@@ -89,7 +118,7 @@ def compute_basket_metrics(value_series: pd.DataFrame) -> dict:
             return None
         return round((last["value"] - prev_row["value"]) / prev_row["value"] * 100, 2)
 
-    breakout = bool(last["value"] > last["nday_high"]) if pd.notna(last["nday_high"]) else False
+    breakout = bool(last["norm_value"] > last["norm_nday_high"]) if pd.notna(last["norm_nday_high"]) else False
 
     return {
         "value": round(float(last["value"]), 2),
