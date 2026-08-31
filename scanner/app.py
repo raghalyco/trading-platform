@@ -379,7 +379,7 @@ def _refresh_darvax_cache(mode=None):
 
 
 def _refresh_episodic_pivot_cache(mode=None):
-    mode = mode or (config.EP_UNIVERSE or "nifty500")
+    mode = mode or (config.EP_UNIVERSE or "nifty50")
     try:
         mode = universe_mod.normalize_nifty_mode(mode)
     except ValueError:
@@ -446,38 +446,77 @@ def _should_refresh(want_refresh: bool, has_cache) -> bool:
     again - no explicit "resume" logic needed.
 
     The one exception: if there's no cache at all yet (e.g. the app was
-    started before market open), allow exactly one bootstrap fetch so the
-    UI isn't blank - after that, no further refetch until market hours
-    actually begin. Outside market hours, the UI keeps showing whatever
-    was last fetched (Requirement 4: retain last available results)."""
-    if not want_refresh:
-        return False
+    started before market open, or - since cache warming moved to a
+    background thread - a request lands for a universe/mode combination
+    the warm-up hasn't reached yet, or a tab whose default universe was
+    just changed), allow exactly one bootstrap fetch so the UI isn't left
+    permanently showing "undefined" with no way to self-recover short of
+    the user manually clicking Run Scan - after that, no further refetch
+    until market hours actually begin. Outside market hours, the UI keeps
+    showing whatever was last fetched (Requirement 4: retain last
+    available results).
+
+    IMPORTANT: the no-cache bootstrap check must run BEFORE the
+    want_refresh check, not after - a plain page-load / lazy tab-open
+    passes want_refresh=False, and if that short-circuits first (as this
+    used to), an empty cache never gets its one bootstrap fetch at all."""
     if not has_cache:
         return True
+    if not want_refresh:
+        return False
     return _is_market_open()
 
 
-# Precompute scanner caches so every tab can paint immediately.
+# Precompute scanner caches so every tab can paint immediately - but do it
+# on a BACKGROUND thread, not inline at import time. These 7 scans used to
+# run synchronously here, one after another, before Flask ever started
+# accepting requests - meaning "open the dashboard" actually meant "wait
+# for every tab's data to be scanned first," even though only the Sector
+# Analysis tab (the default landing tab) is visible at that point. Moving
+# this to a daemon thread lets the server start answering "/" and the
+# Sector Analysis request immediately; every other tab's own API route
+# already fills its cache on first request as a safety net (see the
+# _should_refresh()/has_cache check in each api_* handler above), so a tab
+# opened before its background warm-up finishes just pays that one-time
+# cost itself instead of the whole app blocking on it up front.
 # With Flask's reloader: warm only in the child (WERKZEUG_RUN_MAIN=true).
-# With debug off: warm in this process. API handlers also fill an empty cache
-# on first request as a safety net.
+# With debug off: warm in this process.
 import os as _os
+
+
+def _warm_all_caches():
+    try:
+        _refresh_sector_cache()  # default landing tab - warm this one first
+        _refresh_trending_cache()
+        _refresh_stock_for_day_cache()
+        # Previous Support Bounce: warm ALL universe tabs at startup with ONE
+        # combined scan (Nifty 500 is a superset of 50/100/200 - scanning each
+        # tab separately was redundantly re-fetching/re-evaluating the same
+        # symbols up to 5x over).
+        _refresh_support_bounce_all_cache()
+        _refresh_swing_trade_cache()
+        _refresh_darvax_cache()
+        _refresh_custom_basket_cache()
+        # Episodic Pivot now exposes all 5 universes as tabs on the same
+        # page (like Previous Support Bounce), so warm every one of them at
+        # startup instead of only the default - otherwise switching to a
+        # universe nobody's warmed yet would show blank/"undefined" until
+        # that tab's own on-demand scan finished (still correct now thanks
+        # to the _should_refresh() bootstrap fix above, just slower on the
+        # first visit to each unwarmed tab).
+        for _ep_mode in ("nifty50", "nifty100", "nifty200", "nifty500", "fno"):
+            _refresh_episodic_pivot_cache(_ep_mode)
+        print("[startup] background cache warm-up finished for all tabs.", flush=True)
+    except Exception as e:
+        print(f"[startup] background cache warm-up error: {e}", flush=True)
+
+
 if (
     _os.environ.get("WERKZEUG_RUN_MAIN") == "true"
     or _os.environ.get("FLASK_DEBUG", "1") in ("0", "false", "False")
 ):
-    _refresh_sector_cache()
-    _refresh_trending_cache()
-    _refresh_stock_for_day_cache()
-    # Previous Support Bounce: warm ALL universe tabs at startup with ONE
-    # combined scan (Nifty 500 is a superset of 50/100/200 - scanning each
-    # tab separately was redundantly re-fetching/re-evaluating the same
-    # symbols up to 5x over).
-    _refresh_support_bounce_all_cache()
-    _refresh_swing_trade_cache()
-    _refresh_darvax_cache()
-    _refresh_custom_basket_cache()
-    _refresh_episodic_pivot_cache()
+    import threading as _threading
+    _threading.Thread(target=_warm_all_caches, daemon=True).start()
 
 
 def _trending_alert_loop():
@@ -564,7 +603,7 @@ def index():
         support_bounce_universe=config.SUPPORT_BOUNCE_UNIVERSE or "nifty100",
         swing_trade_universe=config.SWING_TRADE_UNIVERSE or "nifty200",
         darvax_universe=config.DARVAX_UNIVERSE or "nifty200",
-        episodic_pivot_universe=config.EP_UNIVERSE or "nifty500",
+        episodic_pivot_universe=config.EP_UNIVERSE or "nifty50",
     )
 
 
@@ -759,7 +798,7 @@ def _swing_trade_universe_arg() -> str:
 def _episodic_pivot_universe_arg() -> str:
     from flask import request
     import universe as universe_mod
-    raw = (request.args.get("universe") or config.EP_UNIVERSE or "nifty500")
+    raw = (request.args.get("universe") or config.EP_UNIVERSE or "nifty50")
     try:
         return universe_mod.normalize_nifty_mode(raw)
     except ValueError:

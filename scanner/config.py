@@ -401,7 +401,7 @@ DARVAX_WEEKLY_MAX_EXTENSION_PCT = 12.0
 # (delayed) entry trigger, its low the stop. Indian circuit filters make it
 # unsafe to buy day-0 itself, hence "delayed". See episodic_pivot.py.
 # ---------------------------------------------------------------------------
-EP_UNIVERSE = "nifty500"              # "nifty50" | "nifty100" | "nifty200" | "nifty500" | "fno"
+EP_UNIVERSE = "nifty50"                # "nifty50" | "nifty100" | "nifty200" | "nifty500" | "fno"
 EP_LOOKBACK_DAYS = 400                 # daily history needed: 50D RVOL avg + neglect window + EMA/ATR warmup
 
 # "Surprise" gate — no big move in the window BEFORE day-0 (else the news was

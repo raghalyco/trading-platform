@@ -48,16 +48,19 @@
   .nav-group { margin-bottom: 1.1rem; }
   .nav-group-label { font-family: var(--font-mono); font-size: 10px; font-weight: 500; text-transform: uppercase; letter-spacing: 0.1em;
     color: var(--text-muted); padding: 0 12px; margin-bottom: 6px; }
-  .nav-item { padding: 9px 10px 9px 16px; border-radius: 8px; font-size: 12.5px; font-weight: 600; color: var(--text-secondary);
+  .nav-item { display: flex; align-items: center; gap: 9px; padding: 9px 10px 9px 13px; border-radius: 8px;
+    font-size: 12.5px; font-weight: 600; color: var(--text-secondary);
     cursor: pointer; margin-bottom: 2px; border-left: 3px solid transparent;
     transition: background .18s ease, color .18s ease, transform .18s ease; }
   .nav-item.active { background: var(--surface-2); color: var(--text); }
   .nav-item:hover { color: var(--text); background: var(--surface-hover); transform: translateX(2px); }
-  .nav-item.sub { padding-left: 34px; font-size: 12px; font-weight: 500; color: var(--text-muted); border-left-color: transparent !important; }
+  .nav-item.sub { padding-left: 31px; font-size: 12px; font-weight: 500; color: var(--text-muted); border-left-color: transparent !important; }
+  .nav-item.sub .nav-icon { width: 13px; height: 13px; }
   .nav-item.sub.active { color: var(--text); }
-  .nav-item.cat-overview.active { border-left-color: transparent; box-shadow: inset 2px 0 0 var(--accent); }
-  .nav-item.cat-strategy.active { border-left-color: transparent; box-shadow: inset 2px 0 0 var(--amber); }
-  .nav-item.cat-trades.active { border-left-color: transparent; box-shadow: inset 2px 0 0 var(--green); }
+  .nav-icon { width: 16px; height: 16px; flex-shrink: 0; opacity: 0.9; }
+  .nav-item.cat-overview.active { border-left-color: transparent; background: var(--accent-bg, rgba(86, 223, 186, 0.11)); color: var(--accent-strong); box-shadow: inset 2px 0 0 var(--accent); }
+  .nav-item.cat-strategy.active { border-left-color: transparent; background: var(--amber-bg); color: var(--amber); box-shadow: inset 2px 0 0 var(--amber); }
+  .nav-item.cat-trades.active { border-left-color: transparent; background: var(--green-bg); color: var(--green); box-shadow: inset 2px 0 0 var(--green); }
 
   .mobile-nav { display: none; }
 
@@ -141,7 +144,25 @@
   tbody tr:hover { background: var(--surface-hover); }
   .sym-badge { display: inline-flex; align-items: center; justify-content: center; width: 27px; height: 27px;
     border-radius: 7px; background: var(--green-bg); color: var(--accent-strong); border: 1px solid rgba(86, 223, 186, 0.22);
-    font-family: var(--font-mono); font-size: 10px; font-weight: 500; margin-right: 8px; }
+    font-family: var(--font-mono); font-size: 10px; font-weight: 500; margin-right: 8px; flex-shrink: 0; }
+  /* Auto-generated "Stock" cell layout (rank + colored initial badge + name),
+     mirrors the reference dashboard's table styling - applied by the
+     enhanceTableVisuals() JS helper right after each render*Table() call,
+     not written by hand into every screener's markup. */
+  .rank { font-family: var(--font-mono); font-size: 11px; color: var(--text-muted); display: inline-block;
+    width: 20px; margin-right: 6px; }
+  .stock-cell { display: flex; align-items: center; }
+  .stock-cell .sym-text { font-weight: 700; letter-spacing: -0.01em; }
+  .sym-badge.c0 { background: var(--green-bg); color: var(--accent-strong); border-color: rgba(86,223,186,.22); }
+  .sym-badge.c1 { background: var(--amber-bg); color: var(--amber); border-color: rgba(240,189,100,.25); }
+  .sym-badge.c2 { background: var(--red-bg); color: var(--red); border-color: rgba(250,124,118,.22); }
+  .sym-badge.c3 { background: rgba(120,140,255,.12); color: #9fb0ff; border-color: rgba(120,140,255,.25); }
+  .sym-badge.c4 { background: rgba(200,120,255,.12); color: #ce9dff; border-color: rgba(200,120,255,.25); }
+  .change-pill { display: inline-flex; align-items: center; gap: 3px; font-family: var(--font-mono); font-size: 11.5px;
+    font-weight: 600; padding: 2px 7px; border-radius: 5px; }
+  .change-pill.up { color: var(--green); background: var(--green-bg); }
+  .change-pill.down { color: var(--red); background: var(--red-bg); }
+  .change-pill svg { flex-shrink: 0; }
   .pos { color: var(--green); } .neg { color: var(--red); }
   .pill { font-family: var(--font-mono); font-size: 10.5px; padding: 3px 8px; border-radius: 6px; }
   .pill.target_hit { background: var(--green-bg); color: var(--green); }
@@ -250,38 +271,38 @@
 
   <div class="nav-group">
     <div class="nav-group-label">Market Overview</div>
-    <div class="nav-item cat-overview active" data-tab="sector">Sector Analysis</div>
-    <div class="nav-item cat-overview" data-tab="trending">Trending Stocks by Sector</div>
-    <div class="nav-item cat-overview" data-tab="indexmovers">Index Movers</div>
-    <div class="nav-item cat-overview" data-tab="optionchain">Option Chain (PCR)</div>
-    <div class="nav-item cat-overview" data-tab="custombaskets">Sector Breakouts (Custom)</div>
+    <div class="nav-item cat-overview active" data-tab="sector"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21.21 15.89A10 10 0 1 1 8 2.83"/><path d="M22 12A10 10 0 0 0 12 2v10z"/></svg><span>Sector Analysis</span></div>
+    <div class="nav-item cat-overview" data-tab="trending"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M16 7h6v6"/><path d="m22 7-8.5 8.5-5-5L2 17"/></svg><span>Trending Stocks by Sector</span></div>
+    <div class="nav-item cat-overview" data-tab="indexmovers"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg><span>Index Movers</span></div>
+    <div class="nav-item cat-overview" data-tab="optionchain"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/><path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65"/><path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"/></svg><span>Option Chain (PCR)</span></div>
+    <div class="nav-item cat-overview" data-tab="custombaskets"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="22" y1="12" x2="18" y2="12"/><line x1="6" y1="12" x2="2" y2="12"/><line x1="12" y1="6" x2="12" y2="2"/><line x1="12" y1="22" x2="12" y2="18"/></svg><span>Sector Breakouts (Custom)</span></div>
   </div>
 
   <div class="nav-group">
     <div class="nav-group-label">Strategy Screeners</div>
-    <div class="nav-item cat-strategy" data-tab="stockday">Stock for day</div>
-    <div class="nav-item cat-strategy sub" data-tab="stockday-bt">↳ Backtest (3M)</div>
-    <div class="nav-item cat-strategy" data-tab="support">Previous Support Bounce</div>
-    <div class="nav-item cat-strategy" data-tab="swing">Swing Trade (Weekly)</div>
-    <div class="nav-item cat-strategy" data-tab="darvax">DarvaX (Darvas Box)</div>
-    <div class="nav-item cat-strategy" data-tab="intraday">Intraday Monitor</div>
+    <div class="nav-item cat-strategy" data-tab="stockday"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg><span>Stock for day</span></div>
+    <div class="nav-item cat-strategy sub" data-tab="stockday-bt"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg><span>Backtest (3M)</span></div>
+    <div class="nav-item cat-strategy" data-tab="support"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/><line x1="4.93" y1="4.93" x2="9.17" y2="9.17"/><line x1="14.83" y1="14.83" x2="19.07" y2="19.07"/><line x1="14.83" y1="9.17" x2="19.07" y2="4.93"/><line x1="4.93" y1="19.07" x2="9.17" y2="14.83"/></svg><span>Previous Support Bounce</span></div>
+    <div class="nav-item cat-strategy" data-tab="swing"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg><span>Swing Trade (Weekly)</span></div>
+    <div class="nav-item cat-strategy" data-tab="darvax"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4a2 2 0 0 0 1-1.73Z"/><path d="M3.3 7 12 12l8.7-5"/><path d="M12 22V12"/></svg><span>DarvaX (Darvas Box)</span></div>
+    <div class="nav-item cat-strategy" data-tab="intraday"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="10" y1="2" x2="14" y2="2"/><line x1="12" y1="14" x2="15" y2="11"/><circle cx="12" cy="14" r="8"/></svg><span>Intraday Monitor</span></div>
   </div>
 
   <div class="nav-group">
     <div class="nav-group-label">Episodic Pivot</div>
-    <div class="nav-item cat-strategy" data-tab="episodicpivot">Episodic Pivot (Delayed EP)</div>
-    <div class="nav-item cat-strategy sub" data-tab="epbacktest">↳ Backtest (6M)</div>
+    <div class="nav-item cat-strategy" data-tab="episodicpivot"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"/><path d="m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"/><path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0"/><path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"/></svg><span>Episodic Pivot (Delayed EP)</span></div>
+    <div class="nav-item cat-strategy sub" data-tab="epbacktest"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg><span>Backtest (6M)</span></div>
   </div>
 
   <div class="nav-group">
     <div class="nav-group-label">Developer</div>
-    <div class="nav-item cat-strategy" data-tab="sourcecode">Source Code</div>
+    <div class="nav-item cat-strategy" data-tab="sourcecode"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/></svg><span>Source Code</span></div>
   </div>
 
   <div class="nav-group">
     <div class="nav-group-label">My Trading</div>
-    <div class="nav-item cat-trades" data-tab="mytrades">My Trades</div>
-    <div class="nav-item cat-trades" data-tab="backtest">Performance / Backtest</div>
+    <div class="nav-item cat-trades" data-tab="mytrades"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12V7H5a2 2 0 0 1 0-4h14v4"/><path d="M3 5v14a2 2 0 0 0 2 2h16v-5"/><path d="M18 12a2 2 0 0 0 0 4h4v-4Z"/></svg><span>My Trades</span></div>
+    <div class="nav-item cat-trades" data-tab="backtest"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 2v20l2-1 2 1 2-1 2 1 2-1 2 1 2-1 2 1V2l-2 1-2-1-2 1-2-1-2 1-2-1-2 1Z"/><path d="M8 7h8"/><path d="M8 11h8"/><path d="M8 15h5"/></svg><span>Performance / Backtest</span></div>
   </div>
 </div>
 
@@ -525,15 +546,15 @@
         <p class="help-text">Ankur Patel's method: a stock that did nothing (no big move) suddenly reacts to a surprise — results, a new order, a policy change, promoter change — with a big one-day move (5.5%+) on unusually heavy volume ("day-0", &gt;=300% of its own 50-day average). Because Indian circuit filters make the reaction candle itself unsafe to buy, this waits for a tight range-contraction pullback candle afterward: its high is the entry, its low the stop. WATCHING = pullback candle formed (or day-0 just happened), not broken out yet. TRIGGERED = it broke out recently, not gapped-and-chased. "Target" is a technical projection (day-0's own candle range, projected from entry) and gates what shows here (stop capped at 4%, R:R floor 1.5) — "1:3 (book 50%)" is Ankur's own stated convention (book half there, trail the rest below the 20 EMA) shown for reference, it doesn't gate the list. The Signals column layers in Oliver Kell's EMA-stack/price-cycle overlay (2026-08-22): TREND = 10/20 EMA/50 SMA stacked at the pivot (soft scoring bonus, doesn't reject setups), ADD = a later base after this day-0 already broke out once (position-building, not a fresh idea), BLOW-OFF = extended far from the 10 EMA on a volume spike (his cue to take profit/reduce — informational only, doesn't drive an auto-exit).</p>
       </div>
       <div class="topbar-actions">
-        <select class="universe-select" id="episodicPivotUniverse" title="Index universe">
-          <option value="nifty50" {% if episodic_pivot_universe == 'nifty50' %}selected{% endif %}>Nifty 50</option>
-          <option value="nifty100" {% if episodic_pivot_universe == 'nifty100' %}selected{% endif %}>Nifty 100</option>
-          <option value="nifty200" {% if episodic_pivot_universe == 'nifty200' %}selected{% endif %}>Nifty 200</option>
-          <option value="nifty500" {% if episodic_pivot_universe == 'nifty500' %}selected{% endif %}>Nifty 500</option>
-          <option value="fno" {% if episodic_pivot_universe == 'fno' %}selected{% endif %}>F&amp;O</option>
-        </select>
         <button class="primary" id="episodicPivotBtn" onclick="runEpisodicPivot(true)">Run Scan</button>
       </div>
+    </div>
+    <div class="sub-tabs" id="episodicPivotUniverseTabs">
+      <button class="sub-tab {% if episodic_pivot_universe == 'nifty50' %}active{% else %}{% endif %}" data-universe="nifty50" onclick="switchEpisodicPivotUniverse('nifty50')">Nifty 50</button>
+      <button class="sub-tab {% if episodic_pivot_universe == 'nifty100' %}active{% endif %}" data-universe="nifty100" onclick="switchEpisodicPivotUniverse('nifty100')">Nifty 100</button>
+      <button class="sub-tab {% if episodic_pivot_universe == 'nifty200' %}active{% endif %}" data-universe="nifty200" onclick="switchEpisodicPivotUniverse('nifty200')">Nifty 200</button>
+      <button class="sub-tab {% if episodic_pivot_universe == 'nifty500' %}active{% endif %}" data-universe="nifty500" onclick="switchEpisodicPivotUniverse('nifty500')">Nifty 500</button>
+      <button class="sub-tab {% if episodic_pivot_universe == 'fno' %}active{% endif %}" data-universe="fno" onclick="switchEpisodicPivotUniverse('fno')">F&amp;O</button>
     </div>
     <div class="card">
       <div id="episodicPivotTableWrap"><div class="loading">Loading startup cache…</div></div>
@@ -722,6 +743,54 @@ function genericSort(rows, key, dir) {
   });
 }
 
+// Applies the reference dashboard's "Stock" cell (rank + colored initial
+// badge + symbol) and colored +/-% pill treatment to a freshly-rendered
+// table, without every render*Table() function having to hand-build that
+// markup itself. Call this once, right after setting a table wrapper's
+// innerHTML. Safe to call on any table: cells that don't look like a bare
+// stock symbol or a "+1.23%"/"-1.23%" value are left untouched.
+const SYM_BADGE_COLORS = ['c0', 'c1', 'c2', 'c3', 'c4'];
+function enhanceTableVisuals(root) {
+  if (!root) return;
+  const table = root.querySelector ? root.querySelector('table') : null;
+  if (!table) return;
+  const rows = table.querySelectorAll('tbody tr');
+  rows.forEach((tr, i) => {
+    const cells = tr.querySelectorAll('td');
+    if (!cells.length) return;
+    const first = cells[0];
+    if (first && !first.querySelector('.stock-cell')) {
+      // A bare ticker cell (plain text, or a single <a> wrapping plain text)
+      // becomes a rank + colored-initial badge + symbol, matching the
+      // reference's "Stock" column.
+      const link = first.querySelector('a');
+      const txt = (link ? link.textContent : first.textContent).trim();
+      if (/^[A-Z][A-Z0-9&-]{1,14}$/.test(txt) && first.children.length <= 1) {
+        const letter = txt.charAt(0);
+        const color = SYM_BADGE_COLORS[txt.charCodeAt(0) % SYM_BADGE_COLORS.length];
+        const symHtml = link
+          ? `<a href="${link.getAttribute('href')}" target="_blank" rel="noopener" class="sym-text" style="color:inherit">${txt}</a>`
+          : `<span class="sym-text">${txt}</span>`;
+        first.innerHTML = `<span class="rank">${String(i + 1).padStart(2, '0')}</span>` +
+          `<span class="sym-badge ${color}">${letter}</span>${symHtml}`;
+        first.classList.add('stock-cell');
+      }
+    }
+    cells.forEach(td => {
+      if (td.querySelector('.change-pill') || td.querySelector('.stock-cell')) return;
+      const t = td.textContent.trim();
+      const m = t.match(/^([+-])(\d[\d,]*\.?\d*)%$/);
+      if (m) {
+        const dir = m[1] === '+' ? 'up' : 'down';
+        const arrow = dir === 'up'
+          ? '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M7 7h10v10"/><path d="M7 17 17 7"/></svg>'
+          : '<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round"><path d="M17 7v10H7"/><path d="M17 7 7 17"/></svg>';
+        td.innerHTML = `<span class="change-pill ${dir}">${arrow}${t}</span>`;
+      }
+    });
+  });
+}
+
 function patternChartHref(symbol) {
   return '/support-chart/' + encodeURIComponent(symbol);
 }
@@ -778,6 +847,18 @@ let activeTab = 'sector';
 let indexMoversLoaded = false;
 let optionChainLoaded = false;
 let customBasketsLoaded = false;
+// Lazy-load guards for the rest of the tabs: each of these used to fire
+// its API call unconditionally the instant the page loaded (see the
+// bottom of this script), regardless of whether that tab was ever opened
+// - 7 scans racing the very first paint just to populate 6 tabs the user
+// might never visit this session. Now each one loads once, the first time
+// its tab is actually switched to, same pattern already used above for
+// Index Movers / Option Chain / Custom Baskets.
+let trendingLoaded = false;
+let stockdayLoaded = false;
+let supportLoaded = false;
+let swingLoaded = false;
+let darvaxLoaded = false;
 
 function switchTab(tab) {
   activeTab = tab;
@@ -794,6 +875,11 @@ function switchTab(tab) {
   if (tab === 'mytrades') runMyTrades();
   if (tab === 'sector') { startLivePolling('sector'); } else { stopLivePolling('sector'); }
   if (tab === 'trending') { startLivePolling('trending'); } else { stopLivePolling('trending'); }
+  if (tab === 'trending' && !trendingLoaded) { trendingLoaded = true; runTrendingScan(false); }
+  if (tab === 'stockday' && !stockdayLoaded) { stockdayLoaded = true; runStockForDay(false); }
+  if (tab === 'support' && !supportLoaded) { supportLoaded = true; runSupportBounce(false); }
+  if (tab === 'swing' && !swingLoaded) { swingLoaded = true; runSwingTrade(false); }
+  if (tab === 'darvax' && !darvaxLoaded) { darvaxLoaded = true; runDarvax(false); }
   if (tab === 'indexmovers' && !indexMoversLoaded) { indexMoversLoaded = true; runIndexMovers(false); }
   if (tab === 'optionchain' && !optionChainLoaded) { optionChainLoaded = true; runOptionChain(false); }
   if (tab === 'custombaskets' && !customBasketsLoaded) { customBasketsLoaded = true; runCustomBaskets(false); }
@@ -1026,6 +1112,7 @@ function renderSectorTable() {
   }
   html += '</tbody></table>';
   document.getElementById('sectorTableWrap').innerHTML = html;
+  enhanceTableVisuals(document.getElementById('sectorTableWrap'));
 }
 
 // ---------------- Trending Stocks by Sector ----------------
@@ -1158,6 +1245,7 @@ function renderStockForDayTable() {
   }
   html += '</tbody></table>';
   document.getElementById('stockdayTableWrap').innerHTML = html;
+  enhanceTableVisuals(document.getElementById('stockdayTableWrap'));
 }
 
 // ---------------- Stock for day · Backtest (3M) ----------------
@@ -1360,6 +1448,7 @@ function renderSupportBounceTable() {
   }
   html += '</tbody></table>';
   document.getElementById('supportTableWrap').innerHTML = html;
+  enhanceTableVisuals(document.getElementById('supportTableWrap'));
 }
 
 // ---------------- Swing Trade (Weekly) ----------------
@@ -1454,35 +1543,68 @@ function renderSwingTradeTable() {
   }
   html += '</tbody></table>';
   document.getElementById('swingTableWrap').innerHTML = html;
+  enhanceTableVisuals(document.getElementById('swingTableWrap'));
 }
 
 // ---------------- Episodic Pivot (Delayed EP) ----------------
+// Same per-universe-tab pattern as Previous Support Bounce: each of the 5
+// universes (Nifty 50/100/200/500, F&O) is a sub-tab with its own cached
+// result set, so switching between them is instant once each has been
+// visited once - only a universe that's never been opened this session
+// triggers a fresh fetch. Run Scan force-refreshes only whichever tab is
+// currently active.
 let episodicPivotData = null;
+let episodicPivotDataByMode = {};
+let currentEpisodicPivotUniverse = 'nifty50';
 let episodicPivotSortKey = 'score', episodicPivotSortDir = -1;
 
-async function runEpisodicPivot(refresh = true) {
+function switchEpisodicPivotUniverse(mode) {
+  currentEpisodicPivotUniverse = mode;
+  document.querySelectorAll('#episodicPivotUniverseTabs .sub-tab').forEach(el =>
+    el.classList.toggle('active', el.dataset.universe === mode));
+  if (episodicPivotDataByMode[mode]) {
+    episodicPivotData = episodicPivotDataByMode[mode];
+    renderEpisodicPivotMeta();
+    renderEpisodicPivotTable();
+  } else {
+    runEpisodicPivot(false, mode);
+  }
+}
+
+async function runEpisodicPivot(refresh = true, mode = null) {
+  mode = mode || currentEpisodicPivotUniverse;
   const btn = document.getElementById('episodicPivotBtn');
-  const mode = stockdayUniverseMode('episodicPivotUniverse');
   btn.disabled = true; btn.textContent = refresh ? 'Scanning...' : 'Loading...';
-  if (refresh || !episodicPivotData) {
+  if (refresh || !episodicPivotDataByMode[mode]) {
     document.getElementById('episodicPivotTableWrap').innerHTML =
       '<div class="loading">' + (refresh ? 'Scanning for neglected-stock reactions + tight-range pullbacks…' : 'Loading startup cache…') + '</div>';
   }
   try {
     let url = '/api/episodic_pivot?universe=' + encodeURIComponent(mode);
     if (refresh) url += '&refresh=1';
-    episodicPivotData = await fetchJson(url);
-    const stamp = new Date(episodicPivotData.generated_at).toLocaleTimeString();
-    const src = episodicPivotData.cached ? 'startup cache' : 'fresh scan';
-    const label = episodicPivotData.universe_label || mode;
-    document.getElementById('episodicPivotMeta').textContent =
-      `${episodicPivotData.num_results} setup(s) · ${label} · scanned ${episodicPivotData.scanned}/${episodicPivotData.universe_size} · ${src} · ${stamp} · click Run Scan to refresh`;
-    updateMarketStatus(episodicPivotData.market_open);
-    renderEpisodicPivotTable();
+    const data = await fetchJson(url);
+    episodicPivotDataByMode[mode] = data;
+    if (mode === currentEpisodicPivotUniverse) {
+      episodicPivotData = data;
+      renderEpisodicPivotMeta();
+      updateMarketStatus(data.market_open);
+      renderEpisodicPivotTable();
+    }
   } catch (e) {
-    document.getElementById('episodicPivotTableWrap').innerHTML = '<div class="empty">Scan failed: ' + (e.message || e) + '</div>';
+    if (mode === currentEpisodicPivotUniverse) {
+      document.getElementById('episodicPivotTableWrap').innerHTML = '<div class="empty">Scan failed: ' + (e.message || e) + '</div>';
+    }
   }
   btn.disabled = false; btn.textContent = 'Run Scan';
+}
+
+function renderEpisodicPivotMeta() {
+  if (!episodicPivotData) return;
+  const stamp = new Date(episodicPivotData.generated_at).toLocaleTimeString();
+  const src = episodicPivotData.cached ? 'startup cache' : 'fresh scan';
+  const label = episodicPivotData.universe_label || currentEpisodicPivotUniverse;
+  document.getElementById('episodicPivotMeta').textContent =
+    `${episodicPivotData.num_results} setup(s) · ${label} · scanned ${episodicPivotData.scanned}/${episodicPivotData.universe_size} · ${src} · ${stamp} · click Run Scan to refresh`;
 }
 
 function setEpisodicPivotSort(key) {
@@ -1556,6 +1678,7 @@ function renderEpisodicPivotTable() {
   }
   html += '</tbody></table>';
   document.getElementById('episodicPivotTableWrap').innerHTML = html;
+  enhanceTableVisuals(document.getElementById('episodicPivotTableWrap'));
 }
 
 // ---------------- DarvaX (Darvas Box) ----------------
@@ -1670,6 +1793,7 @@ function renderDarvaxTable() {
     ? darvaxTableHtml(invalidatedSorted, false)
     : '<div class="empty">None recently invalidated.</div>';
   document.getElementById('darvaxTableWrap').innerHTML = html;
+  enhanceTableVisuals(document.getElementById('darvaxTableWrap'));
 }
 
 // ---------------- My Trades (shared "Track" button, all screeners) ----------------
@@ -1779,6 +1903,7 @@ function renderMyTradesTable() {
   }
   html += '</tbody></table>';
   document.getElementById('mytradesTableWrap').innerHTML = html;
+  enhanceTableVisuals(document.getElementById('mytradesTableWrap'));
 }
 
 // ---------------- Intraday Monitor ----------------
@@ -2356,16 +2481,14 @@ async function runCodeSearch(q) {
   }
 }
 
-// Initial load: show startup-cached results on every scanner tab.
-// Run Scan buttons force a fresh refresh (?refresh=1).
+// Initial load: only fetch the tab that's actually visible (Sector
+// Analysis, the default). Every other tab used to be fetched here too,
+// unconditionally, on every single page load - meaning the very first
+// paint had to wait behind 7 scans for tabs nobody had opened yet. Now
+// each of those loads lazily, once, the first time its tab is switched to
+// (see the trendingLoaded/stockdayLoaded/etc. guards in switchTab() above)
+// - Run Scan buttons still force a fresh refresh (?refresh=1) same as before.
 runSectorScan(false);
-runTrendingScan(false);
-runStockForDay(false);
-runSupportBounce(false);
-runSwingTrade(false);
-runDarvax(false);
-runEpisodicPivot(false);
-runMyTrades();
 // Sector Analysis is the default active tab on load — start its live poll
 // immediately (other tabs' polling starts when you switch to them).
 startLivePolling('sector');
