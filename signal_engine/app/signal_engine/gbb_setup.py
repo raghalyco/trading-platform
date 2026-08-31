@@ -427,7 +427,20 @@ def compute_gbb_signal(df_5m: pd.DataFrame, df_1m: pd.DataFrame, min_grade_score
     elif brt["state"] == STATE_WAITING_RETEST:
         votes["break_retest_forming"] = True
     is_long = side == "CE"
-    votes["vwap"] = bool(vwap_sig["long" if is_long else "short"] or (close.iloc[-1] > vwap.iloc[-1]) == is_long)
+    # session_vwap() deliberately replaces any zero-cumulative-volume bar
+    # with pd.NA (not NaN) to avoid a divide-by-zero - that's correct there,
+    # but it means vwap.iloc[-1] can legitimately BE pd.NA (a zero-volume
+    # bar, a feed gap, or very early in the session before volume has
+    # accumulated). Using it directly in a boolean `or`/`==` expression
+    # forces Python to coerce pd.NA to True/False to short-circuit the `or`,
+    # which pd.NA refuses to do ("boolean value of NA is ambiguous") - this
+    # was crashing the whole GBB signal instead of just skipping that one
+    # vote. Guard it the same way rsi/macd already are below.
+    vwap_last = vwap.iloc[-1]
+    above_vwap_matches_side = (
+        bool((close.iloc[-1] > vwap_last) == is_long) if not pd.isna(vwap_last) else False
+    )
+    votes["vwap"] = bool(vwap_sig["long" if is_long else "short"] or above_vwap_matches_side)
     score += 2 if votes["vwap"] else 0
     votes["ema"] = bool((ema9.iloc[-1] > ema21.iloc[-1]) == is_long and (ema21.iloc[-1] > ema50.iloc[-1]) == is_long)
     score += 2 if votes["ema"] else 0
