@@ -33,6 +33,7 @@ here, premium conversion there).
 """
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 
 from app.indicators.core import ema, rsi, macd, atr as atr_series
@@ -63,7 +64,15 @@ def session_vwap(df: pd.DataFrame) -> pd.Series:
         day = pd.Series(0, index=df.index)  # single unknown session - treat as one day
     pv = typical * df["volume"]
     cum_pv = pv.groupby(day).cumsum()
-    cum_vol = df["volume"].groupby(day).cumsum().replace(0, pd.NA)
+    # np.nan, NOT pd.NA: replacing with pd.NA silently upcasts this whole
+    # Series from float64 to object dtype, and pandas' vectorized `<`/`>`
+    # comparisons against an object-dtype Series containing pd.NA raise
+    # "boolean value of NA is ambiguous" immediately - before any downstream
+    # pd.isna()/.fillna() guard even gets a chance to run. np.nan keeps the
+    # dtype float64, so `close < vwap` and `a and b`-style boolean
+    # expressions all behave normally (a NaN comparison just evaluates to
+    # False), and pd.isna() still catches it exactly the same as pd.NA.
+    cum_vol = df["volume"].groupby(day).cumsum().replace(0, np.nan)
     return cum_pv / cum_vol
 
 
@@ -87,11 +96,22 @@ def vwap_reclaim(df: pd.DataFrame, vwap: pd.Series, min_bars_away: int = 6) -> d
     """Price spends >= min_bars_away bars on one side of session VWAP,
     then closes back across it this bar."""
     close = df["close"]
-    if len(close) < min_bars_away + 2 or vwap.isna().iloc[-1]:
+    # Guard BOTH the last bar and the one before it - crossed_up/crossed_dn
+    # below reads vwap.iloc[-2] as well as iloc[-1], and the original check
+    # here only covered iloc[-1].
+    if len(close) < min_bars_away + 2 or pd.isna(vwap.iloc[-1]) or pd.isna(vwap.iloc[-2]):
         return {"long": False, "short": False, "forming": False}
 
-    below = (close < vwap)
-    above = (close > vwap)
+    # vwap can be pd.NA at ANY earlier bar too (session_vwap() replaces a
+    # zero-cumulative-volume denominator with NA rather than dividing by
+    # zero) - comparing a Series against a Series containing pd.NA produces
+    # pd.NA entries in the result, and the consecutive-run loop below does
+    # `if v:` on every entry, which crashes ("boolean value of NA is
+    # ambiguous") the moment it hits one. Treat "relationship unknown at
+    # this bar" as "doesn't extend the run" rather than letting it crash
+    # the whole GBB signal.
+    below = (close < vwap).fillna(False)
+    above = (close > vwap).fillna(False)
     # Consecutive-run length ending at the PREVIOUS bar (before today's cross)
     run_below = 0
     for v in reversed(below.iloc[:-1].tolist()):
