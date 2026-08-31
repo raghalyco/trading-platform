@@ -33,6 +33,7 @@ here, premium conversion there).
 """
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 
 from app.indicators.core import ema, rsi, macd, atr as atr_series
@@ -63,7 +64,15 @@ def session_vwap(df: pd.DataFrame) -> pd.Series:
         day = pd.Series(0, index=df.index)  # single unknown session - treat as one day
     pv = typical * df["volume"]
     cum_pv = pv.groupby(day).cumsum()
-    cum_vol = df["volume"].groupby(day).cumsum().replace(0, pd.NA)
+    # np.nan, NOT pd.NA: replacing with pd.NA silently upcasts this whole
+    # Series from float64 to object dtype, and pandas' vectorized `<`/`>`
+    # comparisons against an object-dtype Series containing pd.NA raise
+    # "boolean value of NA is ambiguous" immediately - before any downstream
+    # pd.isna()/.fillna() guard even gets a chance to run. np.nan keeps the
+    # dtype float64, so `close < vwap` and `a and b`-style boolean
+    # expressions all behave normally (a NaN comparison just evaluates to
+    # False), and pd.isna() still catches it exactly the same as pd.NA.
+    cum_vol = df["volume"].groupby(day).cumsum().replace(0, np.nan)
     return cum_pv / cum_vol
 
 
@@ -87,11 +96,22 @@ def vwap_reclaim(df: pd.DataFrame, vwap: pd.Series, min_bars_away: int = 6) -> d
     """Price spends >= min_bars_away bars on one side of session VWAP,
     then closes back across it this bar."""
     close = df["close"]
-    if len(close) < min_bars_away + 2 or vwap.isna().iloc[-1]:
+    # Guard BOTH the last bar and the one before it - crossed_up/crossed_dn
+    # below reads vwap.iloc[-2] as well as iloc[-1], and the original check
+    # here only covered iloc[-1].
+    if len(close) < min_bars_away + 2 or pd.isna(vwap.iloc[-1]) or pd.isna(vwap.iloc[-2]):
         return {"long": False, "short": False, "forming": False}
 
-    below = (close < vwap)
-    above = (close > vwap)
+    # vwap can be pd.NA at ANY earlier bar too (session_vwap() replaces a
+    # zero-cumulative-volume denominator with NA rather than dividing by
+    # zero) - comparing a Series against a Series containing pd.NA produces
+    # pd.NA entries in the result, and the consecutive-run loop below does
+    # `if v:` on every entry, which crashes ("boolean value of NA is
+    # ambiguous") the moment it hits one. Treat "relationship unknown at
+    # this bar" as "doesn't extend the run" rather than letting it crash
+    # the whole GBB signal.
+    below = (close < vwap).fillna(False)
+    above = (close > vwap).fillna(False)
     # Consecutive-run length ending at the PREVIOUS bar (before today's cross)
     run_below = 0
     for v in reversed(below.iloc[:-1].tolist()):
@@ -427,7 +447,20 @@ def compute_gbb_signal(df_5m: pd.DataFrame, df_1m: pd.DataFrame, min_grade_score
     elif brt["state"] == STATE_WAITING_RETEST:
         votes["break_retest_forming"] = True
     is_long = side == "CE"
-    votes["vwap"] = bool(vwap_sig["long" if is_long else "short"] or (close.iloc[-1] > vwap.iloc[-1]) == is_long)
+    # session_vwap() deliberately replaces any zero-cumulative-volume bar
+    # with pd.NA (not NaN) to avoid a divide-by-zero - that's correct there,
+    # but it means vwap.iloc[-1] can legitimately BE pd.NA (a zero-volume
+    # bar, a feed gap, or very early in the session before volume has
+    # accumulated). Using it directly in a boolean `or`/`==` expression
+    # forces Python to coerce pd.NA to True/False to short-circuit the `or`,
+    # which pd.NA refuses to do ("boolean value of NA is ambiguous") - this
+    # was crashing the whole GBB signal instead of just skipping that one
+    # vote. Guard it the same way rsi/macd already are below.
+    vwap_last = vwap.iloc[-1]
+    above_vwap_matches_side = (
+        bool((close.iloc[-1] > vwap_last) == is_long) if not pd.isna(vwap_last) else False
+    )
+    votes["vwap"] = bool(vwap_sig["long" if is_long else "short"] or above_vwap_matches_side)
     score += 2 if votes["vwap"] else 0
     votes["ema"] = bool((ema9.iloc[-1] > ema21.iloc[-1]) == is_long and (ema21.iloc[-1] > ema50.iloc[-1]) == is_long)
     score += 2 if votes["ema"] else 0
