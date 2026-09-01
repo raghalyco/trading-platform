@@ -1,10 +1,12 @@
 """
-Historical win/loss report for emitted SCALP / SMART TRADE levels.
+Historical win/loss report for emitted SCALP / SMART TRADE / GBB levels.
 
-Simulates OPTION PREMIUM P&L (the same Black-Scholes model + fixed
-+target_premium_points rule that live auto-capture actually uses), not
-raw index points - see run_backtest's docstring for why this matters and
-what it still can't capture.
+Simulates OPTION PREMIUM P&L using the same Black-Scholes model and the
+same mode-based target rule live auto-capture actually uses - GBB and
+SCALP use a RATIO target (entry + (entry - sl) * rr_multiple, scaling
+with that trade's actual stop distance), SMART TRADE uses the fixed
++target_premium_points rule - not raw index points. See run_backtest's
+docstring for why this matters and what it still can't capture.
 
 Honest limitations (read before trusting win_rate):
   - Premium is a Black-Scholes ESTIMATE (option_pricing.py), calibrated
@@ -18,8 +20,10 @@ Honest limitations (read before trusting win_rate):
     re-pricing the SAME option at the index stop-loss level (same
     approach trade_recommendation.py uses live) - VIX/time-to-expiry held
     fixed at signal time, not re-estimated bar-by-bar.
-  - Target is the live rule exactly: entry_premium + target_premium_points
-    (fixed points, not ATR-derived) - matches auto_trade.py's real gate.
+  - Target is the live rule exactly, per mode: GBB/SCALP use a ratio off
+    the actual premium stop distance (entry + (entry-sl)*rr_multiple);
+    SMART TRADE uses entry_premium + target_premium_points (fixed points).
+    Matches auto_trade.py's real gate.
   - Default scoring: T1 before SL = WIN, SL first = LOSS.
   - Optional mark_to_market: at hold end, close vs entry decides WIN/LOSS
     instead of TIMEOUT (more trades "decided", still approximate).
@@ -386,7 +390,6 @@ def _generate_trades(df, symbol: str, mode: str,
         entry_premium = _premium_at(levels["entry"], strike, sig["side"], vix_now, expiry_iso, entry_ts, iv_mult)
 
         if vix_series is not None and entry_premium is not None:
-            t1_premium = round(entry_premium + target_pts, 2)
             if sl_premium_points is not None:
                 sl_premium = round(max(0.05, entry_premium - sl_premium_points), 2)
             else:
@@ -395,6 +398,21 @@ def _generate_trades(df, symbol: str, mode: str,
                 # Can't price (e.g. past expiry at this instant) - skip this signal.
                 i += step_bars
                 continue
+            # Mirror trade_recommendation.py / live_capture.py's mode-based
+            # target rule exactly, so backtest win/loss reflects what live
+            # auto-capture would actually do:
+            #   - GBB and SCALP: RATIO target off THIS trade's actual
+            #     premium stop distance (entry + (entry - sl) * rr_multiple).
+            #     GBB was already ratio-based live but this backtest used to
+            #     apply the flat points rule to it too - fixed here as part
+            #     of the same change.
+            #   - SMART_TRADE: unchanged, flat target_premium_points.
+            if mode == "GBB":
+                t1_premium = round(entry_premium + (entry_premium - sl_premium) * CONFIG.gbb.rr_multiple, 2)
+            elif mode == "SCALP":
+                t1_premium = round(entry_premium + (entry_premium - sl_premium) * CONFIG.scalp.rr_multiple, 2)
+            else:
+                t1_premium = round(entry_premium + target_pts, 2)
             outcome = _simulate_premium_outcome(
                 sig["side"], entry_premium, t1_premium, sl_premium, strike, expiry_iso,
                 future, future_vix, iv_mult, max_bars=max_bars, mark_to_market=mark_to_market,

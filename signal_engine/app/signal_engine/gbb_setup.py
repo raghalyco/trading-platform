@@ -92,9 +92,13 @@ def _confirmed_pivots(high: pd.Series, low: pd.Series, length: int = 5):
     return ph, pl
 
 
-def vwap_reclaim(df: pd.DataFrame, vwap: pd.Series, min_bars_away: int = 6) -> dict:
+def vwap_reclaim(df: pd.DataFrame, vwap: pd.Series, min_bars_away: int = 6,
+                  vol_ok: bool = True) -> dict:
     """Price spends >= min_bars_away bars on one side of session VWAP,
-    then closes back across it this bar."""
+    then closes back across it this bar. vol_ok mirrors the Pine source's
+    shared `volOk` gate (volume >= 1x 20-bar SMA) - Pine requires it for
+    VWAP reclaim/EMA pullback/Liquidity sweep (not for Break & Retest,
+    which is deliberately volume-agnostic there)."""
     close = df["close"]
     # Guard BOTH the last bar and the one before it - crossed_up/crossed_dn
     # below reads vwap.iloc[-2] as well as iloc[-1], and the original check
@@ -129,8 +133,8 @@ def vwap_reclaim(df: pd.DataFrame, vwap: pd.Series, min_bars_away: int = 6) -> d
     crossed_up = close.iloc[-2] <= vwap.iloc[-2] and close.iloc[-1] > vwap.iloc[-1]
     crossed_dn = close.iloc[-2] >= vwap.iloc[-2] and close.iloc[-1] < vwap.iloc[-1]
 
-    long_sig = crossed_up and run_below >= min_bars_away
-    short_sig = crossed_dn and run_above >= min_bars_away
+    long_sig = crossed_up and run_below >= min_bars_away and vol_ok
+    short_sig = crossed_dn and run_above >= min_bars_away and vol_ok
     forming = not long_sig and not short_sig and (
         (run_below >= min_bars_away and close.iloc[-1] > close.iloc[-2]) or
         (run_above >= min_bars_away and close.iloc[-1] < close.iloc[-2])
@@ -139,29 +143,35 @@ def vwap_reclaim(df: pd.DataFrame, vwap: pd.Series, min_bars_away: int = 6) -> d
 
 
 def ema_pullback(df: pd.DataFrame, ema9: pd.Series, ema21: pd.Series, ema50: pd.Series,
-                  touch_window: int = 3) -> dict:
+                  touch_window: int = 3, vol_ok: bool = True) -> dict:
     """Trend by 21/50, price pulls back into the 9/21 band, then closes
     away again with a bullish/bearish bar breaking the prior bar's
-    extreme - same conditions as the Pine EMA pullback setup."""
+    extreme - same conditions as the Pine EMA pullback setup. vol_ok
+    mirrors Pine's shared volOk gate (see vwap_reclaim's docstring)."""
     if len(df) < 55:
         return {"long": False, "short": False, "forming": False}
 
     trend_up = bool(ema21.iloc[-1] > ema50.iloc[-1] and ema50.iloc[-1] > ema50.iloc[-4])
     trend_dn = bool(ema21.iloc[-1] < ema50.iloc[-1] and ema50.iloc[-1] < ema50.iloc[-4])
 
-    recent_low = df["low"].iloc[-touch_window:]
-    recent_high = df["high"].iloc[-touch_window:]
-    touched_up = bool((recent_low <= ema21.iloc[-touch_window:]).any())
-    touched_dn = bool((recent_high >= ema21.iloc[-touch_window:]).any())
+    # Pine's ta.barssince(cond) <= touch_window is true when cond held on the
+    # CURRENT bar or any of the touch_window bars before it - touch_window+1
+    # bars total. Slicing [-touch_window:] here used to only cover
+    # touch_window bars (missing the oldest one Pine would still count).
+    window = touch_window + 1
+    recent_low = df["low"].iloc[-window:]
+    recent_high = df["high"].iloc[-window:]
+    touched_up = bool((recent_low <= ema21.iloc[-window:]).any())
+    touched_dn = bool((recent_high >= ema21.iloc[-window:]).any())
 
     close = df["close"]
     bull_bar = close.iloc[-1] > df["open"].iloc[-1]
     bear_bar = close.iloc[-1] < df["open"].iloc[-1]
 
     long_sig = (trend_up and touched_up and close.iloc[-1] > ema9.iloc[-1]
-                and bull_bar and close.iloc[-1] > df["high"].iloc[-2])
+                and bull_bar and close.iloc[-1] > df["high"].iloc[-2] and vol_ok)
     short_sig = (trend_dn and touched_dn and close.iloc[-1] < ema9.iloc[-1]
-                 and bear_bar and close.iloc[-1] < df["low"].iloc[-2])
+                 and bear_bar and close.iloc[-1] < df["low"].iloc[-2] and vol_ok)
     forming = not long_sig and not short_sig and (
         (trend_up and df["low"].iloc[-1] <= ema21.iloc[-1] and close.iloc[-1] < ema9.iloc[-1]) or
         (trend_dn and df["high"].iloc[-1] >= ema21.iloc[-1] and close.iloc[-1] > ema9.iloc[-1])
@@ -169,10 +179,11 @@ def ema_pullback(df: pd.DataFrame, ema9: pd.Series, ema21: pd.Series, ema50: pd.
     return {"long": bool(long_sig), "short": bool(short_sig), "forming": bool(forming)}
 
 
-def liquidity_sweep(df: pd.DataFrame, lookback: int = 20) -> dict:
+def liquidity_sweep(df: pd.DataFrame, lookback: int = 20, vol_ok: bool = True) -> dict:
     """Wick takes out a recent extreme, body closes back inside - a sweep
     ALONE never fires an entry (per spec, section 11); it only feeds the
-    score as a confirming component."""
+    score as a confirming component. vol_ok mirrors Pine's shared volOk
+    gate (see vwap_reclaim's docstring)."""
     if len(df) < lookback + 2:
         return {"long": False, "short": False}
     sw_lo = df["low"].iloc[-lookback - 1:-1].min()
@@ -181,22 +192,31 @@ def liquidity_sweep(df: pd.DataFrame, lookback: int = 20) -> dict:
     bull_bar = last["close"] > last["open"]
     bear_bar = last["close"] < last["open"]
     long_sig = (last["low"] < sw_lo and last["close"] > sw_lo and bull_bar
-                and (last["close"] - last["low"]) > (last["high"] - last["close"]))
+                and (last["close"] - last["low"]) > (last["high"] - last["close"]) and vol_ok)
     short_sig = (last["high"] > sw_hi and last["close"] < sw_hi and bear_bar
-                 and (last["high"] - last["close"]) > (last["close"] - last["low"]))
+                 and (last["high"] - last["close"]) > (last["close"] - last["low"]) and vol_ok)
     return {"long": bool(long_sig), "short": bool(short_sig)}
 
 
 def break_and_retest(df: pd.DataFrame, pivot_length: int = 5, retest_tolerance_atr: float = 0.3,
-                      retest_window: int = 20, min_body_atr: float = 0.3,
-                      min_volume_mult: float = 1.1) -> dict:
+                      retest_window: int = 20) -> dict:
     """Full state-machine replay over history (same technique as
     darvax.py's find_darvas_boxes) instead of a single-candle-crossing
     check: BREAKOUT -> WAITING_FOR_RETEST -> RETEST -> CONFIRMED, with an
-    ATR-based retest ZONE (not an exact price) and a false-breakout check
-    (weak body + weak volume + closes back inside = ignored, not
-    confirmed). Returns the state as of the LAST bar only - this isn't a
-    list of historical trades, it's "where is the current setup right now."
+    ATR-based retest ZONE (not an exact price). Returns the state as of
+    the LAST bar only - this isn't a list of historical trades, it's
+    "where is the current setup right now."
+
+    The breakout trigger is intentionally unconditional (close beyond the
+    level, nothing else) - matching the actual Pine source exactly, which
+    has NO body-strength or volume filter on Break & Retest at all (Pine's
+    own comment: "a valid retest is often quiet"). An earlier version of
+    this port added a min_body_atr/min_volume_mult false-breakout filter
+    here that doesn't exist in the Pine indicator - it was silently
+    discarding real breakout levels (any breakout candle with a moderate
+    body or below-average volume got thrown away before the retest cycle
+    ever started), causing this to miss setups the Pine reference actually
+    confirmed. Removed to match the source of truth.
     """
     n = len(df)
     empty = {"state": STATE_NO_SETUP, "direction": None, "level": None,
@@ -204,9 +224,8 @@ def break_and_retest(df: pd.DataFrame, pivot_length: int = 5, retest_tolerance_a
     if n < pivot_length * 2 + retest_window + 2:
         return empty
 
-    high, low, close, vol = df["high"], df["low"], df["close"], df["volume"]
+    high, low, close = df["high"], df["low"], df["close"]
     atr_v = atr_series(df).bfill()
-    vol_sma = vol.rolling(20).mean()
     ph_list, pl_list = _confirmed_pivots(high, low, pivot_length)
 
     # Replay state
@@ -224,24 +243,13 @@ def break_and_retest(df: pd.DataFrame, pivot_length: int = 5, retest_tolerance_a
         # local pivot immediately overwrote the level it just broke,
         # before the comparison ever ran against the old one.
 
-        # Fresh breakout above the last confirmed pivot high
+        # Fresh breakout above the last confirmed pivot high - unconditional,
+        # matching Pine's `close > brtHiLvl` exactly (no body/volume filter).
         if hi_level is not None and hi_break_bar is None and close.iloc[i] > hi_level:
-            body = abs(close.iloc[i] - df["open"].iloc[i])
-            strong = body >= atr_v.iloc[i] * min_body_atr
-            vol_ok = pd.isna(vol_sma.iloc[i]) or vol.iloc[i] >= vol_sma.iloc[i] * min_volume_mult
-            if strong and vol_ok:
-                hi_break_bar = i
-            else:
-                hi_level = None  # false breakout candle - discard, wait for a new pivot
+            hi_break_bar = i
 
         if lo_level is not None and lo_break_bar is None and close.iloc[i] < lo_level:
-            body = abs(close.iloc[i] - df["open"].iloc[i])
-            strong = body >= atr_v.iloc[i] * min_body_atr
-            vol_ok = pd.isna(vol_sma.iloc[i]) or vol.iloc[i] >= vol_sma.iloc[i] * min_volume_mult
-            if strong and vol_ok:
-                lo_break_bar = i
-            else:
-                lo_level = None
+            lo_break_bar = i
 
         # Retest + confirmation, within the window. Once confirmed, keep
         # checking for a LATER invalidation (spec section 22: a decisive
@@ -406,9 +414,9 @@ def compute_gbb_signal(df_5m: pd.DataFrame, df_1m: pd.DataFrame, min_grade_score
     vol_sma = df_5m["volume"].rolling(20).mean()
     vol_ok = bool(pd.isna(vol_sma.iloc[-1]) or df_5m["volume"].iloc[-1] >= vol_sma.iloc[-1])
 
-    vwap_sig = vwap_reclaim(df_5m, vwap)
-    ema_sig = ema_pullback(df_5m, ema9, ema21, ema50)
-    sweep_sig = liquidity_sweep(df_5m)
+    vwap_sig = vwap_reclaim(df_5m, vwap, vol_ok=vol_ok)
+    ema_sig = ema_pullback(df_5m, ema9, ema21, ema50, vol_ok=vol_ok)
+    sweep_sig = liquidity_sweep(df_5m, vol_ok=vol_ok)
     brt = break_and_retest(df_5m)
 
     # Direction: Break & Retest is the highest-priority setup (spec
@@ -423,7 +431,16 @@ def compute_gbb_signal(df_5m: pd.DataFrame, df_1m: pd.DataFrame, min_grade_score
         side = "PE"
 
     if side is None:
-        return {"side": None, "state": STATE_NO_SETUP, "grade": "NO TRADE", "score": 0,
+        # No live setup fired in either direction - side stays None (no
+        # trade), but give the caller a best-effort directional BIAS from
+        # close-vs-VWAP so a placeholder side downstream (e.g. orchestrator
+        # needing a strike to display) reflects actual current price
+        # action instead of an arbitrary hardcoded default.
+        vwap_last = vwap.iloc[-1]
+        bias = None
+        if not pd.isna(vwap_last):
+            bias = "CE" if close.iloc[-1] > vwap_last else "PE" if close.iloc[-1] < vwap_last else None
+        return {"side": None, "bias": bias, "state": STATE_NO_SETUP, "grade": "NO TRADE", "score": 0,
                 "max_score": 10, "confidence_pct": 0, "votes": {}, "structure_stop": None,
                 "confirm_1m": None}
 

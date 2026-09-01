@@ -74,7 +74,13 @@ def generate_signal(feed: DataFeed, symbol: str, mode: str, risk_mgr: RiskManage
         gbb = compute_gbb_signal(df_gbb_5m, df_gbb_1m, CONFIG.gbb.min_grade_score_pct)
         side = gbb["side"]
         if side is None:
-            side = "CE"  # no live setup - keep a side so downstream code doesn't crash; verdict below forces WAIT
+            # No live setup - still need SOME side so downstream strike
+            # selection/premium pricing doesn't crash; verdict below forces
+            # WAIT regardless, so this never becomes a real recommendation.
+            # Use gbb_setup.py's close-vs-VWAP bias so the placeholder
+            # contract shown at least matches actual current price action
+            # instead of always defaulting to CE regardless of trend.
+            side = gbb.get("bias") or "CE"
         # Rescaled onto the same 0-7 range min_base_score/auto_trade.py's
         # gate already uses, so the shared anti-overtrading/score gate
         # keeps working for GBB without needing mode-aware changes there.

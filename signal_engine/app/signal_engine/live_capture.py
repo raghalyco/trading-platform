@@ -93,17 +93,17 @@ def capture_entry(
             "recommendation": rec,
         }
 
-    if mode == "GBB":
-        # GBB uses a RATIO target (1:1.5 on premium, off the structure-
-        # based stop) - rec["levels_premium"]["target1"] already computed
-        # this exact number (trade_recommendation.py's GBB branch), so
-        # reuse it directly rather than recomputing here and risking the
-        # two drifting apart (the exact bug fixed earlier for SCALP's
-        # display vs. actual capture mismatch).
+    if mode in ("GBB", "SCALP"):
+        # Both GBB and SCALP now use a RATIO target (off the trade's actual
+        # premium stop distance) - rec["levels_premium"]["target1"] already
+        # computed this exact number in trade_recommendation.py (GBB or
+        # SCALP branch), so reuse it directly rather than recomputing here
+        # and risking the two drifting apart (the exact bug fixed earlier
+        # for SCALP's old display-vs-actual-capture mismatch).
         t1_premium = round(float(pl.get("target1") or entry_premium), 2)
     else:
         # Fixed OPTION PREMIUM points target (not index points) - this is
-        # the actual exit rule for every captured SCALP/SMART_TRADE trade,
+        # the actual exit rule for every captured SMART_TRADE trade,
         # replacing the ATR-derived target1. Applies identically to CE and
         # PE: the premium always moves in the buyer's favor as the trade
         # works, regardless of side.

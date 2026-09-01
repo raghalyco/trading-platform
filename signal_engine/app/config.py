@@ -35,6 +35,17 @@ class ScalpConfig:
     target1_atr_mult: float = 3.6
     target2_atr_mult: float = 6.2
     stop_atr_mult: float = 1.7
+    # Ratio-based premium target for auto-captured trades (mirrors GBB's
+    # approach) - replaces the old flat target_premium_points (+12) rule.
+    # target = entry_premium + (entry_premium - sl_premium) * rr_multiple,
+    # so the target scales with how wide THAT trade's actual ATR-based stop
+    # is, instead of always demanding the same fixed point move regardless
+    # of volatility or risk taken. Set lower than GBB's 1.5 on purpose:
+    # SCALP is a fast 1m/5-min-hold, high-frequency setup, not a
+    # structure-confirmed swing - it needs a realistic target for a short
+    # window, not a big asymmetric payoff. Starting hypothesis, not a
+    # backtested final value - revisit once more live trades are logged.
+    rr_multiple: float = 1.25
 
 
 @dataclass
