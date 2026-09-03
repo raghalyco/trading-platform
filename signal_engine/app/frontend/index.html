@@ -149,6 +149,8 @@ table.trades tr.open td:first-child{box-shadow:inset 3px 0 0 var(--blue);}
 .exit-mini{background:var(--red); color:#fff; border:none; border-radius:5px; padding:3px 6px; font-size:10px; font-family:var(--font); cursor:pointer;}
 .chart-link{color:var(--blue); font-weight:700; text-decoration:none; font-size:11px;}
 .chart-link:hover{text-decoration:underline;}
+.row-delete-btn{background:none; border:none; cursor:pointer; font-size:13px; padding:2px 4px; border-radius:5px; opacity:0.65;}
+.row-delete-btn:hover{opacity:1; background:var(--red-bg, rgba(255,59,107,0.12));}
 .export-btn{display:flex; align-items:center; justify-content:center; gap:6px; width:100%; padding:9px; border-radius:9px; border:1px solid var(--line); background:var(--card); color:var(--text); font-family:var(--font); font-size:13px; font-weight:700; cursor:pointer;}
 .bt-run{width:100%; padding:9px; border:none; border-radius:9px; background:var(--blue); color:#fff; font-family:var(--font); font-weight:700; font-size:13px; cursor:pointer; margin-bottom:8px;}
 .bt-run:disabled{opacity:.5;}
@@ -168,7 +170,7 @@ table.trades tr.open td:first-child{box-shadow:inset 3px 0 0 var(--blue);}
     <div class="head-row">
       <select id="symbol" aria-label="Symbol">
         <option value="NIFTY">NIFTY</option>
-        <option value="SENSEX">SENSEX</option>
+        <option value="SENSEX" selected>SENSEX</option>
       </select>
       <span id="vixLine">VIX —</span>
       <span id="dataSource" class="sim">—</span>
@@ -268,7 +270,7 @@ table.trades tr.open td:first-child{box-shadow:inset 3px 0 0 var(--blue);}
   <div class="table-card">
     <table class="trades">
       <thead>
-        <tr><th>Strike</th><th>Side</th><th>Entry Time</th><th>Entry</th><th>Exit Time</th><th>Exit</th><th>Result / P&amp;L</th><th>Chart</th></tr>
+        <tr><th>Strike</th><th>Side</th><th>Entry Time</th><th>Entry</th><th>Exit Time</th><th>Exit</th><th>Result / P&amp;L</th><th>Chart</th><th></th></tr>
       </thead>
       <tbody id="journalBody"></tbody>
     </table>
@@ -284,7 +286,7 @@ table.trades tr.open td:first-child{box-shadow:inset 3px 0 0 var(--blue);}
     <div class="filters" style="margin-bottom:10px;">
       <select id="btSymbol">
         <option value="NIFTY">NIFTY</option>
-        <option value="SENSEX">SENSEX</option>
+        <option value="SENSEX" selected>SENSEX</option>
       </select>
       <select id="btMode">
         <option value="SCALP">Scalp</option>
@@ -787,6 +789,7 @@ async function loadJournal(){
       <td>${exitCell}</td>
       <td>${resultCell}</td>
       <td><a class="chart-link" href="${tvHref}" target="_blank" rel="noopener">Chart ↗</a></td>
+      <td><button type="button" class="row-delete-btn" title="Delete this trade" onclick="deleteTrade(${t.id})">🗑</button></td>
     </tr>`;
   }).join('');
 
@@ -805,6 +808,20 @@ async function loadJournal(){
     openTradeId = null;
     inBtn.disabled = false;
     inBtn.textContent = 'Enter';
+  }
+}
+
+async function deleteTrade(id){
+  if (!confirm(`Delete trade #${id}? This cannot be undone.`)) return;
+  try {
+    const res = await fetch(`/api/journal/${id}`, { method: 'DELETE' });
+    if (!res.ok) {
+      const d = await res.json().catch(() => ({}));
+      throw new Error(d.detail || `HTTP ${res.status}`);
+    }
+    loadJournal();
+  } catch (e) {
+    alert('Failed to delete trade: ' + e);
   }
 }
 

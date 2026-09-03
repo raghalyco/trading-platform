@@ -28,6 +28,20 @@ def should_auto_enter(signal: dict, otm_steps: int) -> tuple[bool, str]:
     if not cfg.enabled:
         return False, "AUTO_TRADE disabled"
 
+    symbol = (signal.get("symbol") or "").upper()
+    if symbol not in cfg.auto_trade_symbols:
+        # NIFTY is temporarily excluded from auto_trade_symbols (see
+        # config.py) - it re-enables itself automatically once
+        # nifty_auto_resume_date passes, without needing a code change.
+        today = datetime.now(IST).strftime("%Y-%m-%d")
+        resume = cfg.nifty_auto_resume_date
+        auto_resumed = symbol == "NIFTY" and bool(resume) and today >= resume
+        if not auto_resumed:
+            msg = f"auto-trigger paused for {symbol}"
+            if symbol == "NIFTY" and resume:
+                msg += f" until {resume}"
+            return False, msg
+
     session = signal.get("session") or ""
     if session in cfg.skip_sessions or session == "MARKET CLOSED":
         return False, f"session={session}"

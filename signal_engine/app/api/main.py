@@ -9,7 +9,7 @@ Endpoints:
     GET  /api/risk/summary
 """
 
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse, HTMLResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -162,7 +162,7 @@ class TradeResult(BaseModel):
 
 
 class ManualTradeRequest(BaseModel):
-    symbol: str = "NIFTY"
+    symbol: str = "SENSEX"
     side: str = "CE"
     otm_steps: int = 0
     sl_points: float
@@ -197,13 +197,13 @@ class TradeExit(BaseModel):
 
 
 class TelegramSendRequest(BaseModel):
-    symbol: str = "NIFTY"
+    symbol: str = "SENSEX"
     mode: str = "SCALP"
     dry_run: bool = False
 
 
 class LiveEnterRequest(BaseModel):
-    symbol: str = "NIFTY"
+    symbol: str = "SENSEX"
     mode: str = "SCALP"
     otm_steps: int = 0  # 0=ATM, 1=1 OTM, 2=2 OTM
     lots: int = 1
@@ -212,7 +212,7 @@ class LiveEnterRequest(BaseModel):
 
 @app.get("/api/signal")
 def get_signal(
-    symbol: str = Query("NIFTY"),
+    symbol: str = Query("SENSEX"),
     mode: str = Query("SCALP"),
     otm_steps: int = Query(0, ge=0, le=5),
 ):
@@ -283,7 +283,7 @@ def live_positions(auto_exit: bool = Query(True)):
 
 
 @app.get("/api/telegram/preview")
-def telegram_preview(symbol: str = Query("NIFTY"), mode: str = Query("SCALP")):
+def telegram_preview(symbol: str = Query("SENSEX"), mode: str = Query("SCALP")):
     """Format the RSTA-style Telegram message without sending."""
     mode = mode.upper()
     try:
@@ -352,7 +352,7 @@ def _aligned_vix_series(feed, days: int, interval: str, index_df):
 
 @app.get("/api/report/performance")
 def performance_report(
-    symbol: str = Query("NIFTY"),
+    symbol: str = Query("SENSEX"),
     mode: str = Query("SCALP"),
     months: int = Query(3, ge=1, le=6),
     step_minutes: int = Query(15, ge=5, le=60),
@@ -395,7 +395,7 @@ def performance_report(
 @app.get("/api/report/performance/trade-chart")
 def performance_trade_chart(
     trade_index: int = Query(..., ge=0),
-    symbol: str = Query("NIFTY"),
+    symbol: str = Query("SENSEX"),
     mode: str = Query("SCALP"),
     months: int = Query(3, ge=1, le=6),
     step_minutes: int = Query(15, ge=5, le=60),
@@ -533,7 +533,7 @@ def telegram_check_t1(dry_run: bool = Query(False)):
 
 
 @app.get("/api/telegram/t1-preview")
-def telegram_t1_preview(symbol: str = Query("NIFTY"), mode: str = Query("SCALP")):
+def telegram_t1_preview(symbol: str = Query("SENSEX"), mode: str = Query("SCALP")):
     """
     Preview the Target-1-hit Telegram message using the current signal's
     premium levels (simulates a hit at premium T1).
@@ -667,6 +667,17 @@ def journal_export(symbol: str | None = Query(None)):
         media_type="text/csv",
         headers={"Content-Disposition": f"attachment; filename={filename}"},
     )
+
+
+@app.delete("/api/journal/{trade_id}")
+def journal_delete(trade_id: int):
+    """Delete a single journal record - used by the Journal tab's per-row
+    delete button. 404s if the trade doesn't exist (already deleted, or a
+    bad id) rather than silently succeeding."""
+    deleted = journal.delete_trade(trade_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"No trade with id {trade_id}")
+    return {"deleted": True, "id": trade_id}
 
 
 @app.post("/api/journal/purge")

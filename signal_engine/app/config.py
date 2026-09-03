@@ -119,6 +119,19 @@ class AutoTradeConfig:
     send_telegram: bool = True
     # Skip auto-entry in these session labels
     skip_sessions: tuple = ("MARKET CLOSED", "DEAD ZONE")
+    # Symbols the AUTOMATED entry gate allows (should_auto_enter() in
+    # auto_trade.py checks this) - covers BOTH the server-side background
+    # loop (main.py's _background_scan_loop, which cycles CONFIG.instruments
+    # regardless of anyone having the dashboard open) and the dashboard's
+    # own auto-capture on /api/signal. Manual "Enter" button clicks are NOT
+    # gated by this - only automated entries. NIFTY paused below; see
+    # nifty_auto_resume_date.
+    auto_trade_symbols: tuple = ("SENSEX",)
+    # NIFTY auto-trigger paused starting 2026-09-03, per request - it lifts
+    # itself automatically once this date (IST) is reached, so nobody has to
+    # remember to flip it back on. Add "NIFTY" back into auto_trade_symbols
+    # above to lift the pause sooner instead of waiting a full month.
+    nifty_auto_resume_date: str = "2026-10-03"
     # Fixed OPTION PREMIUM points target (NOT index points) - overrides the
     # ATR-derived target1 for auto-captured trades only. Applies equally to
     # CE and PE since premium always rises in the buyer's favor regardless

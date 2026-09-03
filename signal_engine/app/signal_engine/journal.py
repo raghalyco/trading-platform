@@ -207,6 +207,18 @@ def list_trades(result_filter: str | None = None, symbol: str | None = None) -> 
     return trades
 
 
+def delete_trade(trade_id: int) -> bool:
+    """Delete a single trade record (OPEN or closed) by id. Returns True if
+    a row was actually deleted, False if no trade with that id existed -
+    lets the API route distinguish a real delete from a no-op 404."""
+    conn = _connect()
+    cur = conn.execute("DELETE FROM trades WHERE id = ?", (trade_id,))
+    conn.commit()
+    deleted = cur.rowcount > 0
+    conn.close()
+    return deleted
+
+
 def purge_older_than(days: int) -> int:
     """Delete all trades (OPEN or closed) with entry_time older than `days`
     days ago. Returns the number of rows deleted. Used to clear stale test

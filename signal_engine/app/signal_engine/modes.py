@@ -24,14 +24,17 @@ def is_expiry_today(symbol: str) -> bool:
 
 def default_symbol_for_today() -> str:
     """
-    On weekly expiry day, default to that index (NIFTY Tue / SENSEX Thu).
-    Prefer SENSEX if both somehow match; otherwise NIFTY.
+    Default symbol the dashboard loads with (see /api/status's
+    default_symbol, which drives the frontend's symbol/backtest/journal
+    selects). Was previously "whichever index has expiry today, else
+    NIFTY" - simplified to always SENSEX per request, since NIFTY's
+    AUTO-TRIGGER is also paused right now (see AutoTradeConfig.
+    auto_trade_symbols in config.py) and showing NIFTY as the default
+    while its auto-trigger is off would be confusing. Restore the
+    expiry-day switch here once NIFTY auto-trading is back on, if still
+    wanted - is_expiry_today() is unchanged and still available for it.
     """
-    if is_expiry_today("SENSEX"):
-        return "SENSEX"
-    if is_expiry_today("NIFTY"):
-        return "NIFTY"
-    return "NIFTY"
+    return "SENSEX"
 
 
 def current_expiry_date(symbol: str) -> str:
