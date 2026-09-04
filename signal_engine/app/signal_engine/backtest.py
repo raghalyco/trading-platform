@@ -407,18 +407,35 @@ def _generate_trades(df, symbol: str, mode: str,
             #     apply the flat points rule to it too - fixed here as part
             #     of the same change.
             #   - SMART_TRADE: unchanged, flat target_premium_points.
+            # T2 is informational only (same as live_capture.py / the
+            # dashboard "Target 2" - never simulated as a separate exit),
+            # so it mirrors each mode's index-level T1->T2 ratio rather than
+            # being backtested on its own:
+            #   - GBB/SCALP: ratio target, one rr_multiple step further out
+            #     than T1 (matches gbb_levels()/scalp T2 in modes.py, which
+            #     use rr_multiple + 1.0 for T2 vs rr_multiple for T1).
+            #   - SMART_TRADE: flat target_pts scaled by the same
+            #     target2_atr_mult/target1_atr_mult ratio used for its
+            #     index-level T1/T2 (9.0/5.0 = 1.8x), since SMART_TRADE has
+            #     no ratio rule of its own to extend.
             if mode == "GBB":
                 t1_premium = round(entry_premium + (entry_premium - sl_premium) * CONFIG.gbb.rr_multiple, 2)
+                t2_premium = round(entry_premium + (entry_premium - sl_premium) * (CONFIG.gbb.rr_multiple + 1.0), 2)
             elif mode == "SCALP":
                 t1_premium = round(entry_premium + (entry_premium - sl_premium) * CONFIG.scalp.rr_multiple, 2)
+                t2_premium = round(entry_premium + (entry_premium - sl_premium) * (CONFIG.scalp.rr_multiple + 1.0), 2)
             else:
                 t1_premium = round(entry_premium + target_pts, 2)
+                t2_premium = round(
+                    entry_premium + target_pts * (CONFIG.smart.target2_atr_mult / CONFIG.smart.target1_atr_mult), 2
+                )
             outcome = _simulate_premium_outcome(
                 sig["side"], entry_premium, t1_premium, sl_premium, strike, expiry_iso,
                 future, future_vix, iv_mult, max_bars=max_bars, mark_to_market=mark_to_market,
             )
             pricing = "premium (Black-Scholes estimate)"
             entry_display, t1_display, sl_display = entry_premium, t1_premium, sl_premium
+            t2_display = t2_premium
         else:
             outcome = _simulate_outcome(
                 sig["side"], levels["entry"], levels["target1"], levels["stop_loss"],
@@ -426,6 +443,7 @@ def _generate_trades(df, symbol: str, mode: str,
             )
             pricing = "index (no VIX history supplied)"
             entry_display, t1_display, sl_display = levels["entry"], levels["target1"], levels["stop_loss"]
+            t2_display = levels.get("target2")
 
         exit_ts = outcome.get("exit_ts")
         pnl_points = outcome.get("pnl_points")
@@ -442,9 +460,11 @@ def _generate_trades(df, symbol: str, mode: str,
             "expiry": expiry_iso if vix_series is not None else None,
             "entry": entry_display,
             "target1": t1_display,
+            "target2": t2_display,
             "stop_loss": sl_display,
             "index_entry": levels["entry"],
             "index_target1": levels["target1"],
+            "index_target2": levels.get("target2"),
             "index_stop_loss": levels["stop_loss"],
             "rr": levels["rr"],
             "score": sig["score"],

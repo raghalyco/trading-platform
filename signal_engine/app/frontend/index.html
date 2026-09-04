@@ -270,7 +270,7 @@ table.trades tr.open td:first-child{box-shadow:inset 3px 0 0 var(--blue);}
   <div class="table-card">
     <table class="trades">
       <thead>
-        <tr><th>Strike</th><th>Side</th><th>Entry Time</th><th>Entry</th><th>Exit Time</th><th>Exit</th><th>Result / P&amp;L</th><th>Chart</th><th></th></tr>
+        <tr><th>Strike</th><th>Side</th><th>Entry Time</th><th>Entry</th><th>T1</th><th>T2</th><th>SL</th><th>Exit Time</th><th>Exit</th><th>Result / P&amp;L</th><th>Chart</th><th></th></tr>
       </thead>
       <tbody id="journalBody"></tbody>
     </table>
@@ -313,7 +313,7 @@ table.trades tr.open td:first-child{box-shadow:inset 3px 0 0 var(--blue);}
 
     <div class="table-card" id="btTableWrap" style="display:none;">
       <table class="trades">
-        <thead><tr><th>Entry (IST)</th><th>Side</th><th>Strike</th><th>Entry</th><th>T1</th><th>Invested</th><th>P&amp;L</th><th>Result</th><th></th></tr></thead>
+        <thead><tr><th>Entry (IST)</th><th>Side</th><th>Strike</th><th>Entry</th><th>T1</th><th>T2</th><th>SL</th><th>Invested</th><th>P&amp;L</th><th>Result</th><th></th></tr></thead>
         <tbody id="btBody"></tbody>
       </table>
     </div>
@@ -780,11 +780,17 @@ async function loadJournal(){
     }
     const strikeLabel = t.contract || (t.strike ? `${t.strike} ${t.side}` : '—');
     const tvHref = tvChartUrl(t.symbol, '1');
+    const t1Cell = t.t1_premium ?? t.target1 ?? '—';
+    const t2Cell = t.t2_premium ?? t.target2 ?? '—';
+    const slCell = t.sl_premium ?? t.stop_loss ?? '—';
     return `<tr class="${rowClass}">
       <td>${strikeLabel}</td>
       <td class="${sideCls}">${t.side}</td>
       <td>${fmtDateTimeShort(t.entry_time)}</td>
       <td>${entry}</td>
+      <td>${t1Cell}</td>
+      <td>${t2Cell}</td>
+      <td>${slCell}</td>
       <td>${fmtDateTimeShort(t.exit_time)}</td>
       <td>${exitCell}</td>
       <td>${resultCell}</td>
@@ -890,10 +896,10 @@ async function runBacktest(){
         pnlCell = `<span class="${pnlCls}">${sign}₹${Math.round(t.pnl_rupees)}</span>`;
       }
       return `<tr class="${cls}"><td>${ts}</td><td class="${sideCls}">${t.side}</td>
-        <td>${strikeLabel}</td><td>${t.entry}</td><td>${t.target1}</td>
+        <td>${strikeLabel}</td><td>${t.entry}</td><td>${t.target1}</td><td>${t.target2 ?? '—'}</td><td>${t.stop_loss ?? '—'}</td>
         <td>${invested}</td><td>${pnlCell}</td><td>${t.result}</td>
         <td><a class="chart-link" href="/chart?${chartQ.toString()}" target="_blank" rel="noopener">Chart</a></td></tr>`;
-    }).join('') || '<tr><td colspan="9" class="empty">No samples</td></tr>';
+    }).join('') || '<tr><td colspan="11" class="empty">No samples</td></tr>';
     document.getElementById('btTableWrap').style.display = 'block';
   } catch (e) {
     status.textContent = 'Request failed: ' + e;
