@@ -423,15 +423,15 @@
         <p class="help-text">Intraday BUY/SELL calls from a Smart Money market-structure read (CHoCH/BOS, order blocks, liquidity sweeps). Stop-loss is the structural swing point; targets are the next opposing structure level.</p>
       </div>
       <div class="topbar-actions">
-        <select class="universe-select" id="stockdayUniverse" title="Index universe">
-          <option value="nifty50" {% if stock_for_day_universe == 'nifty50' %}selected{% endif %}>Nifty 50</option>
-          <option value="nifty100" {% if stock_for_day_universe == 'nifty100' %}selected{% endif %}>Nifty 100</option>
-          <option value="nifty200" {% if stock_for_day_universe == 'nifty200' %}selected{% endif %}>Nifty 200</option>
-          <option value="nifty500" {% if stock_for_day_universe == 'nifty500' %}selected{% endif %}>Nifty 500</option>
-          <option value="fno" {% if stock_for_day_universe == 'fno' %}selected{% endif %}>F&amp;O</option>
-        </select>
         <button class="primary" id="stockdayBtn" onclick="runStockForDay(true)">Run Scan</button>
       </div>
+    </div>
+    <div class="sub-tabs" id="stockdayUniverseTabs">
+      <button class="sub-tab {% if stock_for_day_universe == 'nifty50' %}active{% endif %}" data-universe="nifty50" onclick="switchStockdayUniverse('nifty50')">Nifty 50</button>
+      <button class="sub-tab {% if stock_for_day_universe == 'nifty100' or not stock_for_day_universe %}active{% endif %}" data-universe="nifty100" onclick="switchStockdayUniverse('nifty100')">Nifty 100</button>
+      <button class="sub-tab {% if stock_for_day_universe == 'nifty200' %}active{% endif %}" data-universe="nifty200" onclick="switchStockdayUniverse('nifty200')">Nifty 200</button>
+      <button class="sub-tab {% if stock_for_day_universe == 'nifty500' %}active{% endif %}" data-universe="nifty500" onclick="switchStockdayUniverse('nifty500')">Nifty 500</button>
+      <button class="sub-tab {% if stock_for_day_universe == 'fno' %}active{% endif %}" data-universe="fno" onclick="switchStockdayUniverse('fno')">F&amp;O</button>
     </div>
     <div class="card">
       <div id="stockdayTableWrap"><div class="loading">Loading startup cache…</div></div>
@@ -446,15 +446,15 @@
         <p class="meta" id="stockdayBtMeta">Smart Money BUY signals · last 3 months · success rate</p>
       </div>
       <div class="topbar-actions">
-        <select class="universe-select" id="stockdayBtUniverse" title="Index universe">
-          <option value="nifty50" {% if stock_for_day_universe == 'nifty50' %}selected{% endif %}>Nifty 50</option>
-          <option value="nifty100" {% if stock_for_day_universe == 'nifty100' %}selected{% endif %}>Nifty 100</option>
-          <option value="nifty200" {% if stock_for_day_universe == 'nifty200' %}selected{% endif %}>Nifty 200</option>
-          <option value="nifty500" {% if stock_for_day_universe == 'nifty500' %}selected{% endif %}>Nifty 500</option>
-          <option value="fno" {% if stock_for_day_universe == 'fno' %}selected{% endif %}>F&amp;O</option>
-        </select>
         <button class="secondary" id="stockdayBtBtn" onclick="runStockdayBacktest()">Run Backtest</button>
       </div>
+    </div>
+    <div class="sub-tabs" id="stockdayBtUniverseTabs">
+      <button class="sub-tab {% if stock_for_day_universe == 'nifty50' %}active{% endif %}" data-universe="nifty50" onclick="switchStockdayUniverse('nifty50')">Nifty 50</button>
+      <button class="sub-tab {% if stock_for_day_universe == 'nifty100' or not stock_for_day_universe %}active{% endif %}" data-universe="nifty100" onclick="switchStockdayUniverse('nifty100')">Nifty 100</button>
+      <button class="sub-tab {% if stock_for_day_universe == 'nifty200' %}active{% endif %}" data-universe="nifty200" onclick="switchStockdayUniverse('nifty200')">Nifty 200</button>
+      <button class="sub-tab {% if stock_for_day_universe == 'nifty500' %}active{% endif %}" data-universe="nifty500" onclick="switchStockdayUniverse('nifty500')">Nifty 500</button>
+      <button class="sub-tab {% if stock_for_day_universe == 'fno' %}active{% endif %}" data-universe="fno" onclick="switchStockdayUniverse('fno')">F&amp;O</button>
     </div>
     <div class="card">
       <div id="stockdayBtWrap"><div class="empty">Pick an index universe, then click "Run Backtest" for the last 3 months.</div></div>
@@ -494,15 +494,15 @@
         <p class="help-text">Multi-week swing setups: a stock breaking above a weekly resistance level (trendline or box top) on above-average volume. Meant to be held days-to-weeks, not intraday — stop-loss is below the breakout level.</p>
       </div>
       <div class="topbar-actions">
-        <select class="universe-select" id="swingUniverse" title="Index universe">
-          <option value="nifty50" {% if swing_trade_universe == 'nifty50' %}selected{% endif %}>Nifty 50</option>
-          <option value="nifty100" {% if swing_trade_universe == 'nifty100' %}selected{% endif %}>Nifty 100</option>
-          <option value="nifty200" {% if swing_trade_universe == 'nifty200' %}selected{% endif %}>Nifty 200</option>
-          <option value="nifty500" {% if swing_trade_universe == 'nifty500' %}selected{% endif %}>Nifty 500</option>
-          <option value="fno" {% if swing_trade_universe == 'fno' %}selected{% endif %}>F&amp;O</option>
-        </select>
         <button class="primary" id="swingBtn" onclick="runSwingTrade(true)">Run Scan</button>
       </div>
+    </div>
+    <div class="sub-tabs" id="swingUniverseTabs">
+      <button class="sub-tab {% if swing_trade_universe == 'nifty50' %}active{% endif %}" data-universe="nifty50" onclick="switchSwingUniverse('nifty50')">Nifty 50</button>
+      <button class="sub-tab {% if swing_trade_universe == 'nifty100' %}active{% endif %}" data-universe="nifty100" onclick="switchSwingUniverse('nifty100')">Nifty 100</button>
+      <button class="sub-tab {% if swing_trade_universe == 'nifty200' or not swing_trade_universe %}active{% endif %}" data-universe="nifty200" onclick="switchSwingUniverse('nifty200')">Nifty 200</button>
+      <button class="sub-tab {% if swing_trade_universe == 'nifty500' %}active{% endif %}" data-universe="nifty500" onclick="switchSwingUniverse('nifty500')">Nifty 500</button>
+      <button class="sub-tab {% if swing_trade_universe == 'fno' %}active{% endif %}" data-universe="fno" onclick="switchSwingUniverse('fno')">F&amp;O</button>
     </div>
     <div class="card">
       <div id="swingTableWrap"><div class="loading">Loading startup cache…</div></div>
@@ -522,15 +522,15 @@
           <option value="daily">Daily</option>
           <option value="weekly">Weekly (higher conviction)</option>
         </select>
-        <select class="universe-select" id="darvaxUniverse" title="Index universe">
-          <option value="nifty50" {% if darvax_universe == 'nifty50' %}selected{% endif %}>Nifty 50</option>
-          <option value="nifty100" {% if darvax_universe == 'nifty100' %}selected{% endif %}>Nifty 100</option>
-          <option value="nifty200" {% if darvax_universe == 'nifty200' %}selected{% endif %}>Nifty 200</option>
-          <option value="nifty500" {% if darvax_universe == 'nifty500' %}selected{% endif %}>Nifty 500</option>
-          <option value="fno" {% if darvax_universe == 'fno' %}selected{% endif %}>F&amp;O</option>
-        </select>
         <button class="primary" id="darvaxBtn" onclick="runDarvax(true)">Run Scan</button>
       </div>
+    </div>
+    <div class="sub-tabs" id="darvaxUniverseTabs">
+      <button class="sub-tab {% if darvax_universe == 'nifty50' %}active{% endif %}" data-universe="nifty50" onclick="switchDarvaxUniverse('nifty50')">Nifty 50</button>
+      <button class="sub-tab {% if darvax_universe == 'nifty100' %}active{% endif %}" data-universe="nifty100" onclick="switchDarvaxUniverse('nifty100')">Nifty 100</button>
+      <button class="sub-tab {% if darvax_universe == 'nifty200' or not darvax_universe %}active{% endif %}" data-universe="nifty200" onclick="switchDarvaxUniverse('nifty200')">Nifty 200</button>
+      <button class="sub-tab {% if darvax_universe == 'nifty500' %}active{% endif %}" data-universe="nifty500" onclick="switchDarvaxUniverse('nifty500')">Nifty 500</button>
+      <button class="sub-tab {% if darvax_universe == 'fno' %}active{% endif %}" data-universe="fno" onclick="switchDarvaxUniverse('fno')">F&amp;O</button>
     </div>
     <div class="card">
       <div id="darvaxTableWrap"><div class="loading">Loading startup cache…</div></div>
@@ -1162,45 +1162,67 @@ function renderTrendingCards(sectors) {
 }
 
 // ---------------- Stock for day (Smart Money BUY list) ----------------
+// Same per-universe-tab pattern as Previous Support Bounce: switching tabs
+// shows cached data instantly if this session already fetched that
+// universe, otherwise loads it. The intraday scan and its 3-month backtest
+// are separate pages but share one universe selection, kept in sync across
+// both tab bars (same as the old paired dropdowns did).
 let stockdayData = null;
+let stockdayDataByMode = {};
+let currentStockdayUniverse = '{{ stock_for_day_universe or "nifty100" }}';
 let stockdaySortKey = 'confidence', stockdaySortDir = -1;
 
-function stockdayUniverseMode(selectId) {
-  const el = document.getElementById(selectId);
-  return (el && el.value) || 'nifty100';
+function syncStockdayUniverseTabs(mode) {
+  document.querySelectorAll('#stockdayUniverseTabs .sub-tab, #stockdayBtUniverseTabs .sub-tab').forEach(el =>
+    el.classList.toggle('active', el.dataset.universe === mode));
 }
 
-function syncStockdayUniverses(sourceId) {
-  const mode = stockdayUniverseMode(sourceId);
-  ['stockdayUniverse', 'stockdayBtUniverse'].forEach(id => {
-    const el = document.getElementById(id);
-    if (el) el.value = mode;
-  });
+function switchStockdayUniverse(mode) {
+  currentStockdayUniverse = mode;
+  syncStockdayUniverseTabs(mode);
+  if (stockdayDataByMode[mode]) {
+    stockdayData = stockdayDataByMode[mode];
+    renderStockdayMeta();
+    renderStockForDayTable();
+  } else {
+    runStockForDay(false, mode);
+  }
 }
-document.getElementById('stockdayUniverse')?.addEventListener('change', () => syncStockdayUniverses('stockdayUniverse'));
-document.getElementById('stockdayBtUniverse')?.addEventListener('change', () => syncStockdayUniverses('stockdayBtUniverse'));
 
-async function runStockForDay(refresh = true) {
+async function runStockForDay(refresh = true, mode = null) {
+  mode = mode || currentStockdayUniverse;
   const btn = document.getElementById('stockdayBtn');
-  const mode = stockdayUniverseMode('stockdayUniverse');
   btn.disabled = true; btn.textContent = refresh ? 'Scanning...' : 'Loading...';
-  document.getElementById('stockdayTableWrap').innerHTML =
-    '<div class="loading">Scanning selected index with Smart Money structure — usually under a minute with warm cache…</div>';
+  if (refresh || !stockdayDataByMode[mode]) {
+    document.getElementById('stockdayTableWrap').innerHTML =
+      '<div class="loading">Scanning selected index with Smart Money structure — usually under a minute with warm cache…</div>';
+  }
   try {
     let url = '/api/stock_for_day?universe=' + encodeURIComponent(mode);
     if (refresh) url += '&refresh=1';
-    stockdayData = await fetchJson(url);
-    const stamp = new Date(stockdayData.generated_at).toLocaleTimeString();
-    const src = stockdayData.cached ? 'cached' : 'fresh scan';
-    const label = stockdayData.universe_label || stockdayData.universe_mode || mode;
-    document.getElementById('stockdayMeta').textContent =
-      `${stockdayData.num_buys || 0} BUY · ${stockdayData.num_sells || 0} SELL · ${label} · scanned ${stockdayData.scanned}/${stockdayData.universe_size} · ${src} · ${stamp}`;
-    updateMarketStatus(stockdayData.market_open);
-    renderStockForDayTable();
+    const data = await fetchJson(url);
+    stockdayDataByMode[mode] = data;
+    if (mode === currentStockdayUniverse) {
+      stockdayData = data;
+      renderStockdayMeta();
+      updateMarketStatus(data.market_open);
+      renderStockForDayTable();
+    }
   } catch (e) {
-    document.getElementById('stockdayTableWrap').innerHTML = '<div class="empty">Scan failed: ' + (e.message || e) + '</div>';
+    if (mode === currentStockdayUniverse) {
+      document.getElementById('stockdayTableWrap').innerHTML = '<div class="empty">Scan failed: ' + (e.message || e) + '</div>';
+    }
   }
   btn.disabled = false; btn.textContent = 'Run Scan';
+}
+
+function renderStockdayMeta() {
+  if (!stockdayData) return;
+  const stamp = new Date(stockdayData.generated_at).toLocaleTimeString();
+  const src = stockdayData.cached ? 'cached' : 'fresh scan';
+  const label = stockdayData.universe_label || stockdayData.universe_mode || currentStockdayUniverse;
+  document.getElementById('stockdayMeta').textContent =
+    `${stockdayData.num_buys || 0} BUY · ${stockdayData.num_sells || 0} SELL · ${label} · scanned ${stockdayData.scanned}/${stockdayData.universe_size} · ${src} · ${stamp}`;
 }
 
 function setStockdaySort(key) {
