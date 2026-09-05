@@ -120,15 +120,23 @@ function buildChart(){
 async function load(){
   let url;
   if (isBacktest) {
-    const q = new URLSearchParams({
+    const qObj = {
       trade_index: params.get('idx') || '0',
       symbol: params.get('symbol') || 'NIFTY',
       mode: params.get('mode') || 'SCALP',
-      months: params.get('months') || '3',
       step_minutes: params.get('step_minutes') || '15',
       mark_to_market: params.get('mark_to_market') || 'true',
       min_score: params.get('min_score') || '4',
-    });
+    };
+    // Prefer the explicit from_date/to_date range (current date-picker UI);
+    // fall back to the legacy months param for any old bookmarked links.
+    if (params.get('from_date') && params.get('to_date')) {
+      qObj.from_date = params.get('from_date');
+      qObj.to_date = params.get('to_date');
+    } else {
+      qObj.months = params.get('months') || '3';
+    }
+    const q = new URLSearchParams(qObj);
     url = `/api/report/performance/trade-chart?${q.toString()}`;
   } else if (tradeId) {
     url = `/api/journal/${tradeId}/chart`;

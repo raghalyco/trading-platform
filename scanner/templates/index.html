@@ -1492,6 +1492,17 @@ function swingStatusPill(row) {
   return '<span class="pill" style="background:var(--surface-2);color:var(--text-muted)">WATCHING</span>';
 }
 
+// "Delivery Volume Breakout" rule (consolidation -> resistance -> breakout
+// confirmed by a volume surge -> stop below the base) is the mandatory gate
+// both Swing Trade and Darvax already enforce before a row can even appear
+// with a volume_ratio - so its presence alone means the gate passed. This
+// just labels it visibly, using volume (Kite doesn't expose delivery data -
+// see forum: https://kite.trade/forum/discussion/935/delivery-volume) as
+// the confirmation metric in place of delivery volume.
+function volBreakoutBadge(ratio) {
+  return `<span class="pos" title="Breakout confirmed by volume ≥ the required multiple of its own average (Delivery Volume Breakout rule, using traded volume in place of delivery volume)">${ratio}x ✓</span>`;
+}
+
 function swingChartHref(symbol) {
   return '/swing-chart/' + encodeURIComponent(symbol);
 }
@@ -1531,7 +1542,7 @@ function renderSwingTradeTable() {
       <td class="num">${breakoutHigh}</td>
       <td class="num">₹${Number(s.current_price).toFixed(2)}</td>
       <td class="num ${distCls}">${dist != null ? fmtPct(dist) : '—'}</td>
-      <td class="num">${s.volume_ratio != null ? s.volume_ratio + 'x' : '—'}</td>
+      <td class="num">${s.volume_ratio != null ? volBreakoutBadge(s.volume_ratio) : '—'}</td>
       <td>${s.retest ? 'Yes' : 'No'}</td>
       <td>${s.ema_bullish_cross ? 'Bullish' : '—'}</td>
       <td class="num">${Number(s.quality).toFixed(0)}</td>
@@ -1758,7 +1769,7 @@ function darvaxTableHtml(rows, sortable) {
       <td class="num">₹${Number(s.breakout_close).toFixed(2)}</td>
       <td class="num pos">₹${Number(s.current_close).toFixed(2)}</td>
       <td class="num">${s.extension_from_breakout_pct != null ? s.extension_from_breakout_pct + '%' : '—'}</td>
-      <td class="num">${s.volume_ratio != null ? s.volume_ratio + 'x' : '—'}</td>
+      <td class="num">${s.volume_ratio != null ? volBreakoutBadge(s.volume_ratio) : '—'}</td>
       <td class="num">${s.dist_from_ath_pct != null ? s.dist_from_ath_pct + '%' : '—'}</td>
       <td class="num">${s.box_formed_bars}</td>
       <td class="num">${Number(s.quality).toFixed(0)}</td>

@@ -1311,8 +1311,12 @@ if __name__ == "__main__":
     import os
     debug = os.environ.get("FLASK_DEBUG", "1") not in ("0", "false", "False")
     app.jinja_env.auto_reload = True
+    # 0.0.0.0 (not 127.0.0.1) so this is reachable over Tailscale / LAN, not
+    # just from this machine itself - override with SCANNER_HOST=127.0.0.1
+    # in the env if you ever want to lock it back to local-only.
+    host = os.environ.get("SCANNER_HOST", "0.0.0.0")
     app.run(
-        host="127.0.0.1",
+        host=host,
         port=5000,
         debug=debug,
         use_reloader=debug,

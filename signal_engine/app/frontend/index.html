@@ -133,6 +133,16 @@ body{
   background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%239ca3af'/%3E%3C/svg%3E");
   background-repeat:no-repeat; background-position:right 8px center;
 }
+.bt-date-label{
+  flex:1; min-width:120px; display:flex; align-items:center; gap:6px;
+  background:var(--card); border:1px solid var(--line); border-radius:8px;
+  padding:6px 8px; font-size:11px; font-weight:600; color:var(--muted);
+}
+.bt-date-label input[type="date"]{
+  flex:1; border:none; background:transparent; font-family:var(--font);
+  font-size:12px; font-weight:600; color:var(--text); padding:0; min-width:0;
+}
+.bt-date-label input[type="date"]:focus{outline:none;}
 .table-card{background:var(--card); border:1px solid var(--line); border-radius:10px; overflow-x:auto; overflow-y:hidden; margin-bottom:10px; -webkit-overflow-scrolling:touch;}
 table.trades{width:100%; border-collapse:collapse; font-size:12px; table-layout:auto;}
 table.trades th{text-align:left; color:var(--muted); font-weight:600; font-size:11px; padding:8px 10px 6px; border-bottom:1px solid var(--line); white-space:nowrap;}
@@ -293,11 +303,8 @@ table.trades tr.open td:first-child{box-shadow:inset 3px 0 0 var(--blue);}
         <option value="SMART_TRADE">Smart trade</option>
         <option value="GBB">GBB Setup</option>
       </select>
-      <select id="btMonths">
-        <option value="1">1 month</option>
-        <option value="2">2 months</option>
-        <option value="3" selected>3 months</option>
-      </select>
+      <label class="bt-date-label">From <input type="date" id="btFromDate"></label>
+      <label class="bt-date-label">To <input type="date" id="btToDate"></label>
     </div>
     <button class="bt-run" id="btRunBtn" onclick="runBacktest()">Run backtest</button>
     <button type="button" class="export-btn" onclick="purgeOldJournal()">🗑 Clear journal data older than 1 week</button>
@@ -860,9 +867,20 @@ async function runBacktest(){
   document.getElementById('btTableWrap').style.display = 'none';
   const symbol = document.getElementById('btSymbol').value;
   const mode = document.getElementById('btMode').value;
-  const months = document.getElementById('btMonths').value;
+  const fromDate = document.getElementById('btFromDate').value;
+  const toDate = document.getElementById('btToDate').value;
+  if (!fromDate || !toDate) {
+    status.textContent = 'Pick both a From and To date.';
+    btn.disabled = false;
+    return;
+  }
+  if (fromDate > toDate) {
+    status.textContent = 'From date must be on or before the To date.';
+    btn.disabled = false;
+    return;
+  }
   try {
-    const res = await fetch(`/api/report/performance?symbol=${symbol}&mode=${mode}&months=${months}`);
+    const res = await fetch(`/api/report/performance?symbol=${symbol}&mode=${mode}&from_date=${fromDate}&to_date=${toDate}`);
     const d = await res.json();
     if (d.error) { status.textContent = 'Error: ' + d.error; return; }
     status.textContent = d.note || 'Done.';
@@ -885,7 +903,7 @@ async function runBacktest(){
       const sideCls = t.side === 'CE' ? 'side-ce' : 'side-pe';
       const ts = t.entry_time_ist ? t.entry_time_ist + ' IST' : fmtDateShort(t.entry_ts);
       const chartQ = new URLSearchParams({
-        bt: '1', idx: i, symbol, mode, months,
+        bt: '1', idx: i, symbol, mode, from_date: fromDate, to_date: toDate,
       });
       const strikeLabel = t.strike ? `${t.strike} ${t.side}` : '—';
       const invested = t.invested_rupees != null ? `₹${Math.round(t.invested_rupees)}` : '—';
@@ -911,6 +929,22 @@ async function runBacktest(){
 document.getElementById('symbol').addEventListener('change', () => {
   fetchSignal();
 });
+
+// Default the backtest date range to the last 3 months (same starting
+// window the old dropdown's "3 months" default gave), so the picker isn't
+// empty on first load - the user can then pick any explicit from/to range.
+(function initBacktestDates(){
+  const toEl = document.getElementById('btToDate');
+  const fromEl = document.getElementById('btFromDate');
+  const today = new Date();
+  const threeMonthsAgo = new Date(today);
+  threeMonthsAgo.setDate(threeMonthsAgo.getDate() - 90);
+  const iso = (d) => d.toISOString().slice(0, 10);
+  toEl.value = iso(today);
+  toEl.max = iso(today);
+  fromEl.value = iso(threeMonthsAgo);
+  fromEl.max = iso(today);
+})();
 
 fetch('/api/status').then(r => r.json()).then(s => {
   const el = document.getElementById('dataSource');

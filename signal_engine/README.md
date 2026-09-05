@@ -39,7 +39,7 @@ pip install -r requirements.txt
 From the repo root (with the venv activated):
 
 ```bash
-uvicorn app.api.main:app --reload --port 8000
+uvicorn app.api.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 ### 4. Open the dashboard
@@ -65,7 +65,7 @@ Useful endpoints while running:
 ```powershell
 $env:TELEGRAM_BOT_TOKEN = "123456:ABC..."
 $env:TELEGRAM_CHAT_ID = "@testalgotradinganand"   # bot must be channel admin
-uvicorn app.api.main:app --reload --port 8000
+uvicorn app.api.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 Smoke test without posting:
@@ -124,7 +124,7 @@ python scripts/fetch_instrument_tokens.py
 python scripts/generate_session.py
 
 # 3. Start the server as normal — it auto-detects the session file
-uvicorn app.api.main:app --reload --port 8000
+uvicorn app.api.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
 After code is update in Ec2, follow below steps

@@ -10,16 +10,28 @@ from app.data_feed.base import DataFeed
 
 
 class SimulatorFeed(DataFeed):
-    def __init__(self, seed: int = 42, base_price: float = 24100.0):
+    _BASE_PRICES = {
+        "NIFTY": 24100.0,
+        "SENSEX": 79800.0,
+    }
+    _DEFAULT_BASE_PRICE = 24100.0
+
+    def __init__(self, seed: int = 42, base_price: float | None = None):
         self._rng = np.random.default_rng(seed)
-        self._base_price = base_price
+        self._base_price_override = base_price
         self._cache: dict[str, pd.DataFrame] = {}
+
+    def _base_price_for(self, symbol: str) -> float:
+        if self._base_price_override is not None:
+            return self._base_price_override
+        return self._BASE_PRICES.get(symbol, self._DEFAULT_BASE_PRICE)
 
     def _generate(self, symbol: str, minutes: int) -> pd.DataFrame:
         rng = self._rng
         n = minutes
-        drift = rng.normal(0, 1, n).cumsum() * 2.0
-        close = self._base_price + drift
+        base_price = self._base_price_for(symbol)
+        drift = rng.normal(0, 1, n).cumsum() * (base_price / 12050.0)
+        close = base_price + drift
         high = close + rng.uniform(1, 8, n)
         low = close - rng.uniform(1, 8, n)
         open_ = close + rng.normal(0, 3, n)
@@ -49,18 +61,23 @@ class SimulatorFeed(DataFeed):
         return self._cache[symbol].tail(lookback_minutes).reset_index(drop=True)
 
     def get_ohlcv_history(self, symbol: str, days: int = 90,
-                          interval: str = "5minute") -> pd.DataFrame:
-        """Synthetic multi-day series for backtest UI when Kite is unavailable."""
+                          interval: str = "5minute",
+                          end_date: datetime | None = None) -> pd.DataFrame:
+        """Synthetic multi-day series for backtest UI when Kite is unavailable.
+
+        end_date: override the window's end (defaults to now) - mirrors
+        KiteFeed.get_ohlcv_history so the explicit from/to date picker works
+        identically against the simulator."""
         bar_minutes = 5 if "5" in interval else (15 if "15" in interval else 1)
         bars_per_day = max(1, 75 // bar_minutes)
         n = max(bars_per_day * days, 200)
-        key = f"{symbol}_{interval}_{days}"
+        now = end_date or datetime.now()
+        key = f"{symbol}_{interval}_{days}_{now.strftime('%Y-%m-%d')}"
         if key not in self._cache:
             df = self._generate(symbol, n).copy()
             # Spread bars across the full calendar window so from/to ≈ `days`
             span_minutes = days * 24 * 60
             step = max(bar_minutes, span_minutes // n)
-            now = datetime.now()
             df["timestamp"] = [
                 now - timedelta(minutes=step * (n - i)) for i in range(n)
             ]

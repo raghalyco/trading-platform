@@ -117,17 +117,23 @@ class KiteFeed(DataFeed):
         )
 
     def get_ohlcv_history(self, symbol: str, days: int = 90,
-                          interval: str = "5minute") -> pd.DataFrame:
+                          interval: str = "5minute",
+                          end_date: datetime | None = None) -> pd.DataFrame:
         """
         Multi-day OHLCV for backtests. Uses chunked Kite historical calls
         (Kite caps continuous windows by interval — 5minute is suitable for
         ~90 calendar days).
+
+        end_date: override the window's end (defaults to now) - lets the
+        backtest UI's explicit from/to date picker pull an exact historical
+        range instead of always ending "today". `days` still sets the
+        window's length back from end_date.
         """
         token = INSTRUMENT_TOKENS.get(symbol)
         if token is None:
             raise ValueError(f"Set instrument token for {symbol} in INSTRUMENT_TOKENS")
 
-        to_dt = datetime.now()
+        to_dt = end_date or datetime.now()
         from_dt = to_dt - timedelta(days=days)
         chunk_days = 25  # stay under Kite continuous-window limits
         all_candles = []

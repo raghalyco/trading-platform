@@ -1,6 +1,10 @@
 """
 FastAPI backend. Run with:
-    uvicorn app.api.main:app --reload --port 8000
+    uvicorn app.api.main:app --reload --host 0.0.0.0 --port 8000
+Or just:
+    python -m app.api.main
+(the __main__ block below already binds 0.0.0.0, so it's reachable over
+Tailscale/LAN even if you forget the --host flag on the uvicorn command)
 
 Endpoints:
     GET  /api/signal?symbol=NIFTY&mode=SCALP
@@ -18,6 +22,7 @@ import secrets
 import sys
 import threading
 import time
+from datetime import datetime, timedelta
 import pandas as pd
 
 from app.data_feed.simulator import SimulatorFeed
@@ -327,17 +332,21 @@ def telegram_send(req: TelegramSendRequest):
     return result
 
 
-def _aligned_vix_series(feed, days: int, interval: str, index_df):
+def _aligned_vix_series(feed, days: int, interval: str, index_df, end_date=None):
     """Fetches India VIX history and reindexes it onto index_df's exact
     timestamps (forward-filled) so it's safely position-aligned even if
     the two symbols' bars don't line up 1:1. Returns None (not raises) on
     any failure - callers fall back to index-only backtesting rather than
-    hard-failing the whole report over a VIX fetch hiccup."""
+    hard-failing the whole report over a VIX fetch hiccup.
+
+    end_date: same explicit-window override as get_ohlcv_history - must be
+    passed through here too so VIX stays aligned to the same custom
+    from/to range as the index series, not always "up to now"."""
     try:
         getter = getattr(feed, "get_ohlcv_history", None)
         if getter is None:
             return None
-        vix_df = getter("INDIA VIX", days=days, interval=interval)
+        vix_df = getter("INDIA VIX", days=days, interval=interval, end_date=end_date)
         if vix_df is None or vix_df.empty:
             return None
         vix_s = vix_df.set_index(pd.to_datetime(vix_df["timestamp"]))["close"]
@@ -350,30 +359,69 @@ def _aligned_vix_series(feed, days: int, interval: str, index_df):
         return None
 
 
+def _resolve_backtest_window(months: int, from_date: str | None, to_date: str | None):
+    """Turns either an explicit from_date/to_date pair (YYYY-MM-DD, both
+    required together) or the legacy `months` dropdown into the (days,
+    end_date) pair get_ohlcv_history/_aligned_vix_series need. from_date/
+    to_date win when both are given - lets the date-picker UI replace the
+    old '1/2/3 months' dropdown without breaking the still-supported
+    months param (e.g. old bookmarked URLs, the chart page's fallback)."""
+    if from_date and to_date:
+        try:
+            start = datetime.strptime(from_date, "%Y-%m-%d")
+            end = datetime.strptime(to_date, "%Y-%m-%d")
+        except ValueError:
+            raise ValueError("from_date/to_date must be YYYY-MM-DD")
+        if end < start:
+            raise ValueError("to_date must be on or after from_date")
+        # Inclusive of the whole to_date calendar day.
+        end = end.replace(hour=23, minute=59, second=59)
+        days = max(1, (end.date() - start.date()).days + 1)
+        return days, end, start.strftime("%Y-%m-%d"), to_date
+    days = months * 30
+    return days, None, None, None
+
+
 @app.get("/api/report/performance")
 def performance_report(
     symbol: str = Query("SENSEX"),
     mode: str = Query("SCALP"),
     months: int = Query(3, ge=1, le=6),
+    from_date: str | None = Query(None, description="YYYY-MM-DD, use with to_date"),
+    to_date: str | None = Query(None, description="YYYY-MM-DD, use with from_date"),
     step_minutes: int = Query(15, ge=5, le=60),
     mark_to_market: bool = Query(True),
     min_score: int = Query(5, ge=0, le=9),
 ):
     """
-    Backtest over the last N months using 5-minute candles.
+    Backtest over an explicit from_date/to_date range (preferred - what the
+    dashboard's date pickers send), or the last N months when no date range
+    is given (legacy `months` dropdown, still supported).
     Default mark_to_market=True so hold-end close decides WIN/LOSS instead
     of leaving most trades as TIMEOUT (more honest for coarse bars).
     Simulates OPTION PREMIUM P&L (Black-Scholes, real VIX history) when
     VIX history is available - falls back to index points otherwise.
     """
     mode = mode.upper()
-    days = months * 30
+    try:
+        days, end_date, resolved_from, resolved_to = _resolve_backtest_window(months, from_date, to_date)
+    except ValueError as e:
+        return {"error": str(e), "data_source": DATA_SOURCE}
     try:
         getter = getattr(feed, "get_ohlcv_history", None)
         if getter is not None:
-            df = getter(symbol, days=days, interval="5minute")
+            df = getter(symbol, days=days, interval="5minute", end_date=end_date)
             bar_minutes = 5
-            vix_series = _aligned_vix_series(feed, days, "5minute", df)
+            if resolved_from:
+                # Trim to the exact requested window BEFORE computing the
+                # aligned VIX series - get_ohlcv_history pads its own
+                # lookback before from_date, and vix_series is positionally
+                # aligned to df's rows, so it must be built against the
+                # already-trimmed df or the two desync.
+                ts = pd.to_datetime(df["timestamp"])
+                mask = (ts >= pd.Timestamp(resolved_from)) & (ts <= pd.Timestamp(resolved_to) + pd.Timedelta(hours=23, minutes=59, seconds=59))
+                df = df[mask].reset_index(drop=True)
+            vix_series = _aligned_vix_series(feed, days, "5minute", df, end_date=end_date)
         else:
             df = feed.get_ohlcv_1m(symbol, lookback_minutes=min(days * 75, 2000))
             bar_minutes = 1
@@ -384,8 +432,10 @@ def performance_report(
             mark_to_market=mark_to_market, min_score=min_score,
             vix_series=vix_series,
         )
-        report["months"] = months
+        report["months"] = months if not resolved_from else None
         report["days"] = days
+        report["requested_from"] = resolved_from
+        report["requested_to"] = resolved_to
         report["data_source"] = DATA_SOURCE
         return report
     except Exception as e:
@@ -398,6 +448,8 @@ def performance_trade_chart(
     symbol: str = Query("SENSEX"),
     mode: str = Query("SCALP"),
     months: int = Query(3, ge=1, le=6),
+    from_date: str | None = Query(None, description="YYYY-MM-DD, use with to_date"),
+    to_date: str | None = Query(None, description="YYYY-MM-DD, use with from_date"),
     step_minutes: int = Query(15, ge=5, le=60),
     mark_to_market: bool = Query(True),
     min_score: int = Query(5, ge=0, le=9),
@@ -405,17 +457,26 @@ def performance_trade_chart(
     """
     Candles + entry/exit/target/stop overlay for one backtest trade, in the
     same shape as /api/journal/{id}/chart so chart.html can render either.
-    Re-runs the walk-forward simulation with identical params to reproduce
-    the exact trade the caller saw in /api/report/performance's samples.
+    Re-runs the walk-forward simulation with identical params (now including
+    from_date/to_date, when the caller used the date-picker range) to
+    reproduce the exact trade the caller saw in /api/report/performance's
+    samples.
     """
     mode = mode.upper()
-    days = months * 30
+    try:
+        days, end_date, resolved_from, resolved_to = _resolve_backtest_window(months, from_date, to_date)
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}
     try:
         getter = getattr(feed, "get_ohlcv_history", None)
         if getter is not None:
-            df = getter(symbol, days=days, interval="5minute")
+            df = getter(symbol, days=days, interval="5minute", end_date=end_date)
             bar_minutes = 5
-            vix_series = _aligned_vix_series(feed, days, "5minute", df)
+            if resolved_from:
+                ts = pd.to_datetime(df["timestamp"])
+                mask = (ts >= pd.Timestamp(resolved_from)) & (ts <= pd.Timestamp(resolved_to) + pd.Timedelta(hours=23, minutes=59, seconds=59))
+                df = df[mask].reset_index(drop=True)
+            vix_series = _aligned_vix_series(feed, days, "5minute", df, end_date=end_date)
         else:
             df = feed.get_ohlcv_1m(symbol, lookback_minutes=min(days * 75, 2000))
             bar_minutes = 1
@@ -803,3 +864,19 @@ def admin_login_submit(token: str, req: AdminLoginRequest):
 
 
 app.mount("/static", StaticFiles(directory=FRONTEND_DIR), name="static")
+
+
+if __name__ == "__main__":
+    # Lets `python -m app.api.main` (or `python app/api/main.py`) work as a
+    # direct alternative to the uvicorn CLI command. Defaults to 0.0.0.0 (not
+    # 127.0.0.1) so this is reachable over Tailscale/LAN, not just from this
+    # machine itself - override with SIGNAL_ENGINE_HOST=127.0.0.1 in the env
+    # if you ever want to lock it back to local-only. The documented
+    # `uvicorn app.api.main:app --reload ...` CLI command still works too,
+    # and still needs its own --host 0.0.0.0 flag (see README) since this
+    # block only runs when the file itself is executed directly, not when
+    # uvicorn imports "app.api.main:app" as a module.
+    import uvicorn
+    host = os.environ.get("SIGNAL_ENGINE_HOST", "0.0.0.0")
+    port = int(os.environ.get("PORT", "8000"))
+    uvicorn.run(app, host=host, port=port)
