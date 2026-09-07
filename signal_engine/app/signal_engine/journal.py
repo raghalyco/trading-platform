@@ -185,9 +185,14 @@ def get_trade(trade_id: int) -> dict | None:
     return trade
 
 
-def list_trades(result_filter: str | None = None, symbol: str | None = None) -> list[dict]:
+def list_trades(result_filter: str | None = None, symbol: str | None = None,
+                 mode: str | None = None) -> list[dict]:
     """result_filter: 'WIN', 'LOSS', 'OPEN', or None for all.
     symbol: optional NIFTY/SENSEX filter.
+    mode: optional SCALP/SMART_TRADE/GBB filter - lets the auto-trade gate
+    (auto_trade.py) track open-position/daily-trade counts per mode, so
+    e.g. GBB auto-capture isn't silently blocked by a SCALP trade already
+    holding the day's slot.
     """
     conn = _connect()
     clauses = []
@@ -198,6 +203,9 @@ def list_trades(result_filter: str | None = None, symbol: str | None = None) -> 
     if symbol:
         clauses.append("symbol = ?")
         params.append(symbol.upper())
+    if mode:
+        clauses.append("mode = ?")
+        params.append(mode.upper())
     where = f"WHERE {' AND '.join(clauses)}" if clauses else ""
     rows = conn.execute(
         f"SELECT * FROM trades {where} ORDER BY id DESC", params

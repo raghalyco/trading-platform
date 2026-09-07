@@ -118,6 +118,8 @@ def _timeframe_params(timeframe: str) -> dict:
             "uptrend_ema_period": config.DARVAX_WEEKLY_UPTREND_EMA_PERIOD,
             "uptrend_lookback_bars": config.DARVAX_WEEKLY_UPTREND_LOOKBACK_BARS,
             "max_extension_pct": config.DARVAX_WEEKLY_MAX_EXTENSION_PCT,
+            "min_touches": config.DARVAX_WEEKLY_MIN_BOX_TOUCHES,
+            "touch_band_pct": config.DARVAX_WEEKLY_TOUCH_BAND_PCT,
         }
     return {
         "confirm_bars": config.DARVAX_CONFIRM_BARS,
@@ -131,6 +133,8 @@ def _timeframe_params(timeframe: str) -> dict:
         "uptrend_ema_period": config.DARVAX_UPTREND_EMA_PERIOD,
         "uptrend_lookback_bars": config.DARVAX_UPTREND_LOOKBACK_BARS,
         "max_extension_pct": config.DARVAX_MAX_EXTENSION_PCT,
+        "min_touches": config.DARVAX_MIN_BOX_TOUCHES,
+        "touch_band_pct": config.DARVAX_TOUCH_BAND_PCT,
     }
 
 
@@ -208,6 +212,29 @@ def find_darvas_boxes(df: pd.DataFrame, confirm_bars: int = None) -> list[dict]:
     return boxes
 
 
+def _count_box_touches(df: pd.DataFrame, box_top: float, box_bottom: float,
+                        i_start: int, i_end: int, band_pct: float) -> int:
+    """How many bars between the box top forming and the breakout came back
+    to test either boundary (high near box_top, or low near box_bottom).
+    This is the "3 to 5 touches inside the box (more is better)" rule - a
+    base that was only tagged once or twice on each side isn't proven
+    range support/resistance yet, just a couple of quiet bars that happened
+    to stall there. Counts EITHER boundary per bar (not both at once, since
+    on typical bar counts a single bar rarely touches both), so a bar
+    within band of top OR bottom counts once."""
+    if i_end <= i_start:
+        return 0
+    top_band = box_top * (band_pct / 100.0)
+    bottom_band = box_bottom * (band_pct / 100.0)
+    touches = 0
+    for i in range(i_start, i_end):
+        h = float(df["high"].iloc[i])
+        l = float(df["low"].iloc[i])
+        if abs(h - box_top) <= top_band or abs(l - box_bottom) <= bottom_band:
+            touches += 1
+    return touches
+
+
 def _ema_tiers(df: pd.DataFrame) -> dict:
     close = df["close"].astype(float)
     out = {}
@@ -220,7 +247,7 @@ def _ema_tiers(df: pd.DataFrame) -> dict:
 
 
 def _entry_basis(box_height_pct: float, vol_ratio: float, dist_from_ath_pct: float,
-                  box_age_bars: int, params: dict) -> list[str]:
+                  box_age_bars: int, params: dict, touch_count: int = None) -> list[str]:
     unit = params["unit"]
     plural = unit + ("s" if box_age_bars != 1 else "")
     basis = [
@@ -230,6 +257,12 @@ def _entry_basis(box_height_pct: float, vol_ratio: float, dist_from_ath_pct: flo
         f"Breakout close cleared the box top on {vol_ratio}x the {params['volume_sma_bars']}-{unit} "
         f"average volume (min required {params['volume_mult']}x) - Darvas's institutional-interest gate.",
     ]
+    if touch_count is not None:
+        basis.append(
+            f"Price tested the box boundaries {touch_count} time(s) during the base "
+            f"(min required {params['min_touches']}) - repeated respect of the range, "
+            "not just a couple of quiet bars."
+        )
     if dist_from_ath_pct <= 5:
         basis.append(f"Only {dist_from_ath_pct}% off its high in this window - \"uncharted "
                       "territory\", the DarvaX selection bias.")
@@ -303,6 +336,18 @@ def evaluate_symbol_darvax(symbol: str, daily: pd.DataFrame, timeframe: str = "d
     box_height_pct = round((box_top - box_bottom) / box_bottom * 100.0, 2)
     entry = float(last["breakout_close"])
 
+    # "At least 3 to 5 touches inside the box (more is better)": count how
+    # many bars during the base actually tested either boundary, from the
+    # candidate top forming through the bar before the breakout. Hard-
+    # excludes boxes that never proved themselves as real range support/
+    # resistance - matches how the volume and uptrend gates above already
+    # hard-exclude rather than just soft-score.
+    touch_count = _count_box_touches(
+        df, box_top, box_bottom, top_idx, breakout_idx, params["touch_band_pct"]
+    )
+    if touch_count < params["min_touches"]:
+        return None
+
     # Post-breakout status: has price since fallen back through the box
     # bottom (Darvas's hard invalidation rule)? Stale cached data can hide
     # this - always check against whatever's actually been fetched.
@@ -323,6 +368,9 @@ def evaluate_symbol_darvax(symbol: str, daily: pd.DataFrame, timeframe: str = "d
         + max(0, 15 - box_height_pct) * 2
         + max(0, 10 - dist_from_ath_pct) * 3
         + max(0, 5 - (n - 1 - breakout_idx)) * 2
+        # "more touches is better", capped so an unusually long, choppy base
+        # doesn't dominate the score just by racking up touch bars.
+        + min(touch_count, 8) * 3
     )
     score = max(0.0, min(100.0, score))
     if score < params["min_score"]:
@@ -337,6 +385,7 @@ def evaluate_symbol_darvax(symbol: str, daily: pd.DataFrame, timeframe: str = "d
         "volume_ratio": round(vol_ratio, 2),
         "dist_from_ath_pct": dist_from_ath_pct,
         "box_age_bars": box_age_bars,
+        "touch_count": touch_count,
         "ema_tiers": ema_tiers,
         "params": params,
     })
@@ -350,6 +399,7 @@ def evaluate_symbol_darvax(symbol: str, daily: pd.DataFrame, timeframe: str = "d
         "box_bottom": round(box_bottom, 2),
         "box_height_pct": box_height_pct,
         "box_formed_bars": box_age_bars,
+        "box_touch_count": touch_count,
         "breakout_date": _bar_date(df, breakout_idx),
         "breakout_close": round(entry, 2),
         "current_close": round(today_close, 2),
@@ -419,7 +469,7 @@ def build_darvax_chart_payload(symbol: str, df: pd.DataFrame, box: dict, info: d
     params = info.get("params") or _timeframe_params("daily")
     entry_basis = _entry_basis(
         info["box_height_pct"], info["volume_ratio"], info["dist_from_ath_pct"],
-        info["box_age_bars"], params,
+        info["box_age_bars"], params, touch_count=info.get("touch_count"),
     )
 
     if info["status"] == "INVALIDATED":
@@ -441,6 +491,7 @@ def build_darvax_chart_payload(symbol: str, df: pd.DataFrame, box: dict, info: d
         "box_top": round(info["box_top"], 2),
         "box_bottom": round(info["box_bottom"], 2),
         "box_height_pct": info["box_height_pct"],
+        "box_touch_count": info.get("touch_count"),
         "breakout_close": round(box["breakout_close"], 2),
         "volume_ratio": info["volume_ratio"],
         "dist_from_ath_pct": info["dist_from_ath_pct"],
@@ -502,11 +553,15 @@ def rebuild_chart_for_symbol(symbol: str, daily: pd.DataFrame, timeframe: str = 
     invalidated = today_close < box_bottom
     status = "INVALIDATED" if invalidated else ("TRIGGERED" if n - 1 > breakout_idx else "BREAKOUT")
     box_age_bars = last["breakout_idx"] - last["box_top_idx"]
+    touch_count = _count_box_touches(
+        df, box_top, box_bottom, last["box_top_idx"], breakout_idx, params["touch_band_pct"]
+    )
 
     payload = build_darvax_chart_payload(symbol, df, last, {
         "status": status, "box_top": box_top, "box_bottom": box_bottom,
         "box_height_pct": box_height_pct, "volume_ratio": round(vol_ratio, 2),
         "dist_from_ath_pct": dist_from_ath_pct, "box_age_bars": box_age_bars,
+        "touch_count": touch_count,
         "ema_tiers": _ema_tiers(df), "params": params,
     })
     store_chart_payload(symbol, payload, timeframe=timeframe)

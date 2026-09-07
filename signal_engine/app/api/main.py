@@ -66,8 +66,9 @@ app = FastAPI(title="Trading Signal Engine")
 # real browser each morning. This just moves "paste the token back" off of
 # SSH and onto a bookmarked URL on your phone.
 #
-# MUST be set via env (e.g. in trading-platform/.env as
-# SIGNAL_ENGINE_ADMIN_TOKEN=<a long random string>) - fails closed (404) if
+# MUST be set via env - e.g. in signal_engine/.env (NOT trading-platform's
+# repo-root .env - app/config.py's dotenv loader only reads signal_engine/.env)
+# as SIGNAL_ENGINE_ADMIN_TOKEN=<a long random string>. Fails closed (404) if
 # unset, rather than falling back to a guessable default.
 ADMIN_TOKEN = os.environ.get("SIGNAL_ENGINE_ADMIN_TOKEN", "")
 
@@ -138,13 +139,23 @@ def _background_scan_loop():
             if session != "MARKET CLOSED":
                 for symbol in CONFIG.instruments:
                     try:
-                        signal = generate_signal(feed, symbol, "SCALP", risk_mgr)
                         poll_open_positions(feed, auto_exit=True)
-                        auto = maybe_auto_enter(feed, signal, risk_mgr)
-                        if auto and auto.get("ok") and not auto.get("skipped"):
-                            print(f"[background] auto-captured {symbol} trade #{auto.get('trade_id')}", flush=True)
                     except Exception as e:
-                        print(f"[background] {symbol} cycle failed: {e}", flush=True)
+                        print(f"[background] {symbol} position poll failed: {e}", flush=True)
+                    # SCALP and GBB each get their own auto-capture attempt
+                    # every cycle - should_auto_enter's per-mode scoping
+                    # (auto_trade.py) means GBB's open-position/daily-trade
+                    # budget is tracked independently of SCALP's, so one
+                    # mode already holding today's slot doesn't block the
+                    # other from ever capturing anything.
+                    for mode in ("SCALP", "GBB"):
+                        try:
+                            signal = generate_signal(feed, symbol, mode, risk_mgr)
+                            auto = maybe_auto_enter(feed, signal, risk_mgr)
+                            if auto and auto.get("ok") and not auto.get("skipped"):
+                                print(f"[background] auto-captured {symbol} {mode} trade #{auto.get('trade_id')}", flush=True)
+                        except Exception as e:
+                            print(f"[background] {symbol} {mode} cycle failed: {e}", flush=True)
         except Exception as e:
             print(f"[background] loop error: {e}", flush=True)
         time.sleep(CONFIG.auto_trade.background_poll_seconds)

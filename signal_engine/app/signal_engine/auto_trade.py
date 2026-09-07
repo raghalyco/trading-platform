@@ -17,10 +17,11 @@ from app.signal_engine.live_capture import capture_entry
 IST = ZoneInfo("Asia/Kolkata")
 
 
-def _todays_trades() -> list[dict]:
-    """All trades (any status) with entry_time falling on today's IST date."""
+def _todays_trades(mode: str | None = None) -> list[dict]:
+    """All trades (any status) with entry_time falling on today's IST date,
+    optionally scoped to one mode - see should_auto_enter's mode-scoping note."""
     today = datetime.now(IST).strftime("%Y-%m-%d")
-    return [t for t in journal.list_trades() if (t.get("entry_time") or "").startswith(today)]
+    return [t for t in journal.list_trades(mode=mode) if (t.get("entry_time") or "").startswith(today)]
 
 
 def should_auto_enter(signal: dict, otm_steps: int) -> tuple[bool, str]:
@@ -71,15 +72,20 @@ def should_auto_enter(signal: dict, otm_steps: int) -> tuple[bool, str]:
     if not gate.get("can_enter", False):
         return False, gate.get("reason") or "risk gate blocked"
 
-    open_n = len(journal.list_trades("OPEN"))
+    # Scoped per mode (not globally) so e.g. GBB verification runs
+    # independently of SCALP's own open-position/daily-trade budget -
+    # otherwise a SCALP trade already holding the day's one open slot would
+    # silently starve GBB of any chance to ever auto-capture.
+    mode = (signal.get("mode") or "").upper()
+    open_n = len(journal.list_trades("OPEN", mode=mode))
     if open_n >= cfg.max_open_positions:
-        return False, f"max open positions ({cfg.max_open_positions}) reached"
+        return False, f"max open {mode} positions ({cfg.max_open_positions}) reached"
 
-    todays = _todays_trades()
+    todays = _todays_trades(mode=mode)
     if len(todays) >= cfg.max_trades_per_day:
-        return False, f"max trades/day ({cfg.max_trades_per_day}) reached"
+        return False, f"max {mode} trades/day ({cfg.max_trades_per_day}) reached"
     if cfg.stop_after_first_win and any(t.get("result") == "WIN" for t in todays):
-        return False, "already banked a win today - no over-trading"
+        return False, f"already banked a {mode} win today - no over-trading"
 
     return True, "OK"
 

@@ -375,6 +375,13 @@ DARVAX_UPTREND_LOOKBACK_BARS = 20     # how far back to confirm the EMA has actu
 # price. Same pattern as SWING_TRADE_MAX_EXTENSION_PCT. Does NOT apply to
 # BREAKOUT (today) or INVALIDATED rows - those stay visible regardless.
 DARVAX_MAX_EXTENSION_PCT = 12.0
+# "At least 3 to 5 touches inside the box (more is better)" - a base that's
+# only been tagged once or twice on each side isn't proven range support/
+# resistance yet, just a couple of quiet bars. Hard-excludes boxes with
+# fewer touches than this; the score formula also rewards MORE touches
+# beyond the minimum (see evaluate_symbol_darvax's quality calc).
+DARVAX_MIN_BOX_TOUCHES = 3
+DARVAX_TOUCH_BAND_PCT = 1.0    # how close (% of level) counts as "touching" the box top/bottom
 
 # Weekly variant — same box state machine, run on weekly-resampled candles.
 # The deck explicitly prefers this over daily ("the higher the timeframe,
@@ -391,6 +398,8 @@ DARVAX_WEEKLY_MIN_SCORE = 30
 DARVAX_WEEKLY_UPTREND_EMA_PERIOD = 30      # weekly EMA30 ~ daily EMA150, a similar "real trend" bar
 DARVAX_WEEKLY_UPTREND_LOOKBACK_BARS = 10
 DARVAX_WEEKLY_MAX_EXTENSION_PCT = 12.0
+DARVAX_WEEKLY_MIN_BOX_TOUCHES = 3
+DARVAX_WEEKLY_TOUCH_BAND_PCT = 1.5     # weekly bars are noisier per-bar, so a slightly wider band
 
 # ---------------------------------------------------------------------------
 # Episodic Pivot (delayed EP) — Ankur Patel's method ("Master In One" podcast /
