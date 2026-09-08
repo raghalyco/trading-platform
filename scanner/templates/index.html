@@ -257,6 +257,23 @@
   .code-search-hit:hover { background: var(--surface); }
   .code-search-hit .path { font-family: 'SF Mono', Consolas, monospace; font-size: 12px; color: var(--accent); word-break: break-all; }
   .code-search-hit .line { font-size: 11.5px; color: var(--text-muted); padding-left: 8px; word-break: break-all; }
+  /* ---- Breakout Radar (8th tab) ---- */
+  .radar-filter-bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin: 4px 0 14px; }
+  .radar-search { background: var(--surface-2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 7px; padding: 8px 12px; font-size: 12.5px; font-family: var(--font-mono); width: 220px; }
+  .radar-search:focus { outline: none; border-color: var(--accent); }
+  .radar-filter-bar .divider { width: 1px; height: 22px; background: var(--border); }
+  .quadrant-badge { font-family: var(--font-mono); font-size: 10.5px; font-weight: 700; padding: 3px 8px; border-radius: 6px; }
+  .quadrant-badge.high_gear { background: rgba(103, 232, 249, 0.14); color: #67e8f9; }
+  .quadrant-badge.early_spark { background: rgba(134, 239, 172, 0.14); color: #86efac; }
+  .quadrant-badge.peak_fade { background: rgba(253, 164, 175, 0.14); color: #fda4af; }
+  .quadrant-badge.cold_floor { background: rgba(252, 211, 77, 0.14); color: #fcd34d; }
+  .orb-window-tabs .sub-tab { padding: 6px 11px; font-size: 10.5px; }
+  .saved-filter-chip { display: inline-flex; align-items: center; gap: 6px; background: var(--surface-2);
+    border: 1px solid var(--border); border-radius: 20px; padding: 4px 6px 4px 12px; font-size: 11.5px; cursor: pointer; }
+  .saved-filter-chip:hover { border-color: var(--accent); }
+  .saved-filter-chip .x { color: var(--text-muted); font-weight: 700; padding: 2px 5px; border-radius: 50%; }
+  .saved-filter-chip .x:hover { background: var(--red-bg); color: var(--red); }
 </style>
 </head>
 <body>
@@ -276,6 +293,7 @@
     <div class="nav-item cat-overview" data-tab="indexmovers"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg><span>Index Movers</span></div>
     <div class="nav-item cat-overview" data-tab="optionchain"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/><path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65"/><path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"/></svg><span>Option Chain (PCR)</span></div>
     <div class="nav-item cat-overview" data-tab="custombaskets"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="22" y1="12" x2="18" y2="12"/><line x1="6" y1="12" x2="2" y2="12"/><line x1="12" y1="6" x2="12" y2="2"/><line x1="12" y1="22" x2="12" y2="18"/></svg><span>Sector Breakouts (Custom)</span></div>
+    <div class="nav-item cat-overview" data-tab="radar"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg><span>Breakout Radar</span></div>
   </div>
 
   <div class="nav-group">
@@ -313,6 +331,7 @@
   <div class="mobile-nav-item" data-tab="indexmovers" title="Index Movers">📈</div>
   <div class="mobile-nav-item" data-tab="optionchain" title="Option Chain (PCR)">🧮</div>
   <div class="mobile-nav-item" data-tab="custombaskets" title="Sector Breakouts (Custom)">🧩</div>
+  <div class="mobile-nav-item" data-tab="radar" title="Breakout Radar">🎯</div>
   <div class="mobile-nav-item" data-tab="stockday" title="Stock for day">☀️</div>
   <div class="mobile-nav-item" data-tab="support" title="Previous Support Bounce">🛟</div>
   <div class="mobile-nav-item" data-tab="swing" title="Swing Trade (Weekly)">📅</div>
@@ -411,6 +430,62 @@
     </div>
     <div class="card">
       <div id="customBasketsWrap"><div class="loading">Loading custom baskets…</div></div>
+    </div>
+  </div>
+
+  <!-- ============ TAB: Breakout Radar ============ -->
+  <div class="tab-page" id="page-radar">
+    <div class="topbar">
+      <div>
+        <h1>Breakout Radar <span class="live-pill" id="live-radar">LIVE</span></h1>
+        <p class="meta" id="radarMeta">RS quadrant · PDH/PDL breach · multi-timeframe ORB · Money Flow · loading…</p>
+        <p class="help-text">Per-stock relative-strength quadrant vs Nifty 50 (RRG-style: is RS above/below its own trend, and is that trend rising or falling), same-day PDH/PDL breach timing, opening-range-breakout status across five windows at once, and a Money Flow (RVOL + directional volume ratio) read — benchmarked against a commercial F&amp;O screener. Defaults to the F&amp;O universe; auto-refreshes every 30s while this tab is open.</p>
+      </div>
+      <div class="topbar-actions">
+        <select class="universe-select" id="radarUniverse" title="Universe" onchange="switchRadarUniverse(this.value)">
+          <option value="fno" selected>F&amp;O</option>
+          <option value="nifty50">Nifty 50</option>
+          <option value="nifty100">Nifty 100</option>
+          <option value="nifty200">Nifty 200</option>
+          <option value="nifty500">Nifty 500</option>
+        </select>
+        <button class="primary" id="radarBtn" onclick="runBreakoutRadar(true)">Run Scan</button>
+      </div>
+    </div>
+
+    <div class="kpis" id="radarKpis"></div>
+
+    <div class="sub-tabs" id="radarSentimentTabs">
+      <button class="sub-tab active" data-sentiment="all" onclick="setRadarSentiment('all')">All</button>
+      <button class="sub-tab" data-sentiment="bullish" onclick="setRadarSentiment('bullish')">Bullish</button>
+      <button class="sub-tab" data-sentiment="bearish" onclick="setRadarSentiment('bearish')">Bearish</button>
+    </div>
+    <div class="sub-tabs" id="radarQuadrantTabs">
+      <button class="sub-tab active" data-quadrant="all" onclick="setRadarQuadrant('all')">All Quadrants</button>
+      <button class="sub-tab" data-quadrant="high_gear" onclick="setRadarQuadrant('high_gear')">ST · Leading</button>
+      <button class="sub-tab" data-quadrant="early_spark" onclick="setRadarQuadrant('early_spark')">BD · Improving</button>
+      <button class="sub-tab" data-quadrant="peak_fade" onclick="setRadarQuadrant('peak_fade')">FD · Weakening</button>
+      <button class="sub-tab" data-quadrant="cold_floor" onclick="setRadarQuadrant('cold_floor')">WK · Lagging</button>
+    </div>
+    <div class="sub-tabs orb-window-tabs" id="radarOrbTabs">
+      <span style="font-family:var(--font-mono);font-size:10.5px;color:var(--text-muted);align-self:center;margin-right:4px;">ORB WINDOW</span>
+      <button class="sub-tab" data-orb="5" onclick="setRadarOrbWindow('5')">5m</button>
+      <button class="sub-tab" data-orb="15" onclick="setRadarOrbWindow('15')">15m</button>
+      <button class="sub-tab" data-orb="30" onclick="setRadarOrbWindow('30')">30m</button>
+      <button class="sub-tab" data-orb="45" onclick="setRadarOrbWindow('45')">45m</button>
+      <button class="sub-tab active" data-orb="60" onclick="setRadarOrbWindow('60')">60m</button>
+    </div>
+
+    <div class="radar-filter-bar">
+      <input type="text" class="radar-search" id="radarSearch" placeholder="Search symbol…" oninput="onRadarSearch(this.value)">
+      <div class="divider"></div>
+      <button class="secondary" onclick="saveRadarFilter()">☆ Save Filter</button>
+      <span style="font-family:var(--font-mono);font-size:11px;color:var(--text-muted)">Saved Filters</span>
+      <div id="radarSavedFilters" style="display:flex;gap:6px;flex-wrap:wrap;"></div>
+    </div>
+
+    <div class="card">
+      <div id="radarTableWrap"><div class="loading">Loading startup cache…</div></div>
     </div>
   </div>
 
@@ -834,9 +909,11 @@ function updateMarketStatus(marketOpen) {
     if (marketOpen) {
       if (activeTab === 'sector') startLivePolling('sector');
       if (activeTab === 'trending') startLivePolling('trending');
+      if (activeTab === 'radar') startLivePolling('radar');
     } else {
       stopLivePolling('sector');
       stopLivePolling('trending');
+      stopLivePolling('radar');
     }
   }
   marketWasOpen = marketOpen;
@@ -859,6 +936,7 @@ let stockdayLoaded = false;
 let supportLoaded = false;
 let swingLoaded = false;
 let darvaxLoaded = false;
+let radarLoaded = false;
 
 function switchTab(tab) {
   activeTab = tab;
@@ -880,6 +958,8 @@ function switchTab(tab) {
   if (tab === 'support' && !supportLoaded) { supportLoaded = true; runSupportBounce(false); }
   if (tab === 'swing' && !swingLoaded) { swingLoaded = true; runSwingTrade(false); }
   if (tab === 'darvax' && !darvaxLoaded) { darvaxLoaded = true; runDarvax(false); }
+  if (tab === 'radar') { startLivePolling('radar'); } else { stopLivePolling('radar'); }
+  if (tab === 'radar' && !radarLoaded) { radarLoaded = true; runBreakoutRadar(false); }
   if (tab === 'indexmovers' && !indexMoversLoaded) { indexMoversLoaded = true; runIndexMovers(false); }
   if (tab === 'optionchain' && !optionChainLoaded) { optionChainLoaded = true; runOptionChain(false); }
   if (tab === 'custombaskets' && !customBasketsLoaded) { customBasketsLoaded = true; runCustomBaskets(false); }
@@ -897,6 +977,7 @@ function switchTab(tab) {
 const LIVE_POLL_CONFIG = {
   sector: { fn: () => runSectorScan(true), intervalMs: 25000 },
   trending: { fn: () => runTrendingScan(true), intervalMs: 30000 },
+  radar: { fn: () => runBreakoutRadar(true), intervalMs: 30000 },
 };
 const _liveTimers = {};
 
@@ -1114,6 +1195,219 @@ function renderSectorTable() {
   document.getElementById('sectorTableWrap').innerHTML = html;
   enhanceTableVisuals(document.getElementById('sectorTableWrap'));
 }
+
+// ---------------- Breakout Radar ----------------
+let radarData = null;
+let radarSortKey = 'rs_rank', radarSortDir = 1;
+let radarFilters = { sentiment: 'all', quadrant: 'all', orbWindow: '60', search: '' };
+let radarUniverseMode = 'fno';
+
+async function runBreakoutRadar(refresh = true) {
+  const btn = document.getElementById('radarBtn');
+  btn.disabled = true; btn.textContent = refresh ? 'Scanning...' : 'Loading...';
+  if (refresh || !radarData) {
+    document.getElementById('radarTableWrap').innerHTML = '<div class="loading">' +
+      (refresh ? 'Refreshing Breakout Radar (scans intraday candles too, can take a bit)...' : 'Loading Breakout Radar…') + '</div>';
+  }
+  try {
+    const params = new URLSearchParams({ universe: radarUniverseMode });
+    if (refresh) params.set('refresh', '1');
+    radarData = await fetchJson('/api/scan_breakout_radar?' + params.toString());
+    const stamp = new Date(radarData.generated_at).toLocaleTimeString();
+    const src = radarData.cached ? 'startup cache' : 'fresh scan';
+    document.getElementById('radarMeta').textContent =
+      `${radarData.universe_label || radarUniverseMode} · ${radarData.num_results} symbol(s) · ${src} · ${stamp} · click Run Scan to refresh`;
+    updateMarketStatus(radarData.market_open);
+    renderRadarKpis();
+    renderRadarTable();
+  } catch (e) {
+    document.getElementById('radarTableWrap').innerHTML = '<div class="empty">Scan failed: ' + (e.message || e) + '</div>';
+  }
+  btn.disabled = false; btn.textContent = 'Run Scan';
+}
+
+function switchRadarUniverse(mode) {
+  radarUniverseMode = mode;
+  runBreakoutRadar(true);
+}
+window.switchRadarUniverse = switchRadarUniverse;
+
+function renderRadarKpis() {
+  const el = document.getElementById('radarKpis');
+  if (!radarData) { el.innerHTML = ''; return; }
+  const sc = radarData.sentiment_counts || {};
+  const qc = radarData.quadrant_counts || {};
+  el.innerHTML = `
+    <div class="kpi"><p class="label">Bullish</p><p class="value pos">${sc.bullish || 0}</p></div>
+    <div class="kpi"><p class="label">Bearish</p><p class="value neg">${sc.bearish || 0}</p></div>
+    <div class="kpi"><p class="label">Leading (ST)</p><p class="value">${qc.high_gear || 0}</p></div>
+    <div class="kpi"><p class="label">Improving (BD)</p><p class="value">${qc.early_spark || 0}</p></div>
+    <div class="kpi"><p class="label">Weakening (FD)</p><p class="value">${qc.peak_fade || 0}</p></div>
+    <div class="kpi"><p class="label">Lagging (WK)</p><p class="value">${qc.cold_floor || 0}</p></div>
+  `;
+}
+
+function setRadarSentiment(v) {
+  radarFilters.sentiment = v;
+  document.querySelectorAll('#radarSentimentTabs .sub-tab').forEach(el => el.classList.toggle('active', el.dataset.sentiment === v));
+  renderRadarTable();
+}
+window.setRadarSentiment = setRadarSentiment;
+
+function setRadarQuadrant(v) {
+  radarFilters.quadrant = v;
+  document.querySelectorAll('#radarQuadrantTabs .sub-tab').forEach(el => el.classList.toggle('active', el.dataset.quadrant === v));
+  renderRadarTable();
+}
+window.setRadarQuadrant = setRadarQuadrant;
+
+function setRadarOrbWindow(v) {
+  radarFilters.orbWindow = v;
+  document.querySelectorAll('#radarOrbTabs .sub-tab').forEach(el => el.classList.toggle('active', el.dataset.orb === v));
+  renderRadarTable();
+}
+window.setRadarOrbWindow = setRadarOrbWindow;
+
+let _radarSearchTimer = null;
+function onRadarSearch(v) {
+  clearTimeout(_radarSearchTimer);
+  _radarSearchTimer = setTimeout(() => { radarFilters.search = v.trim().toUpperCase(); renderRadarTable(); }, 150);
+}
+window.onRadarSearch = onRadarSearch;
+
+function setRadarSort(key) {
+  if (radarSortKey === key) { radarSortDir *= -1; } else { radarSortKey = key; radarSortDir = 1; }
+  renderRadarTable();
+}
+window.setRadarSort = setRadarSort;
+
+function radarFilteredRows() {
+  if (!radarData || !radarData.results) return [];
+  return radarData.results.filter(r => {
+    if (radarFilters.sentiment !== 'all' && r.sentiment !== radarFilters.sentiment) return false;
+    if (radarFilters.quadrant !== 'all' && r.quadrant !== radarFilters.quadrant) return false;
+    if (radarFilters.search && !r.symbol.includes(radarFilters.search)) return false;
+    return true;
+  });
+}
+
+function fmtOrbCell(r) {
+  const w = radarFilters.orbWindow;
+  const o = (r.orb || {})[w];
+  if (!o) return '—';
+  if (o.status === 'no_intraday_data') return '<span style="color:var(--text-muted)">no data</span>';
+  if (o.status === 'not_yet') return '<span style="color:var(--text-muted)">not yet</span>';
+  if (o.status === 'inside_range') return '<span style="color:var(--text-muted)">inside range</span>';
+  const arrow = o.direction === 'up' ? '▲' : '▼';
+  const cls = o.direction === 'up' ? 'pos' : 'neg';
+  return `<span class="${cls}">ORB${w} ${arrow} ${o.breakout_time || ''}</span>`;
+}
+
+function fmtPdhPdl(r) {
+  const parts = [];
+  if (r.pdh_breach_time) parts.push(`<span class="pos">PDH ${r.pdh_breach_time}</span>`);
+  if (r.pdl_breach_time) parts.push(`<span class="neg">PDL ${r.pdl_breach_time}</span>`);
+  if (!parts.length) return '—';
+  return parts.join('<br>');
+}
+
+function renderRadarTable() {
+  const wrap = document.getElementById('radarTableWrap');
+  if (!radarData || !radarData.results || !radarData.results.length) {
+    wrap.innerHTML = '<div class="empty">No Breakout Radar data available yet — click Run Scan (needs Kite login).</div>';
+    return;
+  }
+  const filtered = radarFilteredRows();
+  if (!filtered.length) {
+    wrap.innerHTML = '<div class="empty">No symbols match the current filters.</div>';
+    return;
+  }
+  const rows = genericSort(filtered, radarSortKey, radarSortDir);
+  const cols = [
+    ['symbol', 'Stock'], ['close', 'Price'], ['pct_change_1d', 'Chg %'],
+    ['rs_vs_nifty_pct', 'vs Nifty'], ['rs_rank', 'Rank'], ['quadrant', 'Quadrant'],
+    ['rvol', 'RVOL'], ['ovs', 'OVS'], ['pdh', 'PDH / PDL'], ['orb', 'ORB'],
+  ];
+  const numCols = new Set(['close', 'pct_change_1d', 'rs_vs_nifty_pct', 'rs_rank', 'rvol', 'ovs']);
+
+  let html = '<table><thead><tr>' + cols.map(([key, label]) =>
+    `<th class="${numCols.has(key) ? 'num' : ''}" onclick="setRadarSort('${key}')" style="cursor:pointer">${label}${sortIndicator(radarSortKey, key, radarSortDir)}</th>`
+  ).join('') + '</tr></thead><tbody>';
+
+  for (const r of rows) {
+    const clsChg = (r.pct_change_1d || 0) >= 0 ? 'pos' : 'neg';
+    const clsRs = (r.rs_vs_nifty_pct || 0) >= 0 ? 'pos' : 'neg';
+    const quadBadge = r.quadrant
+      ? `<span class="quadrant-badge ${r.quadrant}" title="${r.quadrant_name || ''}">${r.quadrant_badge}</span>`
+      : '—';
+    html += `<tr>
+      <td>${r.symbol}</td>
+      <td class="num">${r.close != null ? r.close.toFixed(2) : '—'}</td>
+      <td class="num ${clsChg}">${fmtPct(r.pct_change_1d)}</td>
+      <td class="num ${clsRs}">${fmtPct(r.rs_vs_nifty_pct)}</td>
+      <td class="num">${r.rs_rank != null ? '#' + r.rs_rank : '—'}</td>
+      <td>${quadBadge}</td>
+      <td class="num">${r.rvol != null ? r.rvol.toFixed(2) + 'x' : '—'}</td>
+      <td class="num">${r.ovs != null ? r.ovs.toFixed(2) + 'x' : '—'}</td>
+      <td>${fmtPdhPdl(r)}</td>
+      <td>${fmtOrbCell(r)}</td>
+    </tr>`;
+  }
+  html += '</tbody></table>';
+  wrap.innerHTML = html;
+  enhanceTableVisuals(wrap);
+}
+
+// Saved filter presets (max 3), local to this browser only - matches the
+// reference screener's "Saved Filters 0/3". Stored in localStorage since
+// this is a single-user local dashboard with no backend user accounts.
+const RADAR_FILTERS_KEY = 'breakoutRadarSavedFilters';
+function loadRadarSavedFilters() {
+  try { return JSON.parse(localStorage.getItem(RADAR_FILTERS_KEY) || '[]'); }
+  catch (e) { return []; }
+}
+function renderRadarSavedFilters() {
+  const saved = loadRadarSavedFilters();
+  const el = document.getElementById('radarSavedFilters');
+  if (!el) return;
+  if (!saved.length) { el.innerHTML = '<span style="color:var(--text-muted);font-size:11px">none yet</span>'; return; }
+  el.innerHTML = saved.map((f, i) => `
+    <span class="saved-filter-chip" onclick="applyRadarSavedFilter(${i})">
+      ${f.name}
+      <span class="x" onclick="event.stopPropagation(); deleteRadarSavedFilter(${i})">×</span>
+    </span>
+  `).join('');
+}
+function saveRadarFilter() {
+  const saved = loadRadarSavedFilters();
+  if (saved.length >= 3) { alert('Max 3 saved filters — delete one first.'); return; }
+  const name = prompt('Name this filter (e.g. "Leading + Bullish"):');
+  if (!name) return;
+  saved.push({ name, filters: { ...radarFilters } });
+  localStorage.setItem(RADAR_FILTERS_KEY, JSON.stringify(saved));
+  renderRadarSavedFilters();
+}
+window.saveRadarFilter = saveRadarFilter;
+function applyRadarSavedFilter(i) {
+  const saved = loadRadarSavedFilters();
+  const f = saved[i]; if (!f) return;
+  radarFilters = { ...f.filters };
+  const searchEl = document.getElementById('radarSearch');
+  if (searchEl) searchEl.value = radarFilters.search || '';
+  document.querySelectorAll('#radarSentimentTabs .sub-tab').forEach(el => el.classList.toggle('active', el.dataset.sentiment === radarFilters.sentiment));
+  document.querySelectorAll('#radarQuadrantTabs .sub-tab').forEach(el => el.classList.toggle('active', el.dataset.quadrant === radarFilters.quadrant));
+  document.querySelectorAll('#radarOrbTabs .sub-tab').forEach(el => el.classList.toggle('active', el.dataset.orb === radarFilters.orbWindow));
+  renderRadarTable();
+}
+window.applyRadarSavedFilter = applyRadarSavedFilter;
+function deleteRadarSavedFilter(i) {
+  const saved = loadRadarSavedFilters();
+  saved.splice(i, 1);
+  localStorage.setItem(RADAR_FILTERS_KEY, JSON.stringify(saved));
+  renderRadarSavedFilters();
+}
+window.deleteRadarSavedFilter = deleteRadarSavedFilter;
+renderRadarSavedFilters();
 
 // ---------------- Trending Stocks by Sector ----------------
 async function runTrendingScan(refresh = true) {

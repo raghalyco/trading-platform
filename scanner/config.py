@@ -536,3 +536,17 @@ TRADINGVIEW_INTERVAL = "D"
 # or if you've enabled sharing / published it.
 TRADINGVIEW_CHART_ID = ""
 
+
+# ---------------------------------------------------------------------------
+# Breakout Radar — 8th tab (RS quadrant + PDH/PDL breach + multi-timeframe
+# ORB + Money Flow), benchmarked against a commercial F&O screener. See
+# breakout_radar.py's module docstring for exactly how each field is
+# computed (and which parts are documented proxies vs. exact matches).
+# ---------------------------------------------------------------------------
+BREAKOUT_RADAR_UNIVERSE = "fno"           # "nifty50"|"nifty100"|"nifty200"|"nifty500"|"fno"
+BREAKOUT_RADAR_LOOKBACK_DAYS = 200        # calendar days of daily history to fetch per symbol
+BREAKOUT_RADAR_RS_TREND_EMA = 20          # RS-ratio's own EMA period (the "level" read)
+BREAKOUT_RADAR_RS_MOMENTUM_LOOKBACK = 10  # trading days, RS-ratio ROC (the "momentum" read)
+BREAKOUT_RADAR_ORB_WINDOWS = [5, 15, 30, 45, 60]   # minutes, all shown at once
+BREAKOUT_RADAR_INTRADAY_INTERVAL = "5minute"       # candle size backing PDH/PDL + ORB + Money Flow
+BREAKOUT_RADAR_RVOL_LOOKBACK = 20         # trading days, average-volume baseline for RVOL

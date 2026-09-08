@@ -36,6 +36,7 @@ import smart_money_backtest
 import support_bounce
 import swing_trade
 import darvax
+import breakout_radar
 import trade_tracker
 import strategy_performance
 import index_movers
@@ -125,6 +126,7 @@ _stock_for_day_cache: dict = {}
 _support_bounce_cache: dict = {}
 _swing_trade_cache: dict = {}
 _darvax_cache: dict = {}
+_breakout_radar_cache: dict = {}
 _episodic_pivot_cache: dict = {}
 
 
@@ -378,6 +380,25 @@ def _refresh_darvax_cache(mode=None):
     return payload
 
 
+def _refresh_breakout_radar_cache(mode=None):
+    mode = mode or (config.BREAKOUT_RADAR_UNIVERSE or "fno")
+    try:
+        mode = universe_mod.normalize_nifty_mode(mode)
+    except ValueError:
+        mode = "fno"
+    print(f"Warming Breakout Radar cache ({mode})...")
+    payload = breakout_radar.scan_breakout_radar(_client, _universe_df, universe_mode=mode)
+    _breakout_radar_cache[mode] = {
+        "generated_at": payload["generated_at"],
+        "payload": payload,
+    }
+    print(
+        f"Breakout Radar ready: {payload.get('num_results', 0)} symbol(s) on "
+        f"{payload.get('universe_label', mode)}."
+    )
+    return payload
+
+
 def _refresh_episodic_pivot_cache(mode=None):
     mode = mode or (config.EP_UNIVERSE or "nifty50")
     try:
@@ -496,6 +517,7 @@ def _warm_all_caches():
         _refresh_support_bounce_all_cache()
         _refresh_swing_trade_cache()
         _refresh_darvax_cache()
+        _refresh_breakout_radar_cache()
         _refresh_custom_basket_cache()
         # Episodic Pivot now exposes all 5 universes as tabs on the same
         # page (like Previous Support Bounce), so warm every one of them at
@@ -805,6 +827,16 @@ def _episodic_pivot_universe_arg() -> str:
         return "nifty500"
 
 
+def _breakout_radar_universe_arg() -> str:
+    from flask import request
+    import universe as universe_mod
+    raw = (request.args.get("universe") or config.BREAKOUT_RADAR_UNIVERSE or "fno")
+    try:
+        return universe_mod.normalize_nifty_mode(raw)
+    except ValueError:
+        return "fno"
+
+
 @app.route("/api/stock_for_day", methods=["POST", "GET"])
 def api_stock_for_day():
     """Smart Money structure scan on selected Nifty universe — BUY-eligible only."""
@@ -836,6 +868,32 @@ def api_stock_for_day():
         import traceback
         traceback.print_exc()
         return jsonify({"error": str(e), "buys": [], "num_buys": 0}), 500
+
+
+@app.route("/api/scan_breakout_radar", methods=["POST", "GET"])
+def api_scan_breakout_radar():
+    """RS quadrant (RRG-style) + PDH/PDL breach + multi-timeframe ORB + Money Flow,
+    benchmarked against a commercial F&O screener. See breakout_radar.py."""
+    try:
+        mode = _breakout_radar_universe_arg()
+        refresh = _want_refresh()
+        cached = _breakout_radar_cache.get(mode) or {}
+        if _should_refresh(refresh, cached.get("generated_at")):
+            print(f"Running Breakout Radar scan ({mode})...")
+            payload = breakout_radar.scan_breakout_radar(
+                _client, _universe_df, universe_mode=mode
+            )
+            cached = {"generated_at": payload["generated_at"], "payload": payload}
+            _breakout_radar_cache[mode] = cached
+        out = dict(cached.get("payload") or {})
+        out["market_open"] = _is_market_open()
+        out["cached"] = not refresh
+        return jsonify(out)
+    except Exception as e:
+        print(f"[breakout_radar] failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e), "results": [], "num_results": 0}), 500
 
 
 @app.route("/api/support_bounce", methods=["POST", "GET"])
