@@ -389,6 +389,28 @@ def _resolve_backtest_window(months: int, from_date: str | None, to_date: str | 
         end = end.replace(hour=23, minute=59, second=59)
         days = max(1, (end.date() - start.date()).days + 1)
         return days, end, start.strftime("%Y-%m-%d"), to_date
+
+def _date_range_mask(ts: pd.Series, from_date_str: str, to_date_str: str) -> pd.Series:
+    """Inclusive [from_date, to_date] mask for a timestamp series.
+
+    Kite's OHLC feed returns tz-aware (IST) timestamps while the from/to
+    date-picker bounds are built from plain 'YYYY-MM-DD' strings (tz-naive) -
+    comparing the two raises "Invalid comparison between dtype=datetime64[...]
+    and Timestamp" (seen live on the SENSEX/Scalp backtest tab). Localize the
+    naive bounds to whatever tz (if any) `ts` already carries before comparing,
+    so this works whether the feed is Kite (tz-aware) or the simulator
+    (typically tz-naive).
+    """
+    start = pd.Timestamp(from_date_str)
+    end = pd.Timestamp(to_date_str) + pd.Timedelta(hours=23, minutes=59, seconds=59)
+    ts_tz = getattr(ts.dt, "tz", None)
+    if ts_tz is not None:
+        start = start.tz_localize(ts_tz) if start.tzinfo is None else start.tz_convert(ts_tz)
+        end = end.tz_localize(ts_tz) if end.tzinfo is None else end.tz_convert(ts_tz)
+    elif start.tzinfo is not None:
+        start = start.tz_localize(None)
+        end = end.tz_localize(None)
+    return (ts >= start) & (ts <= end)
     days = months * 30
     return days, None, None, None
 
@@ -430,7 +452,7 @@ def performance_report(
                 # aligned to df's rows, so it must be built against the
                 # already-trimmed df or the two desync.
                 ts = pd.to_datetime(df["timestamp"])
-                mask = (ts >= pd.Timestamp(resolved_from)) & (ts <= pd.Timestamp(resolved_to) + pd.Timedelta(hours=23, minutes=59, seconds=59))
+                mask = _date_range_mask(ts, resolved_from, resolved_to)
                 df = df[mask].reset_index(drop=True)
             vix_series = _aligned_vix_series(feed, days, "5minute", df, end_date=end_date)
         else:
@@ -485,7 +507,7 @@ def performance_trade_chart(
             bar_minutes = 5
             if resolved_from:
                 ts = pd.to_datetime(df["timestamp"])
-                mask = (ts >= pd.Timestamp(resolved_from)) & (ts <= pd.Timestamp(resolved_to) + pd.Timedelta(hours=23, minutes=59, seconds=59))
+                mask = _date_range_mask(ts, resolved_from, resolved_to)
                 df = df[mask].reset_index(drop=True)
             vix_series = _aligned_vix_series(feed, days, "5minute", df, end_date=end_date)
         else:

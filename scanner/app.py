@@ -45,6 +45,7 @@ import alert_dedup
 import custom_baskets
 import episodic_pivot
 import ep_backtest_report
+import smart_money_intraday_backtest_report
 import code_browser
 import market_hours
 import trending_alerts
@@ -1178,6 +1179,30 @@ def api_stock_for_day_backtest():
             "window_start": None,
             "window_end": None,
         }), 500
+
+
+@app.route("/api/smart_money/intraday_sell_backtest", methods=["POST", "GET"])
+def api_smart_money_intraday_sell_backtest():
+    """Intraday SELL-only Smart Money backtest (see
+    smart_money_intraday_backtest.py / smart_money_intraday_backtest_report.py)
+    — hard-gated to stocks already in a daily downtrend, over the F&O
+    universe, same-session entry/exit only. A fresh run pulls 5-min +
+    15-min history for the whole F&O universe and can take a while, so
+    the last run's trade log is cached to results/ and reloaded instantly
+    unless ?refresh=1 is passed."""
+    from flask import request
+    months = request.args.get("months", type=int)
+    try:
+        refresh = _want_refresh()
+        report = smart_money_intraday_backtest_report.get_report(
+            _client, refresh=refresh, months=months
+        )
+        return jsonify(report)
+    except Exception as e:
+        print(f"[smart_money/intraday_sell_backtest] failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e), "trades": 0, "trades_detail": []}), 500
 
 
 @app.route("/api/backtest", methods=["POST", "GET"])
