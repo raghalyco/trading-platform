@@ -303,6 +303,7 @@
     <div class="nav-item cat-strategy" data-tab="support"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/><line x1="4.93" y1="4.93" x2="9.17" y2="9.17"/><line x1="14.83" y1="14.83" x2="19.07" y2="19.07"/><line x1="14.83" y1="9.17" x2="19.07" y2="4.93"/><line x1="4.93" y1="19.07" x2="9.17" y2="14.83"/></svg><span>Previous Support Bounce</span></div>
     <div class="nav-item cat-strategy" data-tab="swing"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg><span>Swing Trade (Weekly)</span></div>
     <div class="nav-item cat-strategy" data-tab="darvax"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4a2 2 0 0 0 1-1.73Z"/><path d="M3.3 7 12 12l8.7-5"/><path d="M12 22V12"/></svg><span>DarvaX (Darvas Box)</span></div>
+    <div class="nav-item cat-strategy sub" data-tab="darvaxbacktest"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg><span>Backtest (6M)</span></div>
     <div class="nav-item cat-strategy" data-tab="intraday"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="10" y1="2" x2="14" y2="2"/><line x1="12" y1="14" x2="15" y2="11"/><circle cx="12" cy="14" r="8"/></svg><span>Intraday Monitor</span></div>
   </div>
 
@@ -336,6 +337,7 @@
   <div class="mobile-nav-item" data-tab="support" title="Previous Support Bounce">🛟</div>
   <div class="mobile-nav-item" data-tab="swing" title="Swing Trade (Weekly)">📅</div>
   <div class="mobile-nav-item" data-tab="darvax" title="DarvaX (Darvas Box)">📦</div>
+  <div class="mobile-nav-item" data-tab="darvaxbacktest" title="DarvaX Backtest (6M)">📉</div>
   <div class="mobile-nav-item" data-tab="intraday" title="Intraday Monitor">⏱️</div>
   <div class="mobile-nav-item" data-tab="episodicpivot" title="Episodic Pivot (Delayed EP)">🚀</div>
   <div class="mobile-nav-item" data-tab="epbacktest" title="Episodic Pivot Backtest (6M)">📉</div>
@@ -609,6 +611,21 @@
     </div>
     <div class="card">
       <div id="darvaxTableWrap"><div class="loading">Loading startup cache…</div></div>
+    </div>
+  </div>
+
+  <!-- ============ TAB: DarvaX Backtest (6M) ============ -->
+  <div class="tab-page" id="page-darvaxbacktest">
+    <div class="topbar">
+      <div>
+        <h1>DarvaX — Backtest (6M) <span id="darvaxBtCached" style="display:none; font-size:11px; font-weight:700; letter-spacing:0.04em; color:var(--text-muted); background:var(--surface-2); border-radius:4px; padding:2px 7px; margin-left:8px; vertical-align:middle;">CACHED</span></h1>
+        <p class="meta" id="darvaxBtMeta">Historical trade log using the same box-detection rules as the live scanner, applied to every past completed box + breakout · loading…</p>
+        <p class="help-text">Every trade here used the SAME uptrend/volume/touch-count/box-age/score gates as the live "DarvaX" tab (config.py's DARVAX_* thresholds) — the difference is this looks at every qualifying historical box breakout in the last 6 months, not just each stock's most recent one. Two things are necessarily different from the live tab, disclosed plainly: (1) the live scanner has no fixed target at all (Darvas boxes are meant to be ridden/pyramided) — this backtest adds a standard "measured move" target (entry + the box's own height) purely so a trade can be scored as a win or loss; (2) "how close to its all-time-high" scoring uses only price known as of each trade's own breakout day, not the full window (avoiding lookahead). Stop-loss is always the box bottom, exactly as the live tab shows it. Exit checks the stop before the target each day starting the day after breakout (conservative same-day-ambiguity convention), with a time-stop at {{ max_holding_days }} sessions. Total Return / Max Drawdown assume a fixed 1% of capital risked per trade, summed without compounding — this run had up to <span id="darvaxBtConcurrent">-</span> trades open at once, so a compounding curve would overstate returns. This is a signal-log backtest: no slippage, brokerage, or circuit-filter unfillability is modeled, and it should be read alongside the box-detection rules, not as a standalone verdict.</p>
+      </div>
+      <button class="primary" id="darvaxBtBtn" onclick="runDarvaxBacktest(true)">Run Backtest</button>
+    </div>
+    <div class="card">
+      <div id="darvaxBtWrap"><div class="loading">Loading startup cache…</div></div>
     </div>
   </div>
 
@@ -967,6 +984,7 @@ function switchTab(tab) {
   if (tab === 'episodicpivot' && !episodicPivotData) { runEpisodicPivot(false); }
   if (tab === 'sourcecode' && !codeTreeData) { loadCodeTree(); }
   if (tab === 'epbacktest' && !epBtData) { runEpBacktest(false); }
+  if (tab === 'darvaxbacktest' && !darvaxBtData) { runDarvaxBacktest(false); }
 }
 
 // ---------------- Live auto-refresh (Sector Analysis / Trending / My Trades) ----------------
@@ -2772,6 +2790,124 @@ function renderEpBacktest() {
   html += '</tbody></table>';
 
   document.getElementById('epBtWrap').innerHTML = html;
+}
+
+// ---------------- DarvaX Backtest (6M) ----------------
+// Same shape as the EP backtest above, but a single exit variant - DarvaX
+// has no analog to Episodic Pivot's Kell-trend-exit overlay.
+let darvaxBtData = null;
+let darvaxBtSortKey = 'breakout_date', darvaxBtSortDir = -1;
+
+async function runDarvaxBacktest(refresh = false) {
+  const btn = document.getElementById('darvaxBtBtn');
+  btn.disabled = true; btn.textContent = refresh ? 'Running (15-25s)…' : 'Loading...';
+  document.getElementById('darvaxBtWrap').innerHTML =
+    '<div class="loading">' + (refresh ? 'Re-running the full 6-month backtest over the cached daily data…' : 'Loading last backtest result…') + '</div>';
+  try {
+    const res = await fetch('/api/darvax/backtest' + (refresh ? '?refresh=1' : ''));
+    darvaxBtData = await res.json();
+    renderDarvaxBacktest();
+    document.getElementById('darvaxBtCached').style.display = refresh ? 'none' : 'inline-block';
+    document.getElementById('darvaxBtMeta').textContent =
+      `${darvaxBtData.trades || 0} trades · ${darvaxBtData.unique_symbols || 0} symbols · ${darvaxBtData.entry_date_min || '—'} to ${darvaxBtData.entry_date_max || '—'} · generated ${darvaxBtData.generated_at ? new Date(darvaxBtData.generated_at).toLocaleString() : ''}`;
+    document.getElementById('darvaxBtConcurrent').textContent = darvaxBtData.max_concurrent_positions ?? '—';
+  } catch (e) {
+    document.getElementById('darvaxBtWrap').innerHTML = '<div class="empty">Failed: ' + (e.message || e) + '</div>';
+  }
+  btn.disabled = false; btn.textContent = 'Run Backtest';
+}
+
+function setDarvaxBtSort(key) {
+  darvaxBtSortDir = (darvaxBtSortKey === key) ? -darvaxBtSortDir : -1;
+  darvaxBtSortKey = key;
+  renderDarvaxBacktest();
+}
+
+function renderDarvaxBacktest() {
+  const data = darvaxBtData;
+  if (!data || !data.trades) {
+    document.getElementById('darvaxBtWrap').innerHTML = '<div class="empty">No trades found in the 6-month backtest window.</div>';
+    return;
+  }
+  const v = data.conservative;
+
+  const kpis = [
+    ['Trades', v.trades, null],
+    ['Win rate', v.win_rate_pct + '%', v.win_rate_pct >= v.breakeven_win_rate_pct ? 'pos' : 'neg'],
+    ['Breakeven WR needed', v.breakeven_win_rate_pct + '%', null],
+    ['Avg win / loss', fmtPct(v.avg_win_pct) + ' / ' + fmtPct(v.avg_loss_pct), null],
+    ['Win/loss ratio', v.win_loss_ratio, null],
+    ['Avg R-multiple', v.avg_r_multiple + 'R', v.avg_r_multiple >= 0 ? 'pos' : 'neg'],
+    ['Total return (1% risk/trade)', fmtPct(v.total_return_pct), v.total_return_pct >= 0 ? 'pos' : 'neg'],
+    ['Max drawdown', v.max_drawdown_pts + ' pts', 'neg'],
+  ];
+  let html = '<div class="kpis">' + kpis.map(([lbl, value, cls]) =>
+    `<div class="kpi"><p class="label">${lbl}</p><p class="value ${cls || ''}">${value}</p></div>`
+  ).join('') + '</div>';
+
+  const exitCounts = Object.entries(v.exit_reason_counts || {}).map(([k, c]) => `${k}: ${c}`).join(' · ');
+  html += `<p class="meta" style="margin-bottom:1.1rem;">Exits — ${exitCounts}</p>`;
+
+  if (data.monthly && data.monthly.length) {
+    html += '<p class="section-title">Monthly breakdown</p>';
+    html += '<table><thead><tr><th>Month</th><th class="num">Trades</th><th class="num">Win rate</th><th class="num">Avg P&L</th><th class="num">Total P&L</th></tr></thead><tbody>';
+    for (const m of data.monthly) {
+      html += `<tr><td>${m.month}</td><td class="num">${m.trades}</td><td class="num">${m.win_rate_pct}%</td>
+        <td class="num ${m.avg_pnl_pct >= 0 ? 'pos' : 'neg'}">${fmtPct(m.avg_pnl_pct)}</td>
+        <td class="num ${m.total_pnl_pct >= 0 ? 'pos' : 'neg'}">${fmtPct(m.total_pnl_pct)}</td></tr>`;
+    }
+    html += '</tbody></table>';
+  }
+
+  const stockTable = (rows, title) => {
+    let h = `<p class="section-title">${title}</p><table><thead><tr><th>Symbol</th><th class="num">Trades</th><th class="num">Win rate</th><th class="num">Avg P&L</th><th class="num">Total P&L</th></tr></thead><tbody>`;
+    for (const s of rows) {
+      h += `<tr><td>${symbolWithChart(s)}</td><td class="num">${s.trades}</td><td class="num">${s.win_rate_pct}%</td>
+        <td class="num ${s.avg_pnl_pct >= 0 ? 'pos' : 'neg'}">${fmtPct(s.avg_pnl_pct)}</td>
+        <td class="num ${s.total_pnl_pct >= 0 ? 'pos' : 'neg'}">${fmtPct(s.total_pnl_pct)}</td></tr>`;
+    }
+    return h + '</tbody></table>';
+  };
+  if (data.best_stocks && data.best_stocks.length) {
+    html += '<div style="display:grid; grid-template-columns: 1fr 1fr; gap: 1.5rem;">'
+      + '<div>' + stockTable(data.best_stocks, 'Best performing stocks') + '</div>'
+      + '<div>' + stockTable(data.worst_stocks, 'Worst performing stocks') + '</div>'
+      + '</div>';
+  }
+
+  html += '<p class="section-title">Full trade log</p>';
+  const cols = [
+    ['symbol', 'Symbol'], ['box_top_date', 'Box top'], ['box_bottom_date', 'Box bottom'],
+    ['breakout_date', 'Breakout'], ['box_height_pct', 'Box height'], ['volume_ratio', 'Vol x'],
+    ['touch_count', 'Touches'], ['entry_price', 'Entry ₹'], ['stop_loss', 'Stop ₹'],
+    ['stop_pct', 'Risk %'], ['target', 'Target ₹'], ['risk_reward', 'Planned R:R'], ['score', 'Score'],
+    ['exit_date', 'Exit date'], ['exit_price', 'Exit ₹'], ['exit_reason', 'Outcome'], ['pnl_pct', 'P&L %'],
+  ];
+  const numCols = new Set(['box_height_pct', 'volume_ratio', 'touch_count', 'entry_price', 'stop_loss',
+    'stop_pct', 'target', 'risk_reward', 'score', 'exit_price', 'pnl_pct']);
+  const rows = genericSort(data.trades_detail || [], darvaxBtSortKey, darvaxBtSortDir);
+
+  html += '<table><thead><tr>' + cols.map(([key, lbl]) =>
+    `<th class="${numCols.has(key) ? 'num' : ''}" onclick="setDarvaxBtSort('${key}')" style="cursor:pointer">${lbl}${sortIndicator(darvaxBtSortKey, key, darvaxBtSortDir)}</th>`
+  ).join('') + '</tr></thead><tbody>';
+
+  const reasonCls = { TARGET: 'target_hit', STOP: 'stop_loss', TIME_STOP: 'time_stop', END_OF_DATA: 'time_stop' };
+  for (const t of rows) {
+    html += `<tr>
+      <td>${symbolWithChart(t)}</td><td>${t.box_top_date}</td><td>${t.box_bottom_date}</td>
+      <td>${t.breakout_date}</td><td class="num">${t.box_height_pct}%</td><td class="num">${t.volume_ratio}x</td>
+      <td class="num">${t.touch_count}</td>
+      <td class="num">${Number(t.entry_price).toFixed(2)}</td><td class="num">${Number(t.stop_loss).toFixed(2)}</td>
+      <td class="num">${t.stop_pct}%</td><td class="num">${Number(t.target).toFixed(2)}</td>
+      <td class="num">${t.risk_reward}</td><td class="num">${t.score}</td>
+      <td>${t.exit_date}</td><td class="num">${Number(t.exit_price).toFixed(2)}</td>
+      <td><span class="pill ${reasonCls[t.exit_reason] || ''}">${t.exit_reason}</span></td>
+      <td class="num ${t.pnl_pct >= 0 ? 'pos' : 'neg'}">${fmtPct(t.pnl_pct)}</td>
+    </tr>`;
+  }
+  html += '</tbody></table>';
+
+  document.getElementById('darvaxBtWrap').innerHTML = html;
 }
 
 // ---------------- Source Code viewer ----------------

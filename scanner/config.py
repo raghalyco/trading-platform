@@ -457,6 +457,27 @@ EP_TRAIL_EMA_PERIOD_INFO = 20          # informational only: EMA he trails the b
 EP_MIN_RR = 1.5
 EP_MIN_SCORE = 40                      # 0-100 composite quality floor (volume shock + move size + close strength + tightness + EMA proximity)
 
+# Round-trip invalidation: an EP's entire premise is a surprise repricing
+# that STAYS repriced. If price has since fallen back below where the day-0
+# move even started (its own open), the market has erased the surprise and
+# the setup is dead - no longer "delayed entry into a fresh pivot", just a
+# stock in a downtrend that happens to have an old volume spike somewhere in
+# its lookback window. A small buffer (not a strict >=) avoids killing a
+# setup on ordinary single-day noise right at the day-0 open level.
+EP_MAX_GIVEBACK_BELOW_DAY0_OPEN_PCT = 5.0
+
+# Broader trend hard gate: reject a setup if today's close is below its own
+# EP_KELL_TREND_SMA-period (50-day) SMA - i.e. the stock isn't in an
+# intermediate-term uptrend, whatever the immediate day-0/pullback pattern
+# looks like. Catches a day-0 spike that happened as a mere bounce partway
+# down an already-established downtrend (e.g. TIINDIA/VMM, Sep 2026: day-0
+# still above its own open per the giveback check above, yet the stock is
+# clearly making lower highs/lower lows on the daily since its July peak).
+# This condition already existed as a SOFT scoring bonus (EP_KELL_TREND_*);
+# this flag promotes it to a hard requirement as well. Set False to restore
+# the original soft-only behavior.
+EP_REQUIRE_ABOVE_TREND_SMA = True
+
 # "Don't chase" — if the breakout day gaps open more than this % above the
 # tight candle's high, skip it (podcast: wait for the next low-risk chance
 # rather than paying up for an already-extended gap).

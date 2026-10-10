@@ -207,6 +207,36 @@ def evaluate_symbol_episodic_pivot(symbol: str, daily: pd.DataFrame) -> "dict | 
     current_price = float(df.iloc[last_idx]["close"])
     days_since_day0 = last_idx - i0
 
+    # Round-trip invalidation (professional-trader sanity check): if price
+    # has since fallen meaningfully below the day-0 OPEN - i.e. below where
+    # the "surprise" move even started from - the repricing has been fully
+    # erased. Continuing to surface a tight-range breakout after that point
+    # isn't a delayed EP entry anymore, it's just noise inside an unrelated
+    # downtrend (e.g. a dead-cat-bounce candle breaking a tiny pause on the
+    # way down). Gate on this before any of the pullback/trigger machinery
+    # below, since a dead setup shouldn't reach WATCHING or TRIGGERED at all.
+    day0_open = float(day0["open"])
+    giveback_pct = (day0_open - current_price) / day0_open * 100
+    if giveback_pct > config.EP_MAX_GIVEBACK_BELOW_DAY0_OPEN_PCT:
+        return None
+
+    # Broader trend gate: the day-0-open check above only catches a round
+    # trip back through THIS specific spike's own starting level. It misses
+    # a stock whose day-0 pop happened as a bounce partway down an already
+    # established multi-month downtrend (e.g. TIINDIA: ~3300 in July -> a
+    # day-0 spike to ~2500 in August that only bounced further to ~2900-3000
+    # before rolling over again to ~2640 now - still "above day-0's open" by
+    # the check above, yet clearly still making lower highs/lower lows on
+    # the daily). config.EP_KELL_TREND_SMA (50-day SMA) already exists as a
+    # SOFT scoring input for this exact condition; require it as a hard gate
+    # too - if today's close is below its own 50-day SMA, the stock isn't in
+    # an intermediate-term uptrend, so an EP continuation here isn't credible
+    # regardless of how the immediate day-0/pullback pattern looks.
+    last_close_row = df.iloc[last_idx]
+    sma_trend_now = last_close_row["sma_trend"]
+    if config.EP_REQUIRE_ABOVE_TREND_SMA and pd.notna(sma_trend_now) and current_price < float(sma_trend_now):
+        return None
+
     base = {
         "symbol": symbol,
         "day0_date": str(pd.to_datetime(day0["date"]).date()),

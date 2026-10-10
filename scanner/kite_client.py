@@ -114,24 +114,37 @@ class KiteDataClient:
     # ---------------------------------------------------------------- #
     def get_daily_history(self, instrument_token, tradingsymbol, from_date, to_date) -> pd.DataFrame:
         cache_file = os.path.join(config.CACHE_DIR, f"daily_{tradingsymbol}.parquet")
+        today = date.today()
 
         cached_df = self._read_parquet_safe(cache_file, tradingsymbol)
         if cached_df is not None:
             have_from = cached_df["date"].min().date()
             have_to = cached_df["date"].max().date()
-            if have_from <= from_date and have_to >= to_date:
+            # A window entirely before today is genuinely immutable once
+            # cached - safe to serve straight from disk. A window reaching
+            # into today must NOT short-circuit here: Kite's "day" candle
+            # for the still-open session keeps growing (price/volume) as
+            # the session progresses, and can still be incomplete even a
+            # while after close - serving an already-cached snapshot of
+            # "today" would silently hide a real move that happened later
+            # in the same session (this is exactly what made DarvaX miss a
+            # real breakout that showed up fine on a live chart).
+            if have_from <= from_date and have_to >= to_date and to_date < today:
                 mask = (cached_df["date"].dt.date >= from_date) & (cached_df["date"].dt.date <= to_date)
                 return cached_df.loc[mask].reset_index(drop=True)
 
-        # Fetch only what's actually missing, then merge with the cache —
-        # this is what makes a daily scan cheap: after the first full run,
-        # each subsequent day only needs a 1-2 day fetch per symbol instead
-        # of re-pulling years of history.
+        # Fetch only what's actually missing/still-live, then merge with
+        # the cache - this is what makes a daily scan cheap: after the
+        # first full run, each subsequent day only needs a 1-2 day fetch
+        # per symbol instead of re-pulling years of history. "Missing"
+        # always includes today (when in range) even if a stale copy of
+        # today is already cached, per the note above.
         fetch_ranges = []
         if cached_df is not None and cached_df["date"].min().date() <= from_date:
             have_to = cached_df["date"].max().date()
-            if to_date > have_to:
-                fetch_ranges.append((have_to + timedelta(days=1), to_date))
+            refetch_from = min(have_to + timedelta(days=1), today) if to_date >= today else have_to + timedelta(days=1)
+            if to_date >= refetch_from:
+                fetch_ranges.append((refetch_from, to_date))
         else:
             fetch_ranges.append((from_date, to_date))
 
@@ -163,7 +176,11 @@ class KiteDataClient:
         else:
             return pd.DataFrame(columns=["date", "open", "high", "low", "close", "volume"])
 
-        df = df.sort_values("date").drop_duplicates("date").reset_index(drop=True)
+        # keep="last": for a date refetched above (today, or the tail end
+        # after a re-run), new_df's row comes after cached_df's in the
+        # concat and must win - keep="first" (the old default) would
+        # silently keep the stale cached row instead of the corrected one.
+        df = df.sort_values("date").drop_duplicates("date", keep="last").reset_index(drop=True)
         self._write_parquet_atomic(df, cache_file)
 
         mask = (df["date"].dt.date >= from_date) & (df["date"].dt.date <= to_date)

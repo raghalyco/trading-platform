@@ -45,6 +45,7 @@ import alert_dedup
 import custom_baskets
 import episodic_pivot
 import ep_backtest_report
+import darvax_backtest_report
 import code_browser
 import market_hours
 import trending_alerts
@@ -626,6 +627,7 @@ def index():
         swing_trade_universe=config.SWING_TRADE_UNIVERSE or "nifty200",
         darvax_universe=config.DARVAX_UNIVERSE or "nifty200",
         episodic_pivot_universe=config.EP_UNIVERSE or "nifty50",
+        max_holding_days=config.MAX_HOLDING_DAYS,
     )
 
 
@@ -1051,6 +1053,29 @@ def api_episodic_pivot_backtest():
         return jsonify(report)
     except Exception as e:
         print(f"[episodic_pivot/backtest] failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({"error": str(e), "trades": 0, "trades_detail": []}), 500
+
+
+@app.route("/api/darvax/backtest", methods=["POST", "GET"])
+def api_darvax_backtest():
+    """6-month historical backtest of the DarvaX (Darvas Box) rules (see
+    darvax_backtest.py / darvax_backtest_report.py) — every historical
+    completed box + breakout per symbol, simulated against the same
+    uptrend/volume/touch-count/box-age/score gates the live scanner uses
+    (see darvax_backtest.py's module docstring for the handful of
+    live-only concepts that don't carry over, and the measured-move target
+    it adds since the live scanner has no fixed target at all). Takes
+    ~15-25s on the cached daily data, so it's on-demand only (no startup
+    warm-cache) - the last run's trade log is cached to results/ and
+    reloaded instantly unless ?refresh=1 is passed."""
+    try:
+        refresh = _want_refresh()
+        report = darvax_backtest_report.get_report(refresh=refresh)
+        return jsonify(report)
+    except Exception as e:
+        print(f"[darvax/backtest] failed: {e}")
         import traceback
         traceback.print_exc()
         return jsonify({"error": str(e), "trades": 0, "trades_detail": []}), 500

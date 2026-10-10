@@ -1,0 +1,8 @@
+# Local overrides for the signal_engine app (gitignored - never commit this file).
+
+# Enables the phone-friendly daily Kite login page at
+# http://<host>:8000/admin/<this-token>/login - lets you complete the daily
+# Zerodha re-login from your phone (e.g. over Tailscale) without SSH/terminal
+# access to this machine. Keep this value secret - treat it like a password,
+# since anyone who has it can trigger a Kite login exchange on this app.
+SIGNAL_ENGINE_ADMIN_TOKEN=qNP3g2osLufJQ8pjcDBUYbBmU_n4Ldcus6IPJhJt0jw

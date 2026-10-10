@@ -1,0 +1,162 @@
+==== Mon 09/07/2026  9:16:38.75 - START ==== 
+C:\Users\LENOVO\code\trading-platform\signal_engine\app\api\main.py:154: DeprecationWarning: 
+        on_event is deprecated, use lifespan event handlers instead.
+
+        Read more about it in the
+        [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+        
+  @app.on_event("startup")
+INFO:     Started server process [9568]
+INFO:     Waiting for application startup.
+[background] loop thread started (every 15s, active during market hours once today's Kite login is done)
+INFO:     Application startup complete.
+[background] live Kite feed detected - capturing until market close (15:30 IST).
+ERROR:    [Errno 10048] error while attempting to bind on address ('0.0.0.0', 8000): [winerror 10048] only one usage of each socket address (protocol/network address/port) is normally permitted
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+==== Mon 09/07/2026 22:50:45.20 - STOPPED ==== 
+==== Mon 09/07/2026 22:50:49.22 - START ==== 
+C:\Users\LENOVO\code\trading-platform\signal_engine\app\api\main.py:164: DeprecationWarning: 
+        on_event is deprecated, use lifespan event handlers instead.
+
+        Read more about it in the
+        [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+        
+  @app.on_event("startup")
+INFO:     Started server process [15328]
+INFO:     Waiting for application startup.
+[background] loop thread started (every 15s, active during market hours once today's Kite login is done)
+[background] live Kite feed detected - capturing until market close (15:30 IST).
+INFO:     Application startup complete.
+ERROR:    [Errno 10048] error while attempting to bind on address ('0.0.0.0', 8000): [winerror 10048] only one usage of each socket address (protocol/network address/port) is normally permitted
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+==== Tue 09/08/2026 22:47:07.12 - STOPPED ==== 
+==== Tue 09/08/2026 22:47:09.34 - START ==== 
+C:\Users\LENOVO\code\trading-platform\signal_engine\app\api\main.py:164: DeprecationWarning: 
+        on_event is deprecated, use lifespan event handlers instead.
+
+        Read more about it in the
+        [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+        
+  @app.on_event("startup")
+INFO:     Started server process [19916]
+INFO:     Waiting for application startup.
+[background] loop thread started (every 15s, active during market hours once today's Kite login is done)
+INFO:     Application startup complete.
+[background] live Kite feed detected - capturing until market close (15:30 IST).
+ERROR:    [Errno 10048] error while attempting to bind on address ('0.0.0.0', 8000): [winerror 10048] only one usage of each socket address (protocol/network address/port) is normally permitted
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+==== Tue 09/08/2026 23:03:17.43 - STOPPED ==== 
+==== Tue 09/08/2026 23:03:20.69 - START ==== 
+C:\Users\LENOVO\code\trading-platform\signal_engine\app\api\main.py:164: DeprecationWarning: 
+        on_event is deprecated, use lifespan event handlers instead.
+
+        Read more about it in the
+        [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+        
+  @app.on_event("startup")
+INFO:     Started server process [13092]
+INFO:     Waiting for application startup.
+[background] loop thread started (every 15s, active during market hours once today's Kite login is done)
+INFO:     Application startup complete.
+[background] live Kite feed detected - capturing until market close (15:30 IST).
+ERROR:    [Errno 10048] error while attempting to bind on address ('0.0.0.0', 8000): [winerror 10048] only one usage of each socket address (protocol/network address/port) is normally permitted
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+==== Sat 09/12/2026 11:22:30.14 - STOPPED ==== 
+==== Sat 09/12/2026 11:22:32.46 - START ==== 
+C:\Users\LENOVO\code\trading-platform\signal_engine\app\api\main.py:164: DeprecationWarning: 
+        on_event is deprecated, use lifespan event handlers instead.
+
+        Read more about it in the
+        [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+        
+  @app.on_event("startup")
+INFO:     Started server process [13664]
+INFO:     Waiting for application startup.
+[background] loop thread started (every 15s, active during market hours once today's Kite login is done)
+[background] live Kite feed detected - capturing until market close (15:30 IST).
+INFO:     Application startup complete.
+ERROR:    [Errno 10048] error while attempting to bind on address ('0.0.0.0', 8000): [winerror 10048] only one usage of each socket address (protocol/network address/port) is normally permitted
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+==== Sat 09/12/2026 11:24:59.17 - START ==== 
+C:\Users\LENOVO\code\trading-platform\signal_engine\app\api\main.py:164: DeprecationWarning: 
+        on_event is deprecated, use lifespan event handlers instead.
+
+        Read more about it in the
+        [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+        
+  @app.on_event("startup")
+INFO:     Started server process [23484]
+INFO:     Waiting for application startup.
+[background] loop thread started (every 15s, active during market hours once today's Kite login is done)
+[background] live Kite feed detected - capturing until market close (15:30 IST).
+INFO:     Application startup complete.
+ERROR:    [Errno 10048] error while attempting to bind on address ('0.0.0.0', 8000): [winerror 10048] only one usage of each socket address (protocol/network address/port) is normally permitted
+INFO:     Waiting for application shutdown.
+INFO:     Application shutdown complete.
+==== Sat 09/12/2026 11:38:22.72 - START ==== 
+C:\Users\LENOVO\code\trading-platform\signal_engine\app\api\main.py:164: DeprecationWarning: 
+        on_event is deprecated, use lifespan event handlers instead.
+
+        Read more about it in the
+        [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+        
+  @app.on_event("startup")
+INFO:     Started server process [1496]
+INFO:     Waiting for application startup.
+[background] loop thread started (every 15s, active during market hours once today's Kite login is done)
+INFO:     Application startup complete.
+[background] live Kite feed detected - capturing until market close (15:30 IST).
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+INFO:     127.0.0.1:57564 - "GET / HTTP/1.1" 200 OK
+INFO:     192.168.0.106:60303 - "GET / HTTP/1.1" 200 OK
+[background] SENSEX GBB cycle failed: Too many requests
+[background] NIFTY GBB cycle failed: Too many requests
+[background] NIFTY SCALP cycle failed: ('Connection aborted.', ConnectionResetError(10054, 'An existing connection was forcibly closed by the remote host', None, 10054, None))
+[background] SENSEX SCALP cycle failed: Too many requests
+==== Sat 09/12/2026 17:11:09.37 - START ==== 
+C:\Users\LENOVO\code\trading-platform\signal_engine\app\api\main.py:164: DeprecationWarning: 
+        on_event is deprecated, use lifespan event handlers instead.
+
+        Read more about it in the
+        [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+        
+  @app.on_event("startup")
+INFO:     Started server process [14168]
+INFO:     Waiting for application startup.
+[background] loop thread started (every 15s, active during market hours once today's Kite login is done)
+INFO:     Application startup complete.
+[background] live Kite feed detected - capturing until market close (15:30 IST).
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+==== Wed 10/07/2026 18:56:56.92 - START ==== 
+C:\Users\LENOVO\code\trading-platform\signal_engine\app\api\main.py:164: DeprecationWarning: 
+        on_event is deprecated, use lifespan event handlers instead.
+
+        Read more about it in the
+        [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+        
+  @app.on_event("startup")
+INFO:     Started server process [6140]
+INFO:     Waiting for application startup.
+[info] No shared Kite auth available (Cached Zerodha access token is stale (not from today). Run `python -m shared.kite_auth` from the trading-platform root, complete the browser login, and paste the request_token or redirect URL. Login URL: https://kite.zerodha.com/connect/login?api_key=7g6jn8cbel1pybuv&v=3); using simulator.
+[background] loop thread started (every 15s, active during market hours once today's Kite login is done)
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
+==== Thu 10/08/2026 16:05:15.85 - START ==== 
+C:\Users\LENOVO\code\trading-platform\signal_engine\app\api\main.py:164: DeprecationWarning: 
+        on_event is deprecated, use lifespan event handlers instead.
+
+        Read more about it in the
+        [FastAPI docs for Lifespan Events](https://fastapi.tiangolo.com/advanced/events/).
+        
+  @app.on_event("startup")
+INFO:     Started server process [6004]
+INFO:     Waiting for application startup.
+[info] No shared Kite auth available (Cached Zerodha access token is stale (not from today). Run `python -m shared.kite_auth` from the trading-platform root, complete the browser login, and paste the request_token or redirect URL. Login URL: https://kite.zerodha.com/connect/login?api_key=7g6jn8cbel1pybuv&v=3); using simulator.
+[background] loop thread started (every 15s, active during market hours once today's Kite login is done)
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
