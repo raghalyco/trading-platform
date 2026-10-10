@@ -45,6 +45,7 @@ from tqdm import tqdm
 
 import config
 import indicators as ind
+import sector_constituents
 import smart_money_strategy as sms
 import universe as universe_mod
 
@@ -292,11 +293,20 @@ def compute_mtf_trend_and_plan(kite_client, token, symbol: str, today: date) -> 
     When strong, the trade plan (entry/stop/target) is the exact same ATR
     math the live Smart Money BUY/SELL gates use
     (config.SMART_MONEY_SL_ATR_MULT / TP_ATR_MULT), computed on the 15m
-    frame: entry = latest 15m close, stop/target = entry ∓ ATR(14)*mult."""
+    frame: entry = latest 15m close, stop/target = entry ∓ ATR(14)*mult.
+
+    Also returns structure_buy/structure_sell — a confirmed bullish/bearish
+    BOS or CHoCH in the recent lookback, computed off this SAME 15m fetch
+    (sms._pivot_levels / sms._structure_flags, same definitions the live
+    Smart Money gates use) — no extra API call. This is independent of
+    strong_trend (computed even when the three timeframes disagree) since
+    it feeds compute_strength_confidence() below for every row, not just
+    the strong-trend ones."""
     out = {
         "trend_15m": 0, "trend_30m": 0, "trend_60m": 0,
         "strong_trend": False, "trend_direction": None,
         "smart_entry": None, "smart_stop": None, "smart_target": None,
+        "structure_buy": False, "structure_sell": False,
     }
     from_dt = datetime.combine(today - timedelta(days=config.BREAKOUT_RADAR_MTF_LOOKBACK_DAYS), datetime.min.time())
     to_dt = datetime.now()
@@ -313,6 +323,12 @@ def compute_mtf_trend_and_plan(kite_client, token, symbol: str, today: date) -> 
     out["trend_15m"] = int(trend_15.iloc[-1]) if len(trend_15) else 0
     out["trend_30m"] = int(trend_30.iloc[-1]) if len(trend_30) else 0
     out["trend_60m"] = int(trend_60.iloc[-1]) if len(trend_60) else 0
+
+    last_high, last_low = sms._pivot_levels(df15["high"], df15["low"], config.SMART_MONEY_PIVOT_LENGTH)
+    choch_buy, choch_sell, bos_buy, bos_sell = sms._structure_flags(df15, last_high, last_low)
+    structure_lookback = config.SMART_MONEY_STRUCTURE_LOOKBACK
+    out["structure_buy"] = bool((choch_buy | bos_buy).iloc[-structure_lookback:].any())
+    out["structure_sell"] = bool((choch_sell | bos_sell).iloc[-structure_lookback:].any())
 
     votes = {out["trend_15m"], out["trend_30m"], out["trend_60m"]}
     if votes == {1}:
@@ -340,6 +356,121 @@ def compute_mtf_trend_and_plan(kite_client, token, symbol: str, today: date) -> 
         out["smart_stop"] = round(stop, 2)
         out["smart_target"] = round(target, 2)
     return out
+
+
+def _clip(x: float, lo: float = -1.0, hi: float = 1.0) -> float:
+    return max(lo, min(hi, x))
+
+
+def compute_strength_confidence(
+    mtf: dict, pct_change_1d: Optional[float], ovs: Optional[float],
+) -> dict:
+    """A Strength (-100..+100) and Confidence (0-100%) read per stock, in
+    the same spirit as the "Smart Money Structure" TradingView indicator's
+    panel the user compared this against — this is OUR OWN formula, not a
+    port of that Pine script's exact math (we don't have its source, only
+    its displayed numbers), built entirely from data this scan already has
+    in hand (no extra API calls beyond what compute_mtf_trend_and_plan and
+    compute_money_flow already fetch):
+
+      trend       (weight config.BREAKOUT_RADAR_STRENGTH_WEIGHTS['trend']):
+                  15m/30m/1h trend votes (-1/0/+1), higher timeframes
+                  weighted more (1x / 1.5x / 2x) — the same EMA20+VWAP read
+                  the live Smart Money strategy itself uses.
+      momentum    (weight ['momentum']): today's % change, scaled so a
+                  config.BREAKOUT_RADAR_MOMENTUM_CAP_PCT move maxes it out.
+      volume_flow (weight ['volume_flow']): OVS (today's up-close vs
+                  down-close 5-min volume ratio) squashed via
+                  (ovs-1)/(ovs+1) so a lopsided tape pushes this toward ±1
+                  without an extreme ratio blowing the scale up.
+      structure   (weight ['structure']): a confirmed bullish/bearish BOS
+                  or CHoCH in the recent lookback, +1 / -1 / 0.
+
+    Strength = 100 * the weighted sum of those four components (each
+    already in -1..1). Sign = direction, magnitude = conviction.
+
+    Confidence measures AGREEMENT, not magnitude: of the up-to-6 individual
+    votes (15m, 30m, 1h trend + momentum + volume_flow + structure, each
+    reduced to -1/0/+1), what fraction of the ones that actually took a
+    side agree with Strength's overall sign — scaled down further when few
+    of the 6 took a side at all, so one lone agreeing signal doesn't read
+    as high confidence. Floors at 50% when Strength itself is flat (0) or
+    nothing took a side.
+
+    This is a transparent scoring tool, not a buy/sell recommendation —
+    it's meant to help rank an already-filtered list, same as Strength/
+    Confidence on the Pine panel are a ranking aid, not an order."""
+    weights = config.BREAKOUT_RADAR_STRENGTH_WEIGHTS
+    cap = config.BREAKOUT_RADAR_MOMENTUM_CAP_PCT
+
+    t15, t30, t60 = mtf.get("trend_15m", 0), mtf.get("trend_30m", 0), mtf.get("trend_60m", 0)
+    trend_component = _clip((t15 * 1 + t30 * 1.5 + t60 * 2) / (1 + 1.5 + 2))
+
+    momentum_component = _clip(pct_change_1d / cap) if (pct_change_1d is not None and cap) else 0.0
+
+    volume_component = _clip((ovs - 1) / (ovs + 1)) if (ovs is not None and ovs >= 0) else 0.0
+
+    structure_component = 1.0 if mtf.get("structure_buy") else (-1.0 if mtf.get("structure_sell") else 0.0)
+
+    strength_raw = (
+        weights["trend"] * trend_component
+        + weights["momentum"] * momentum_component
+        + weights["volume_flow"] * volume_component
+        + weights["structure"] * structure_component
+    )
+    strength = round(_clip(strength_raw) * 100, 0)
+    overall_sign = 1 if strength > 0 else (-1 if strength < 0 else 0)
+
+    def _sign(x, deadzone=0.05):
+        return 1 if x > deadzone else (-1 if x < -deadzone else 0)
+
+    votes = [
+        _sign(t15), _sign(t30), _sign(t60),
+        _sign(momentum_component), _sign(volume_component), _sign(structure_component),
+    ]
+    active = [v for v in votes if v != 0]
+    if overall_sign == 0 or not active:
+        confidence = 50.0
+    else:
+        agree_frac = sum(1 for v in active if v == overall_sign) / len(active)
+        coverage_frac = len(active) / len(votes)
+        confidence = round(50 + 50 * agree_frac * coverage_frac, 1)
+
+    return {
+        "strength": strength,
+        "strength_direction": "bullish" if strength > 0 else ("bearish" if strength < 0 else "neutral"),
+        "confidence_pct": confidence,
+    }
+
+
+def _rank_top_picks(results: list, max_picks: int) -> list:
+    """The "Top Picks" shortlist: Strong-Trend-only (15m/30m/1h all agree)
+    is a hard gate first — same discipline as "only act on names aligned
+    across every timeframe you look at" — then ranked by conviction
+    (|Strength| first, Confidence as the tiebreaker), then de-duplicated
+    one-per-sector (via sector_constituents.build_symbol_sector_map) so two
+    names riding the same sector-wide move don't both take a slot — e.g.
+    GAIL and OIL both showing up is one trade (oil & gas), not two.
+
+    This is a ranking/filtering tool to narrow a long list down to what's
+    actually worth looking at, not a recommendation to buy or sell
+    anything — position sizing, liquidity and timing are still on the
+    trader."""
+    candidates = [r for r in results if r.get("strong_trend") and r.get("strength") is not None]
+    candidates.sort(key=lambda r: (abs(r["strength"]), r.get("confidence_pct", 0)), reverse=True)
+
+    picks = []
+    seen_sectors = set()
+    for r in candidates:
+        sector = r.get("sector")
+        if sector and sector in seen_sectors:
+            continue
+        picks.append(r)
+        if sector:
+            seen_sectors.add(sector)
+        if len(picks) >= max_picks:
+            break
+    return picks
 
 
 def _nearest_expiry(opts: pd.DataFrame):
@@ -422,6 +553,8 @@ def scan_breakout_radar(kite_client, universe_df=None, universe_mode: Optional[s
         "quadrant_counts": {},
         "sentiment_counts": {"bullish": 0, "bearish": 0, "flat": 0},
         "strong_trend_counts": {"bullish": 0, "bearish": 0},
+        "top_picks": [],
+        "top_picks_symbols": [],
     }
     if scan_df is None or scan_df.empty:
         return empty_payload
@@ -439,6 +572,13 @@ def scan_breakout_radar(kite_client, universe_df=None, universe_mode: Optional[s
         nifty_daily = kite_client.get_daily_history(
             nifty_info["instrument_token"], nifty_info["tradingsymbol"], from_date, today
         )
+
+    try:
+        symbol_sector_map = sector_constituents.build_symbol_sector_map()
+    except Exception as e:
+        print(f"  [warn] breakout-radar: sector map unavailable ({e}) — Top Picks will "
+              f"skip the sector-dedupe step this scan.")
+        symbol_sector_map = {}
 
     results = []
     scanned = 0
@@ -484,9 +624,11 @@ def scan_breakout_radar(kite_client, universe_df=None, universe_mode: Optional[s
                 option_suggestion = suggest_option_strike(
                     kite_client, symbol, mtf["smart_entry"], mtf["trend_direction"]
                 )
+            strength_info = compute_strength_confidence(mtf, pct_change_1d, money_flow.get("ovs"))
 
             results.append({
                 "symbol": symbol,
+                "sector": symbol_sector_map.get(symbol),
                 "close": round(float(last["close"]), 2),
                 "pct_change_1d": pct_change_1d,
                 "sentiment": sentiment,
@@ -496,6 +638,7 @@ def scan_breakout_radar(kite_client, universe_df=None, universe_mode: Optional[s
                 "orb": orb,
                 **money_flow,
                 **mtf,
+                **strength_info,
                 "option_suggestion": option_suggestion,
             })
         except Exception as e:
@@ -526,10 +669,13 @@ def scan_breakout_radar(kite_client, universe_df=None, universe_mode: Optional[s
         if r.get("strong_trend"):
             strong_trend_counts[r["trend_direction"]] = strong_trend_counts.get(r["trend_direction"], 0) + 1
 
+    top_picks = _rank_top_picks(results, config.BREAKOUT_RADAR_TOP_PICKS_MAX)
+
     print(f"Breakout Radar: {len(results)} of {scanned} scanned ({label}) — "
           f"{sentiment_counts['bullish']} bullish / {sentiment_counts['bearish']} bearish — "
           f"{strong_trend_counts['bullish']} strong bullish (15m/30m/1h) / "
-          f"{strong_trend_counts['bearish']} strong bearish")
+          f"{strong_trend_counts['bearish']} strong bearish — "
+          f"{len(top_picks)} top pick(s): {', '.join(r['symbol'] for r in top_picks) or 'none'}")
 
     return {
         "generated_at": datetime.now().isoformat(),
@@ -543,4 +689,7 @@ def scan_breakout_radar(kite_client, universe_df=None, universe_mode: Optional[s
         "sentiment_counts": sentiment_counts,
         "strong_trend_counts": strong_trend_counts,
         "orb_windows": config.BREAKOUT_RADAR_ORB_WINDOWS,
+        "top_picks": top_picks,
+        "top_picks_symbols": [r["symbol"] for r in top_picks],
+        "top_picks_max": config.BREAKOUT_RADAR_TOP_PICKS_MAX,
     }

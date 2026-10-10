@@ -107,6 +107,7 @@
     border-radius: 7px; padding: 9px 16px; font-size: 12.5px; font-weight: 700; cursor: pointer; transition: .18s ease;
   }
   button.secondary:hover { color: var(--text); border-color: var(--accent); }
+  button.secondary.active { background: var(--green-bg); color: var(--accent-strong); border-color: var(--accent); }
   .topbar-actions { display: flex; align-items: center; gap: 10px; }
   select.universe-select {
     background: var(--surface-2); color: var(--text-secondary); border: 1px solid var(--border);
@@ -451,7 +452,7 @@
       <div>
         <h1>Breakout Radar <span class="live-pill" id="live-radar">LIVE</span></h1>
         <p class="meta" id="radarMeta">RS quadrant · PDH/PDL breach · multi-timeframe ORB · Money Flow · loading…</p>
-        <p class="help-text">Per-stock relative-strength quadrant vs Nifty 50 (RRG-style: is RS above/below its own trend, and is that trend rising or falling), same-day PDH/PDL breach timing, opening-range-breakout status across five windows at once, and a Money Flow (RVOL + directional volume ratio) read — benchmarked against a commercial F&amp;O screener. Defaults to the F&amp;O universe; auto-refreshes every 30s while this tab is open.</p>
+        <p class="help-text">Per-stock relative-strength quadrant vs Nifty 50 (RRG-style: is RS above/below its own trend, and is that trend rising or falling), same-day PDH/PDL breach timing, opening-range-breakout status across five windows at once, and a Money Flow (RVOL + directional volume ratio) read — benchmarked against a commercial F&amp;O screener. Defaults to the F&amp;O universe; auto-refreshes every 30s while this tab is open. <strong>Strength / Confidence:</strong> our own scoring (not a copy of any third-party indicator's formula) blending 15m/30m/1h trend agreement, today's momentum, volume flow (OVS), and structure (BOS/CHoCH) into a signed -100..+100 Strength and a 0-100% Confidence that measures how many of those signals agree, not how extreme any one is. <strong>★ Top Picks</strong> filters to Strong-Trend-only names, ranks by |Strength|×Confidence, and keeps at most one per sector (e.g. only the stronger of GAIL/OIL) — a filtering aid to narrow a long list down, not a buy/sell recommendation.</p>
       </div>
       <div class="topbar-actions">
         <select class="universe-select" id="radarUniverse" title="Universe" onchange="switchRadarUniverse(this.value)">
@@ -461,11 +462,13 @@
           <option value="nifty200">Nifty 200</option>
           <option value="nifty500">Nifty 500</option>
         </select>
+        <button class="secondary" id="radarTopPicksBtn" onclick="toggleRadarTopPicks()" title="Strong-Trend-only, ranked by Strength×Confidence, one per sector">★ Top Picks</button>
         <button class="primary" id="radarBtn" onclick="runBreakoutRadar(true)">Run Scan</button>
       </div>
     </div>
 
     <div class="kpis" id="radarKpis"></div>
+    <p class="meta" id="radarTopPicksBanner" style="margin-bottom:0.8rem;"></p>
 
     <div class="sub-tabs" id="radarSentimentTabs">
       <button class="sub-tab active" data-sentiment="all" onclick="setRadarSentiment('all')">All</button>
@@ -1259,7 +1262,7 @@ function renderSectorTable() {
 // ---------------- Breakout Radar ----------------
 let radarData = null;
 let radarSortKey = 'rs_rank', radarSortDir = 1;
-let radarFilters = { sentiment: 'all', quadrant: 'all', orbWindow: '60', search: '', mtf: 'all' };
+let radarFilters = { sentiment: 'all', quadrant: 'all', orbWindow: '60', search: '', mtf: 'all', topPicksOnly: false };
 let radarUniverseMode = 'fno';
 let radarPage = 1;
 
@@ -1306,6 +1309,15 @@ function switchRadarUniverse(mode) {
 }
 window.switchRadarUniverse = switchRadarUniverse;
 
+function toggleRadarTopPicks() {
+  radarFilters.topPicksOnly = !radarFilters.topPicksOnly;
+  const btn = document.getElementById('radarTopPicksBtn');
+  if (btn) btn.classList.toggle('active', radarFilters.topPicksOnly);
+  radarPage = 1;
+  renderRadarTable();
+}
+window.toggleRadarTopPicks = toggleRadarTopPicks;
+
 function renderRadarKpis() {
   const el = document.getElementById('radarKpis');
   if (!radarData) { el.innerHTML = ''; return; }
@@ -1322,6 +1334,19 @@ function renderRadarKpis() {
     <div class="kpi"><p class="label">Weakening (FD)</p><p class="value">${qc.peak_fade || 0}</p></div>
     <div class="kpi"><p class="label">Lagging (WK)</p><p class="value">${qc.cold_floor || 0}</p></div>
   `;
+
+  const banner = document.getElementById('radarTopPicksBanner');
+  if (!banner) return;
+  const picks = radarData.top_picks || [];
+  if (!picks.length) {
+    banner.innerHTML = '<span style="color:var(--text-muted);font-size:12px">No Top Picks right now — nothing is Strong-Trend-aligned (15m/30m/1h) yet.</span>';
+    return;
+  }
+  banner.innerHTML = 'Today\'s Top Picks: ' + picks.map(p => {
+    const cls = p.strength >= 0 ? 'pos' : 'neg';
+    return `<span class="pill ${cls === 'pos' ? 'target_hit' : 'stop_loss'}" style="margin-right:6px">
+      ${p.symbol} · Strength ${p.strength > 0 ? '+' : ''}${p.strength} · Confidence ${p.confidence_pct}%</span>`;
+  }).join('');
 }
 
 function setRadarSentiment(v) {
@@ -1377,7 +1402,9 @@ window.setRadarSort = setRadarSort;
 
 function radarFilteredRows() {
   if (!radarData || !radarData.results) return [];
+  const topPicksSet = radarFilters.topPicksOnly ? new Set(radarData.top_picks_symbols || []) : null;
   return radarData.results.filter(r => {
+    if (topPicksSet && !topPicksSet.has(r.symbol)) return false;
     if (radarFilters.sentiment !== 'all' && r.sentiment !== radarFilters.sentiment) return false;
     if (radarFilters.quadrant !== 'all' && r.quadrant !== radarFilters.quadrant) return false;
     if (radarFilters.mtf === 'strong_bullish' && !(r.strong_trend && r.trend_direction === 'bullish')) return false;
@@ -1453,9 +1480,10 @@ function renderRadarTable() {
     ['symbol', 'Stock'], ['close', 'Price'], ['pct_change_1d', 'Chg %'],
     ['rs_vs_nifty_pct', 'vs Nifty'], ['rs_rank', 'Rank'], ['quadrant', 'Quadrant'],
     ['rvol', 'RVOL'], ['ovs', 'OVS'], ['pdh', 'PDH / PDL'], ['orb', 'ORB'],
-    ['strong_trend', 'MTF 15m/30m/1h'], ['smart_entry', 'Trade Plan'],
+    ['strong_trend', 'MTF 15m/30m/1h'], ['strength', 'Strength'], ['confidence_pct', 'Confidence'],
+    ['smart_entry', 'Trade Plan'],
   ];
-  const numCols = new Set(['close', 'pct_change_1d', 'rs_vs_nifty_pct', 'rs_rank', 'rvol', 'ovs']);
+  const numCols = new Set(['close', 'pct_change_1d', 'rs_vs_nifty_pct', 'rs_rank', 'rvol', 'ovs', 'strength', 'confidence_pct']);
 
   let html = '<table><thead><tr>' + cols.map(([key, label]) =>
     `<th class="${numCols.has(key) ? 'num' : ''}" onclick="setRadarSort('${key}')" style="cursor:pointer">${label}${sortIndicator(radarSortKey, key, radarSortDir)}</th>`
@@ -1479,6 +1507,8 @@ function renderRadarTable() {
       <td>${fmtPdhPdl(r)}</td>
       <td>${fmtOrbCell(r)}</td>
       <td>${fmtMtfTrend(r)}</td>
+      <td class="num ${r.strength > 0 ? 'pos' : (r.strength < 0 ? 'neg' : '')}">${r.strength != null ? (r.strength > 0 ? '+' : '') + r.strength : '—'}</td>
+      <td class="num">${r.confidence_pct != null ? r.confidence_pct + '%' : '—'}</td>
       <td>${fmtTradePlan(r)}</td>
     </tr>`;
   }
