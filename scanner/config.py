@@ -221,6 +221,7 @@ SMART_MONEY_BREAKOUT_PERIOD = 5
 SMART_MONEY_PRE_MOMENTUM_FACTOR = 0.5     # Pine pre_momentum_factor_base for READY
 SMART_MONEY_STRUCTURE_LOOKBACK = 3        # CHoCH/BOS lookback for structure labels
 SMART_MONEY_REQUIRE_STRUCTURE = False     # Pine: BUY/SELL gates do not require CHoCH/BOS
+SMART_MONEY_DAILY_DOWNTREND_EMA = 50      # intraday SELL backtest hard gate: daily close < this EMA
 SMART_MONEY_SHOW_GET_READY = True         # surface READY when near full signal (Pine get_ready)
 SMART_MONEY_HTF_INTERVAL = "15minute"     # higher-TF trend filter
 SMART_MONEY_LTF_INTERVAL = "5minute"      # lower-TF alignment filter
@@ -571,3 +572,20 @@ BREAKOUT_RADAR_RS_MOMENTUM_LOOKBACK = 10  # trading days, RS-ratio ROC (the "mom
 BREAKOUT_RADAR_ORB_WINDOWS = [5, 15, 30, 45, 60]   # minutes, all shown at once
 BREAKOUT_RADAR_INTRADAY_INTERVAL = "5minute"       # candle size backing PDH/PDL + ORB + Money Flow
 BREAKOUT_RADAR_RVOL_LOOKBACK = 20         # trading days, average-volume baseline for RVOL
+BREAKOUT_RADAR_MTF_INTERVAL = "15minute"  # base candle for the 15m/30m/1h trend read (30m/1h are resampled from this)
+BREAKOUT_RADAR_MTF_LOOKBACK_DAYS = 20     # calendar days of 15-min history fetched (warmup for EMA20+VWAP on all 3 TFs)
+BREAKOUT_RADAR_STRIKES_AROUND_ATM = 1     # how many strikes either side of nearest-to-entry to also report
+
+# Strength (-100..+100) / Confidence (0-100%) scoring — our own formula (not
+# a port of any third-party Pine indicator's math, just built in the same
+# spirit) feeding the "Top Picks" shortlist. See
+# breakout_radar.compute_strength_confidence()'s docstring for exactly how
+# these weights are used; they must sum to 1.0.
+BREAKOUT_RADAR_STRENGTH_WEIGHTS = {
+    "trend": 0.50,        # 15m/30m/1h trend agreement (higher TF weighted more)
+    "momentum": 0.20,     # today's % change, capped below
+    "volume_flow": 0.15,  # today's up-volume vs down-volume ratio (OVS)
+    "structure": 0.15,    # confirmed bullish/bearish BOS or CHoCH
+}
+BREAKOUT_RADAR_MOMENTUM_CAP_PCT = 3.0     # daily % move that maxes out the momentum component
+BREAKOUT_RADAR_TOP_PICKS_MAX = 2          # default shortlist size for the "Top Picks" toggle

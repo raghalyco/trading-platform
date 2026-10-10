@@ -107,6 +107,7 @@
     border-radius: 7px; padding: 9px 16px; font-size: 12.5px; font-weight: 700; cursor: pointer; transition: .18s ease;
   }
   button.secondary:hover { color: var(--text); border-color: var(--accent); }
+  button.secondary.active { background: var(--green-bg); color: var(--accent-strong); border-color: var(--accent); }
   .topbar-actions { display: flex; align-items: center; gap: 10px; }
   select.universe-select {
     background: var(--surface-2); color: var(--text-secondary); border: 1px solid var(--border);
@@ -274,6 +275,12 @@
   .saved-filter-chip:hover { border-color: var(--accent); }
   .saved-filter-chip .x { color: var(--text-muted); font-weight: 700; padding: 2px 5px; border-radius: 50%; }
   .saved-filter-chip .x:hover { background: var(--red-bg); color: var(--red); }
+
+  /* ---- Shared table pagination (50 rows/page) ---- */
+  .pager { display: flex; align-items: center; gap: 10px; margin-top: 12px; font-size: 12px;
+    color: var(--text-muted); flex-wrap: wrap; }
+  .pager button { padding: 4px 11px; font-size: 11.5px; }
+  .pager button:disabled { opacity: 0.4; cursor: default; }
 </style>
 </head>
 <body>
@@ -314,6 +321,11 @@
   </div>
 
   <div class="nav-group">
+    <div class="nav-group-label">Smart Money Intraday SELL (F&amp;O)</div>
+    <div class="nav-item cat-strategy" data-tab="smintradaysell"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg><span>Backtest (Intraday SELL)</span></div>
+  </div>
+
+  <div class="nav-group">
     <div class="nav-group-label">Developer</div>
     <div class="nav-item cat-strategy" data-tab="sourcecode"><svg class="nav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20h16a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13c0 1.1.9 2 2 2Z"/></svg><span>Source Code</span></div>
   </div>
@@ -341,6 +353,7 @@
   <div class="mobile-nav-item" data-tab="intraday" title="Intraday Monitor">⏱️</div>
   <div class="mobile-nav-item" data-tab="episodicpivot" title="Episodic Pivot (Delayed EP)">🚀</div>
   <div class="mobile-nav-item" data-tab="epbacktest" title="Episodic Pivot Backtest (6M)">📉</div>
+  <div class="mobile-nav-item" data-tab="smintradaysell" title="Smart Money Intraday SELL Backtest (F&amp;O)">🩳</div>
   <div class="mobile-nav-item" data-tab="sourcecode" title="Source Code">🗂️</div>
   <div class="mobile-nav-item" data-tab="mytrades" title="My Trades">⭐</div>
   <div class="mobile-nav-item" data-tab="backtest" title="Performance / Backtest">🧾</div>
@@ -441,7 +454,7 @@
       <div>
         <h1>Breakout Radar <span class="live-pill" id="live-radar">LIVE</span></h1>
         <p class="meta" id="radarMeta">RS quadrant · PDH/PDL breach · multi-timeframe ORB · Money Flow · loading…</p>
-        <p class="help-text">Per-stock relative-strength quadrant vs Nifty 50 (RRG-style: is RS above/below its own trend, and is that trend rising or falling), same-day PDH/PDL breach timing, opening-range-breakout status across five windows at once, and a Money Flow (RVOL + directional volume ratio) read — benchmarked against a commercial F&amp;O screener. Defaults to the F&amp;O universe; auto-refreshes every 30s while this tab is open.</p>
+        <p class="help-text">Per-stock relative-strength quadrant vs Nifty 50 (RRG-style: is RS above/below its own trend, and is that trend rising or falling), same-day PDH/PDL breach timing, opening-range-breakout status across five windows at once, and a Money Flow (RVOL + directional volume ratio) read — benchmarked against a commercial F&amp;O screener. Defaults to the F&amp;O universe; auto-refreshes every 30s while this tab is open. <strong>Strength / Confidence:</strong> our own scoring (not a copy of any third-party indicator's formula) blending 15m/30m/1h trend agreement, today's momentum, volume flow (OVS), and structure (BOS/CHoCH) into a signed -100..+100 Strength and a 0-100% Confidence that measures how many of those signals agree, not how extreme any one is. <strong>★ Top Picks</strong> filters to Strong-Trend-only names, ranks by |Strength|×Confidence, and keeps at most one per sector (e.g. only the stronger of GAIL/OIL) — a filtering aid to narrow a long list down, not a buy/sell recommendation.</p>
       </div>
       <div class="topbar-actions">
         <select class="universe-select" id="radarUniverse" title="Universe" onchange="switchRadarUniverse(this.value)">
@@ -451,11 +464,13 @@
           <option value="nifty200">Nifty 200</option>
           <option value="nifty500">Nifty 500</option>
         </select>
+        <button class="secondary" id="radarTopPicksBtn" onclick="toggleRadarTopPicks()" title="Strong-Trend-only, ranked by Strength×Confidence, one per sector">★ Top Picks</button>
         <button class="primary" id="radarBtn" onclick="runBreakoutRadar(true)">Run Scan</button>
       </div>
     </div>
 
     <div class="kpis" id="radarKpis"></div>
+    <p class="meta" id="radarTopPicksBanner" style="margin-bottom:0.8rem;"></p>
 
     <div class="sub-tabs" id="radarSentimentTabs">
       <button class="sub-tab active" data-sentiment="all" onclick="setRadarSentiment('all')">All</button>
@@ -468,6 +483,12 @@
       <button class="sub-tab" data-quadrant="early_spark" onclick="setRadarQuadrant('early_spark')">BD · Improving</button>
       <button class="sub-tab" data-quadrant="peak_fade" onclick="setRadarQuadrant('peak_fade')">FD · Weakening</button>
       <button class="sub-tab" data-quadrant="cold_floor" onclick="setRadarQuadrant('cold_floor')">WK · Lagging</button>
+    </div>
+    <div class="sub-tabs" id="radarMtfTabs">
+      <span style="font-family:var(--font-mono);font-size:10.5px;color:var(--text-muted);align-self:center;margin-right:4px;">MTF TREND (15m/30m/1h)</span>
+      <button class="sub-tab active" data-mtf="all" onclick="setRadarMtf('all')">All</button>
+      <button class="sub-tab" data-mtf="strong_bullish" onclick="setRadarMtf('strong_bullish')">Strong Bullish</button>
+      <button class="sub-tab" data-mtf="strong_bearish" onclick="setRadarMtf('strong_bearish')">Strong Bearish</button>
     </div>
     <div class="sub-tabs orb-window-tabs" id="radarOrbTabs">
       <span style="font-family:var(--font-mono);font-size:10.5px;color:var(--text-muted);align-self:center;margin-right:4px;">ORB WINDOW</span>
@@ -668,6 +689,21 @@
     </div>
   </div>
 
+  <!-- ============ TAB: Smart Money Intraday SELL Backtest (F&O) ============ -->
+  <div class="tab-page" id="page-smintradaysell">
+    <div class="topbar">
+      <div>
+        <h1>Smart Money — Intraday SELL Backtest (F&amp;O) <span id="smIsBtCached" style="display:none; font-size:11px; font-weight:700; letter-spacing:0.04em; color:var(--text-muted); background:var(--surface-2); border-radius:4px; padding:2px 7px; margin-left:8px; vertical-align:middle;">CACHED</span></h1>
+        <p class="meta" id="smIsBtMeta">SELL-only Smart Money signals, hard-gated to stocks already in a daily downtrend · loading…</p>
+        <p class="help-text">Same Pine-style SELL gates as the live scanner (momentum + 15m/5m bearish trend + volume + 5-bar breakdown), plus a hard filter on top: the stock's daily close had to already be below its own daily EMA50 as of the prior close — a SELL only counts if the stock is structurally down, not just short-term weak. Every trade is intraday only — entered and squared off inside the same session, never carried overnight — on the F&amp;O-eligible stock universe. This walks real 5-minute bars, so unlike the Episodic Pivot backtest there is only ONE exit variant ("actual"): the stop/target/end-of-session sequence is exactly what the bars show, no conservative/optimistic hedge needed. Total Return / Max Drawdown assume a fixed 1% of capital risked per trade (sized to each trade's own ATR stop distance), summed without compounding — this run had up to <span id="smIsBtConcurrent">-</span> trades open at once. This is a signal-log backtest: no slippage, brokerage, or circuit-filter unfillability is modeled. <strong>Monitoring window:</strong> a full multi-month scan of the whole F&amp;O universe at 5-min resolution is too slow to run on demand, so this builds its trade log day by day instead — "Run Backtest" rebuilds the current calendar month, and every later load just tops up the days since the last run and keeps them, so the log keeps growing the more you check in rather than resetting each time.</p>
+      </div>
+      <button class="primary" id="smIsBtBtn" onclick="runSmIsBacktest(true)">Run Backtest</button>
+    </div>
+    <div class="card">
+      <div id="smIsBtWrap"><div class="loading">Loading startup cache…</div></div>
+    </div>
+  </div>
+
   <!-- ============ TAB: Source Code ============ -->
   <div class="tab-page" id="page-sourcecode">
     <div class="topbar">
@@ -835,6 +871,32 @@ function genericSort(rows, key, dir) {
   });
 }
 
+// Shared 50-rows-per-page pagination for any long table. `setPageFnName`
+// is the name of a global function (string, e.g. 'setRadarPage') that
+// takes the new page number and re-renders — kept as a name rather than
+// a function reference so this can be embedded directly in a template
+// string's onclick attribute.
+const DEFAULT_PAGE_SIZE = 50;
+function paginateRows(rows, page, pageSize = DEFAULT_PAGE_SIZE) {
+  const totalPages = Math.max(1, Math.ceil(rows.length / pageSize));
+  const clamped = Math.min(Math.max(1, page), totalPages);
+  const start = (clamped - 1) * pageSize;
+  return { pageRows: rows.slice(start, start + pageSize), page: clamped, totalPages };
+}
+function renderPager(totalItems, page, setPageFnName, pageSize = DEFAULT_PAGE_SIZE) {
+  if (totalItems <= pageSize) return '';
+  const totalPages = Math.max(1, Math.ceil(totalItems / pageSize));
+  page = Math.min(Math.max(1, page), totalPages);
+  const start = totalItems === 0 ? 0 : (page - 1) * pageSize + 1;
+  const end = Math.min(page * pageSize, totalItems);
+  return `<div class="pager">
+    <span>${start}–${end} of ${totalItems}</span>
+    <button class="secondary" ${page <= 1 ? 'disabled' : ''} onclick="${setPageFnName}(${page - 1})">‹ Prev</button>
+    <span>Page ${page} / ${totalPages}</span>
+    <button class="secondary" ${page >= totalPages ? 'disabled' : ''} onclick="${setPageFnName}(${page + 1})">Next ›</button>
+  </div>`;
+}
+
 // Applies the reference dashboard's "Stock" cell (rank + colored initial
 // badge + symbol) and colored +/-% pill treatment to a freshly-rendered
 // table, without every render*Table() function having to hand-build that
@@ -984,6 +1046,7 @@ function switchTab(tab) {
   if (tab === 'episodicpivot' && !episodicPivotData) { runEpisodicPivot(false); }
   if (tab === 'sourcecode' && !codeTreeData) { loadCodeTree(); }
   if (tab === 'epbacktest' && !epBtData) { runEpBacktest(false); }
+  if (tab === 'smintradaysell' && !smIsBtData) { runSmIsBacktest(false); }
   if (tab === 'darvaxbacktest' && !darvaxBtData) { runDarvaxBacktest(false); }
 }
 
@@ -1217,15 +1280,23 @@ function renderSectorTable() {
 // ---------------- Breakout Radar ----------------
 let radarData = null;
 let radarSortKey = 'rs_rank', radarSortDir = 1;
-let radarFilters = { sentiment: 'all', quadrant: 'all', orbWindow: '60', search: '' };
+let radarFilters = { sentiment: 'all', quadrant: 'all', orbWindow: '60', search: '', mtf: 'all', topPicksOnly: false };
 let radarUniverseMode = 'fno';
+let radarPage = 1;
 
 async function runBreakoutRadar(refresh = true) {
   const btn = document.getElementById('radarBtn');
+  const metaEl = document.getElementById('radarMeta');
   btn.disabled = true; btn.textContent = refresh ? 'Scanning...' : 'Loading...';
-  if (refresh || !radarData) {
-    document.getElementById('radarTableWrap').innerHTML = '<div class="loading">' +
-      (refresh ? 'Refreshing Breakout Radar (scans intraday candles too, can take a bit)...' : 'Loading Breakout Radar…') + '</div>';
+  if (!radarData) {
+    // Nothing on screen yet (first load this session) — the loading
+    // placeholder is the only thing we can show.
+    document.getElementById('radarTableWrap').innerHTML = '<div class="loading">Loading Breakout Radar…</div>';
+  } else if (refresh) {
+    // A rescan (manual "Run Scan" or the 30s auto-refresh) runs in the
+    // background — keep showing the previous scan's table/KPIs instead of
+    // blanking them, and only swap in the new data once the scan lands.
+    metaEl.textContent = 'Scanning for fresh data (can take a bit)... showing the last scan below until it\'s done.';
   }
   try {
     const params = new URLSearchParams({ universe: radarUniverseMode });
@@ -1233,13 +1304,19 @@ async function runBreakoutRadar(refresh = true) {
     radarData = await fetchJson('/api/scan_breakout_radar?' + params.toString());
     const stamp = new Date(radarData.generated_at).toLocaleTimeString();
     const src = radarData.cached ? 'startup cache' : 'fresh scan';
-    document.getElementById('radarMeta').textContent =
+    metaEl.textContent =
       `${radarData.universe_label || radarUniverseMode} · ${radarData.num_results} symbol(s) · ${src} · ${stamp} · click Run Scan to refresh`;
     updateMarketStatus(radarData.market_open);
+    radarPage = 1;
     renderRadarKpis();
     renderRadarTable();
   } catch (e) {
-    document.getElementById('radarTableWrap').innerHTML = '<div class="empty">Scan failed: ' + (e.message || e) + '</div>';
+    if (!radarData) {
+      document.getElementById('radarTableWrap').innerHTML = '<div class="empty">Scan failed: ' + (e.message || e) + '</div>';
+    } else {
+      // Keep the last good scan on screen rather than replacing it with an error.
+      metaEl.textContent = 'Refresh failed: ' + (e.message || e) + ' — showing the last successful scan.';
+    }
   }
   btn.disabled = false; btn.textContent = 'Run Scan';
 }
@@ -1250,23 +1327,49 @@ function switchRadarUniverse(mode) {
 }
 window.switchRadarUniverse = switchRadarUniverse;
 
+function toggleRadarTopPicks() {
+  radarFilters.topPicksOnly = !radarFilters.topPicksOnly;
+  const btn = document.getElementById('radarTopPicksBtn');
+  if (btn) btn.classList.toggle('active', radarFilters.topPicksOnly);
+  radarPage = 1;
+  renderRadarTable();
+}
+window.toggleRadarTopPicks = toggleRadarTopPicks;
+
 function renderRadarKpis() {
   const el = document.getElementById('radarKpis');
   if (!radarData) { el.innerHTML = ''; return; }
   const sc = radarData.sentiment_counts || {};
   const qc = radarData.quadrant_counts || {};
+  const stc = radarData.strong_trend_counts || {};
   el.innerHTML = `
     <div class="kpi"><p class="label">Bullish</p><p class="value pos">${sc.bullish || 0}</p></div>
     <div class="kpi"><p class="label">Bearish</p><p class="value neg">${sc.bearish || 0}</p></div>
+    <div class="kpi"><p class="label">Strong Bullish (15m/30m/1h)</p><p class="value pos">${stc.bullish || 0}</p></div>
+    <div class="kpi"><p class="label">Strong Bearish (15m/30m/1h)</p><p class="value neg">${stc.bearish || 0}</p></div>
     <div class="kpi"><p class="label">Leading (ST)</p><p class="value">${qc.high_gear || 0}</p></div>
     <div class="kpi"><p class="label">Improving (BD)</p><p class="value">${qc.early_spark || 0}</p></div>
     <div class="kpi"><p class="label">Weakening (FD)</p><p class="value">${qc.peak_fade || 0}</p></div>
     <div class="kpi"><p class="label">Lagging (WK)</p><p class="value">${qc.cold_floor || 0}</p></div>
   `;
+
+  const banner = document.getElementById('radarTopPicksBanner');
+  if (!banner) return;
+  const picks = radarData.top_picks || [];
+  if (!picks.length) {
+    banner.innerHTML = '<span style="color:var(--text-muted);font-size:12px">No Top Picks right now — nothing is Strong-Trend-aligned (15m/30m/1h) yet.</span>';
+    return;
+  }
+  banner.innerHTML = 'Today\'s Top Picks: ' + picks.map(p => {
+    const cls = p.strength >= 0 ? 'pos' : 'neg';
+    return `<span class="pill ${cls === 'pos' ? 'target_hit' : 'stop_loss'}" style="margin-right:6px">
+      ${p.symbol} · Strength ${p.strength > 0 ? '+' : ''}${p.strength} · Confidence ${p.confidence_pct}%</span>`;
+  }).join('');
 }
 
 function setRadarSentiment(v) {
   radarFilters.sentiment = v;
+  radarPage = 1;
   document.querySelectorAll('#radarSentimentTabs .sub-tab').forEach(el => el.classList.toggle('active', el.dataset.sentiment === v));
   renderRadarTable();
 }
@@ -1274,10 +1377,19 @@ window.setRadarSentiment = setRadarSentiment;
 
 function setRadarQuadrant(v) {
   radarFilters.quadrant = v;
+  radarPage = 1;
   document.querySelectorAll('#radarQuadrantTabs .sub-tab').forEach(el => el.classList.toggle('active', el.dataset.quadrant === v));
   renderRadarTable();
 }
 window.setRadarQuadrant = setRadarQuadrant;
+
+function setRadarMtf(v) {
+  radarFilters.mtf = v;
+  radarPage = 1;
+  document.querySelectorAll('#radarMtfTabs .sub-tab').forEach(el => el.classList.toggle('active', el.dataset.mtf === v));
+  renderRadarTable();
+}
+window.setRadarMtf = setRadarMtf;
 
 function setRadarOrbWindow(v) {
   radarFilters.orbWindow = v;
@@ -1289,21 +1401,32 @@ window.setRadarOrbWindow = setRadarOrbWindow;
 let _radarSearchTimer = null;
 function onRadarSearch(v) {
   clearTimeout(_radarSearchTimer);
-  _radarSearchTimer = setTimeout(() => { radarFilters.search = v.trim().toUpperCase(); renderRadarTable(); }, 150);
+  _radarSearchTimer = setTimeout(() => { radarFilters.search = v.trim().toUpperCase(); radarPage = 1; renderRadarTable(); }, 150);
 }
 window.onRadarSearch = onRadarSearch;
 
+function setRadarPage(p) {
+  radarPage = p;
+  renderRadarTable();
+}
+window.setRadarPage = setRadarPage;
+
 function setRadarSort(key) {
   if (radarSortKey === key) { radarSortDir *= -1; } else { radarSortKey = key; radarSortDir = 1; }
+  radarPage = 1;
   renderRadarTable();
 }
 window.setRadarSort = setRadarSort;
 
 function radarFilteredRows() {
   if (!radarData || !radarData.results) return [];
+  const topPicksSet = radarFilters.topPicksOnly ? new Set(radarData.top_picks_symbols || []) : null;
   return radarData.results.filter(r => {
+    if (topPicksSet && !topPicksSet.has(r.symbol)) return false;
     if (radarFilters.sentiment !== 'all' && r.sentiment !== radarFilters.sentiment) return false;
     if (radarFilters.quadrant !== 'all' && r.quadrant !== radarFilters.quadrant) return false;
+    if (radarFilters.mtf === 'strong_bullish' && !(r.strong_trend && r.trend_direction === 'bullish')) return false;
+    if (radarFilters.mtf === 'strong_bearish' && !(r.strong_trend && r.trend_direction === 'bearish')) return false;
     if (radarFilters.search && !r.symbol.includes(radarFilters.search)) return false;
     return true;
   });
@@ -1329,6 +1452,34 @@ function fmtPdhPdl(r) {
   return parts.join('<br>');
 }
 
+function _trendArrow(t) {
+  if (t > 0) return '<span class="pos">▲</span>';
+  if (t < 0) return '<span class="neg">▼</span>';
+  return '<span style="color:var(--text-muted)">—</span>';
+}
+
+function fmtMtfTrend(r) {
+  if (r.trend_15m == null) return '—';
+  const arrows = `${_trendArrow(r.trend_15m)} ${_trendArrow(r.trend_30m)} ${_trendArrow(r.trend_60m)}`;
+  if (!r.strong_trend) return arrows;
+  const cls = r.trend_direction === 'bullish' ? 'pos' : 'neg';
+  const label = r.trend_direction === 'bullish' ? 'STRONG BULL' : 'STRONG BEAR';
+  return `${arrows}<br><span class="pill ${cls === 'pos' ? 'target_hit' : 'stop_loss'}">${label}</span>`;
+}
+
+function fmtTradePlan(r) {
+  if (!r.strong_trend || r.smart_entry == null) return '—';
+  const opt = r.option_suggestion;
+  let html = `Entry ${r.smart_entry} · SL ${r.smart_stop} · TGT ${r.smart_target}`;
+  if (opt) {
+    html += `<br><span style="font-family:var(--font-mono);font-size:11px;color:var(--accent)">${opt.tradingsymbol}</span>`
+      + ` (${opt.strike} ${opt.type}${opt.ltp != null ? ', LTP ' + opt.ltp : ''})`;
+  } else {
+    html += '<br><span style="color:var(--text-muted);font-size:11px">no F&amp;O option match</span>';
+  }
+  return html;
+}
+
 function renderRadarTable() {
   const wrap = document.getElementById('radarTableWrap');
   if (!radarData || !radarData.results || !radarData.results.length) {
@@ -1340,19 +1491,23 @@ function renderRadarTable() {
     wrap.innerHTML = '<div class="empty">No symbols match the current filters.</div>';
     return;
   }
-  const rows = genericSort(filtered, radarSortKey, radarSortDir);
+  const sorted = genericSort(filtered, radarSortKey, radarSortDir);
+  const { pageRows, page } = paginateRows(sorted, radarPage);
+  radarPage = page;
   const cols = [
     ['symbol', 'Stock'], ['close', 'Price'], ['pct_change_1d', 'Chg %'],
     ['rs_vs_nifty_pct', 'vs Nifty'], ['rs_rank', 'Rank'], ['quadrant', 'Quadrant'],
     ['rvol', 'RVOL'], ['ovs', 'OVS'], ['pdh', 'PDH / PDL'], ['orb', 'ORB'],
+    ['strong_trend', 'MTF 15m/30m/1h'], ['strength', 'Strength'], ['confidence_pct', 'Confidence'],
+    ['smart_entry', 'Trade Plan'],
   ];
-  const numCols = new Set(['close', 'pct_change_1d', 'rs_vs_nifty_pct', 'rs_rank', 'rvol', 'ovs']);
+  const numCols = new Set(['close', 'pct_change_1d', 'rs_vs_nifty_pct', 'rs_rank', 'rvol', 'ovs', 'strength', 'confidence_pct']);
 
   let html = '<table><thead><tr>' + cols.map(([key, label]) =>
     `<th class="${numCols.has(key) ? 'num' : ''}" onclick="setRadarSort('${key}')" style="cursor:pointer">${label}${sortIndicator(radarSortKey, key, radarSortDir)}</th>`
   ).join('') + '</tr></thead><tbody>';
 
-  for (const r of rows) {
+  for (const r of pageRows) {
     const clsChg = (r.pct_change_1d || 0) >= 0 ? 'pos' : 'neg';
     const clsRs = (r.rs_vs_nifty_pct || 0) >= 0 ? 'pos' : 'neg';
     const quadBadge = r.quadrant
@@ -1369,9 +1524,14 @@ function renderRadarTable() {
       <td class="num">${r.ovs != null ? r.ovs.toFixed(2) + 'x' : '—'}</td>
       <td>${fmtPdhPdl(r)}</td>
       <td>${fmtOrbCell(r)}</td>
+      <td>${fmtMtfTrend(r)}</td>
+      <td class="num ${r.strength > 0 ? 'pos' : (r.strength < 0 ? 'neg' : '')}">${r.strength != null ? (r.strength > 0 ? '+' : '') + r.strength : '—'}</td>
+      <td class="num">${r.confidence_pct != null ? r.confidence_pct + '%' : '—'}</td>
+      <td>${fmtTradePlan(r)}</td>
     </tr>`;
   }
   html += '</tbody></table>';
+  html += renderPager(sorted.length, radarPage, 'setRadarPage');
   wrap.innerHTML = html;
   enhanceTableVisuals(wrap);
 }
@@ -1414,7 +1574,9 @@ function applyRadarSavedFilter(i) {
   if (searchEl) searchEl.value = radarFilters.search || '';
   document.querySelectorAll('#radarSentimentTabs .sub-tab').forEach(el => el.classList.toggle('active', el.dataset.sentiment === radarFilters.sentiment));
   document.querySelectorAll('#radarQuadrantTabs .sub-tab').forEach(el => el.classList.toggle('active', el.dataset.quadrant === radarFilters.quadrant));
+  document.querySelectorAll('#radarMtfTabs .sub-tab').forEach(el => el.classList.toggle('active', el.dataset.mtf === (radarFilters.mtf || 'all')));
   document.querySelectorAll('#radarOrbTabs .sub-tab').forEach(el => el.classList.toggle('active', el.dataset.orb === radarFilters.orbWindow));
+  radarPage = 1;
   renderRadarTable();
 }
 window.applyRadarSavedFilter = applyRadarSavedFilter;
@@ -2654,6 +2816,7 @@ async function runIndustryPerformance() {
 let epBtData = null;
 let epBtSortKey = 'breakout_date', epBtSortDir = -1;
 let epBtVariant = 'pnl_pct'; // 'pnl_pct' (Conservative) or 'pnl_pct_alt' (Optimistic)
+let epBtPage = 1;
 
 async function runEpBacktest(refresh = false) {
   const btn = document.getElementById('epBtBtn');
@@ -2663,6 +2826,7 @@ async function runEpBacktest(refresh = false) {
   try {
     const res = await fetch('/api/episodic_pivot/backtest' + (refresh ? '?refresh=1' : ''));
     epBtData = await res.json();
+    epBtPage = 1;
     renderEpBacktest();
     document.getElementById('epBtCached').style.display = refresh ? 'none' : 'inline-block';
     document.getElementById('epBtMeta').textContent =
@@ -2676,14 +2840,22 @@ async function runEpBacktest(refresh = false) {
 
 function setEpBtVariant(v) {
   epBtVariant = v;
+  epBtPage = 1;
   renderEpBacktest();
 }
 
 function setEpBtSort(key) {
   epBtSortDir = (epBtSortKey === key) ? -epBtSortDir : -1;
   epBtSortKey = key;
+  epBtPage = 1;
   renderEpBacktest();
 }
+
+function setEpBtPage(p) {
+  epBtPage = p;
+  renderEpBacktest();
+}
+window.setEpBtPage = setEpBtPage;
 
 const EP_BT_VARIANTS = {
   pnl_pct:      { key: 'conservative', label: 'Conservative (base case)',  exitDate: 'exit_date',      exitPrice: 'exit_price',      exitReason: 'exit_reason' },
@@ -2766,14 +2938,16 @@ function renderEpBacktest() {
   ];
   const numCols = new Set(['day0_move_pct', 'entry_fill', 'stop_loss', 'stop_pct', 'target', 'risk_reward', 'score',
     'exit_price', 'exit_price_alt', 'exit_price_kell', 'pnl_pct', 'pnl_pct_alt', 'pnl_pct_kell']);
-  const rows = genericSort(data.trades_detail || [], epBtSortKey, epBtSortDir);
+  const sortedTrades = genericSort(data.trades_detail || [], epBtSortKey, epBtSortDir);
+  const { pageRows, page } = paginateRows(sortedTrades, epBtPage);
+  epBtPage = page;
 
   html += '<table><thead><tr>' + cols.map(([key, lbl]) =>
     `<th class="${numCols.has(key) ? 'num' : ''}" onclick="setEpBtSort('${key}')" style="cursor:pointer">${lbl}${sortIndicator(epBtSortKey, key, epBtSortDir)}</th>`
   ).join('') + '</tr></thead><tbody>';
 
   const reasonCls = { TARGET: 'target_hit', STOP: 'stop_loss', TIME_STOP: 'time_stop', END_OF_DATA: 'time_stop', EMA_BREAK: 'time_stop' };
-  for (const t of rows) {
+  for (const t of pageRows) {
     const pnl = t[pnlKey];
     const outcome = t[meta.exitReason];
     html += `<tr>
@@ -2788,6 +2962,7 @@ function renderEpBacktest() {
     </tr>`;
   }
   html += '</tbody></table>';
+  html += renderPager(sortedTrades.length, epBtPage, 'setEpBtPage');
 
   document.getElementById('epBtWrap').innerHTML = html;
 }
@@ -2908,6 +3083,141 @@ function renderDarvaxBacktest() {
   html += '</tbody></table>';
 
   document.getElementById('darvaxBtWrap').innerHTML = html;
+}
+
+// ---------------- Smart Money Intraday SELL Backtest (F&O) ----------------
+let smIsBtData = null;
+let smIsBtSortKey = 'entry_time', smIsBtSortDir = -1;
+let smIsBtPage = 1;
+
+async function runSmIsBacktest(refresh = false) {
+  const btn = document.getElementById('smIsBtBtn');
+  btn.disabled = true; btn.textContent = refresh ? 'Running (can take minutes)…' : 'Loading...';
+  document.getElementById('smIsBtWrap').innerHTML =
+    '<div class="loading">' + (refresh ? 'Re-running the intraday SELL backtest over the F&O universe — pulls 5-min + 15-min history per stock, can take a while…' : 'Loading last backtest result…') + '</div>';
+  try {
+    let url = '/api/smart_money/intraday_sell_backtest' + (refresh ? '?refresh=1' : '');
+    const res = await fetch(url);
+    smIsBtData = await res.json();
+    smIsBtPage = 1;
+    renderSmIsBacktest();
+    document.getElementById('smIsBtCached').style.display = refresh ? 'none' : 'inline-block';
+    document.getElementById('smIsBtMeta').textContent =
+      `${smIsBtData.trades || 0} trades · ${smIsBtData.unique_symbols || 0} symbols · ${smIsBtData.universe_size || '—'} F&O stocks scanned · ${smIsBtData.entry_date_min || '—'} to ${smIsBtData.entry_date_max || '—'} · generated ${smIsBtData.generated_at ? new Date(smIsBtData.generated_at).toLocaleString() : ''}`;
+    document.getElementById('smIsBtConcurrent').textContent = smIsBtData.max_concurrent_positions ?? '—';
+  } catch (e) {
+    document.getElementById('smIsBtWrap').innerHTML = '<div class="empty">Failed: ' + (e.message || e) + '</div>';
+  }
+  btn.disabled = false; btn.textContent = 'Run Backtest';
+}
+
+function setSmIsBtSort(key) {
+  smIsBtSortDir = (smIsBtSortKey === key) ? -smIsBtSortDir : -1;
+  smIsBtSortKey = key;
+  smIsBtPage = 1;
+  renderSmIsBacktest();
+}
+
+function setSmIsBtPage(p) {
+  smIsBtPage = p;
+  renderSmIsBacktest();
+}
+window.setSmIsBtPage = setSmIsBtPage;
+
+function renderSmIsBacktest() {
+  const data = smIsBtData;
+  if (!data || !data.trades) {
+    document.getElementById('smIsBtWrap').innerHTML = '<div class="empty">No trades found in the intraday SELL backtest window — either no SELL gate passed, or none of those signals were also in a confirmed daily downtrend.</div>';
+    return;
+  }
+  const v = data.actual;
+
+  const kpis = [
+    ['Trades', v.trades, null],
+    ['Win rate', v.win_rate_pct + '%', v.win_rate_pct >= v.breakeven_win_rate_pct ? 'pos' : 'neg'],
+    ['Breakeven WR needed', v.breakeven_win_rate_pct + '%', null],
+    ['Avg win / loss', fmtPct(v.avg_win_pct) + ' / ' + fmtPct(v.avg_loss_pct), null],
+    ['Win/loss ratio', v.win_loss_ratio, null],
+    ['Avg R-multiple', v.avg_r_multiple + 'R', v.avg_r_multiple >= 0 ? 'pos' : 'neg'],
+    ['Total return (1% risk/trade)', fmtPct(v.total_return_pct), v.total_return_pct >= 0 ? 'pos' : 'neg'],
+    ['Max drawdown', v.max_drawdown_pts + ' pts', 'neg'],
+  ];
+  let html = '<div class="kpis">' + kpis.map(([lbl, value, cls]) =>
+    `<div class="kpi"><p class="label">${lbl}</p><p class="value ${cls || ''}">${value}</p></div>`
+  ).join('') + '</div>';
+
+  const exitCounts = Object.entries(v.exit_reason_counts || {}).map(([k, c]) => `${k}: ${c}`).join(' · ');
+  html += `<p class="meta" style="margin-bottom:1.1rem;">Exits — ${exitCounts}</p>`;
+  html += '<p class="help-text">The KPIs, monthly breakdown and best/worst-stock tables above are all methodology metrics off the underlying stock\'s own price moves (same basis as the live SELL signal). The "Full trade log" table further down instead shows each trade as its modeled PE option contract — strike, lot-size qty, and Black-Scholes premium estimates — so the two sections answer different questions: strategy quality (above) vs. an illustrative option P&L per trade (below).</p>';
+
+  if (data.monthly && data.monthly.length) {
+    html += '<p class="section-title">Monthly breakdown</p>';
+    html += '<table><thead><tr><th>Month</th><th class="num">Trades</th><th class="num">Win rate</th><th class="num">Avg P&L</th><th class="num">Total P&L</th></tr></thead><tbody>';
+    for (const m of data.monthly) {
+      html += `<tr><td>${m.month}</td><td class="num">${m.trades}</td><td class="num">${m.win_rate_pct}%</td>
+        <td class="num ${m.avg_pnl_pct >= 0 ? 'pos' : 'neg'}">${fmtPct(m.avg_pnl_pct)}</td>
+        <td class="num ${m.total_pnl_pct >= 0 ? 'pos' : 'neg'}">${fmtPct(m.total_pnl_pct)}</td></tr>`;
+    }
+    html += '</tbody></table>';
+  }
+
+  const stockTable = (rows, title) => {
+    let h = `<p class="section-title">${title}</p><table><thead><tr><th>Symbol</th><th class="num">Trades</th><th class="num">Win rate</th><th class="num">Avg P&L</th><th class="num">Total P&L</th></tr></thead><tbody>`;
+    for (const s of rows) {
+      h += `<tr><td>${symbolWithChart(s)}</td><td class="num">${s.trades}</td><td class="num">${s.win_rate_pct}%</td>
+        <td class="num ${s.avg_pnl_pct >= 0 ? 'pos' : 'neg'}">${fmtPct(s.avg_pnl_pct)}</td>
+        <td class="num ${s.total_pnl_pct >= 0 ? 'pos' : 'neg'}">${fmtPct(s.total_pnl_pct)}</td></tr>`;
+    }
+    return h + '</tbody></table>';
+  };
+  if (data.best_stocks && data.best_stocks.length) {
+    html += '<div style="display:grid; grid-template-columns: 1fr 1fr; gap: 1.5rem;">'
+      + '<div>' + stockTable(data.best_stocks, 'Best performing stocks') + '</div>'
+      + '<div>' + stockTable(data.worst_stocks, 'Worst performing stocks') + '</div>'
+      + '</div>';
+  }
+
+  html += '<p class="section-title">Full trade log</p>';
+  if (data.option_symbol_note) {
+    html += `<p class="help-text">${data.option_symbol_note}</p>`;
+  }
+  const cols = [
+    ['option_symbol', 'Option Contract'], ['option_strike', 'Strike ₹'], ['option_qty', 'Qty (lot)'],
+    ['signal_time', 'Signal time'], ['entry_time', 'Entry time'],
+    ['entry_premium', 'Entry ₹'], ['stop_premium', 'Stop ₹'], ['premium_stop_pct', 'Risk %'],
+    ['target_premium', 'Target ₹'], ['risk_reward', 'Planned R:R'],
+    ['exit_time', 'Exit time'], ['exit_premium', 'Exit ₹'], ['exit_reason', 'Outcome'],
+    ['premium_pnl_pct', 'P&L %'],
+  ];
+  const numCols = new Set(['option_strike', 'option_qty', 'entry_premium', 'stop_premium',
+    'premium_stop_pct', 'target_premium', 'risk_reward', 'exit_premium', 'premium_pnl_pct']);
+  const sortedTrades = genericSort(data.trades_detail || [], smIsBtSortKey, smIsBtSortDir);
+  const { pageRows, page } = paginateRows(sortedTrades, smIsBtPage);
+  smIsBtPage = page;
+
+  html += '<table><thead><tr>' + cols.map(([key, lbl]) =>
+    `<th class="${numCols.has(key) ? 'num' : ''}" onclick="setSmIsBtSort('${key}')" style="cursor:pointer">${lbl}${sortIndicator(smIsBtSortKey, key, smIsBtSortDir)}</th>`
+  ).join('') + '</tr></thead><tbody>';
+
+  const reasonCls = { target_hit: 'target_hit', stop_loss: 'stop_loss', eod_square_off: 'time_stop' };
+  for (const t of pageRows) {
+    html += `<tr>
+      <td>${t.option_symbol || symbolWithChart(t)}<div style="font-size:11px;color:#888">${symbolWithChart(t)} underlying ₹${Number(t.entry_price).toFixed(2)} → ₹${Number(t.exit_price).toFixed(2)}</div></td>
+      <td class="num">${Number(t.option_strike ?? 0).toFixed(2)}</td>
+      <td class="num">${t.option_qty ?? '—'}</td>
+      <td>${t.signal_time}</td><td>${t.entry_time}</td>
+      <td class="num">${Number(t.entry_premium ?? 0).toFixed(2)}</td>
+      <td class="num">${Number(t.stop_premium ?? 0).toFixed(2)}</td><td class="num">${t.premium_stop_pct ?? '—'}%</td>
+      <td class="num">${Number(t.target_premium ?? 0).toFixed(2)}</td><td class="num">${t.risk_reward}</td>
+      <td>${t.exit_time}</td><td class="num">${Number(t.exit_premium ?? 0).toFixed(2)}</td>
+      <td><span class="pill ${reasonCls[t.exit_reason] || ''}">${t.exit_reason}</span></td>
+      <td class="num ${t.premium_pnl_pct >= 0 ? 'pos' : 'neg'}">${fmtPct(t.premium_pnl_pct)}</td>
+    </tr>`;
+  }
+  html += '</tbody></table>';
+  html += renderPager(sortedTrades.length, smIsBtPage, 'setSmIsBtPage');
+
+  document.getElementById('smIsBtWrap').innerHTML = html;
 }
 
 // ---------------- Source Code viewer ----------------

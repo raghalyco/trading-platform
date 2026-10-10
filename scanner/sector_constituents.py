@@ -9,6 +9,7 @@ sector's URL is wrong, you still get trending stocks for the other 14.
 """
 import os
 import time
+from typing import Optional
 
 import pandas as pd
 import requests
@@ -49,3 +50,20 @@ def fetch_constituents(sector_name: str) -> list:
               f"skipping this sector's trending list. If this persists, check/update the "
               f"URL in config.SECTOR_CONSTITUENT_URLS.")
         return []
+
+
+def build_symbol_sector_map(sector_names: Optional[list] = None) -> dict:
+    """{tradingsymbol: sector_name}, built from the same per-sector
+    constituent lists (and 24h file cache) as fetch_constituents() above.
+    Used by Breakout Radar's "Top Picks" shortlist to avoid picking two
+    names out of the same sector move (e.g. GAIL + OIL are both "NIFTY OIL
+    AND GAS") — a symbol listed under more than one sector (rare, a few
+    thematic indices overlap) keeps whichever sector was fetched first.
+    Not meant as an authoritative sector classification, just good enough
+    for that one dedupe step."""
+    names = sector_names or list(config.SECTOR_CONSTITUENT_URLS.keys())
+    out: dict = {}
+    for sector_name in names:
+        for sym in fetch_constituents(sector_name):
+            out.setdefault(sym, sector_name)
+    return out
